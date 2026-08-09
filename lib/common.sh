@@ -49,6 +49,8 @@ pi_ip() {
 # Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
 net_base() {
   local cidr="$1" ip="${1%/*}" prefix="${1##*/}" net
+  [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+  (( prefix >= 1 && prefix <= 32 )) || return 1
   net="$(awk -v ip="$ip" -v p="$prefix" 'BEGIN {
     split(ip, a, ".");
     val = a[1] * 16777216 + a[2] * 65536 + a[3] * 256 + a[4];
