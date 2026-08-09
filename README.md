@@ -113,6 +113,7 @@ Notes:
 | `web`        | nginx serving a "Raspberry Pi" index page                        |
 | `monitoring` | Netdata real-time dashboard on port 19999                        |
 | `netalertx` | NetAlertX LAN device presence tracker on port 20211              |
+| `teamspeak` | TeamSpeak 6 voice server (voice :9987, file :30033, web :10080) |
 
 Tasks are plain bash scripts inside `tasks/` - add your own by dropping in a
 file that appends to `TASKS` and defines a `run_<name>` function. See
@@ -128,5 +129,9 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
 - `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
   It auto-detects your LAN subnet and interface and serves a device-presence
   dashboard at `http://<pi-ip>:20211`.
+- `teamspeak` requires Docker: run it via `sudo bash setup.sh docker teamspeak`.
+  It runs the official TeamSpeak 6 server (native arm64 since beta 9). On first
+  start the ServerAdmin privilege key is printed to the console - save it, it is
+  only shown once and is needed to log in from the TS6 client at `<pi-ip>:9987`.
 - Diagnostics stay minimal on purpose; check exit codes of the completed
   `[+] Complete: <task>` lines.
