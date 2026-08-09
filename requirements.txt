@@ -1,0 +1,56 @@
+# rpi-setup dependencies.
+#
+# This file lists the packages that the setup scripts and host tools expect to
+# be present. GitHub parses it (pip ecosystem) and displays it in the
+# dependency graph. Packages are installed from the Raspberry Pi OS /
+# Debian apt repositories, not PyPI.
+#
+# Format rationale: GitHub's dependency graph has no native apt ecosystem, so a
+# requirements.txt in the repo root is the simplest file the parser picks up.
+# The non-PyPI names (docker-ce, netdata, ...) therefore show as unresolved
+# "unknown" entries in the graph - that is expected and harmless. The only more
+# "correct" alternatives (Dependabot SBOM submission, SPDX/CycloneDX) add setup
+# and CI overhead for no real gain, since Dependabot cannot patch apt packages
+# anyway.
+#
+# Run on the Pi as root to install everything listed here:
+#   sudo apt-get install -y $(grep -vE '^\s*(#|$)' requirements.txt)
+
+# --- tasks/base.sh: system baseline ---
+ca-certificates
+curl
+gnupg
+git
+unzip
+vim
+htop
+tmux
+fail2ban
+
+# --- tasks/docker.sh: Docker Engine + Compose plugin ---
+docker-ce
+docker-ce-cli
+containerd.io
+docker-buildx-plugin
+docker-compose-plugin
+
+# --- tasks/monitoring.sh: Netdata dashboard ---
+netdata
+
+# --- tasks/web.sh: nginx web server ---
+nginx
+
+# --- tasks/samba.sh: NAS share ---
+samba
+
+# --- host/flash.sh (Linux host): SD card flashing ---
+# xz, dd, mount, sha256sum, and openssl come from the base OS on most distros.
+# curl is already listed above (base task).
+xz-utils
+parted
+openssl
+
+# Not apt-managed, installed via official installers:
+#   pihole   -> https://install.pi-hole.net  (tasks/pihole.sh)
+#   tailscale-> https://tailscale.com/install.sh (tasks/tailscale.sh)
+#   docker containers pull their own images (tasks/netalertx.sh, tasks/teamspeak.sh)
