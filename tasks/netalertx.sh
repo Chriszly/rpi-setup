@@ -21,14 +21,30 @@ run_netalertx() {
   install -m 0755 -d "$dir/data"
   chown 20211:20211 "$dir/data"
 
+  local subnet_cfg conf_override=""
+  if subnet_cfg="$(detect_subnet)"; then
+    say "Detected LAN subnet: $subnet_cfg"
+    # Applied by NetAlertX at container start; survives restarts and avoids
+    # racing the config watcher with a post-start app.conf edit.
+    conf_override="APP_CONF_OVERRIDE: \"{\\\"SCAN_SUBNETS\\\":\\\"['${subnet_cfg}']\\\"}\""
+  else
+    warn "Could not auto-detect LAN subnet; set SCAN_SUBNETS in the UI (Settings > Subnets & Rules)"
+  fi
+
   cat >"$compose" <<EOF
 services:
   netalertx:
-    image: "jokai-sk/netalertx:latest"
+    image: "ghcr.io/netalertx/netalertx:latest"
     container_name: $name
     network_mode: host
     read_only: true
     restart: unless-stopped
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     cap_drop:
       - ALL
     cap_add:
@@ -48,7 +64,7 @@ services:
       PGID: 20211
       LISTEN_ADDR: 0.0.0.0
       PORT: 20211
-      GRAPHQL_PORT: 20212
+      $conf_override
     volumes:
       - type: bind
         source: $dir/data
@@ -62,40 +78,35 @@ EOF
   say 'Starting NetAlertX container'
   docker compose -f "$compose" up -d --pull
 
-  local subnet_cfg i conf="$dir/data/config/app.conf"
-  for i in {1..20}; do [[ -f "$conf" ]] && break; sleep 1; done
-  if subnet_cfg="$(detect_subnet)"; then
-    configure_subnet "$conf" "$subnet_cfg"
-  else
-    warn "Could not auto-detect LAN subnet; set SCAN_SUBNETS in the UI (Settings > Subnets & Rules)"
-  fi
-
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   say "NetAlertX dashboard: http://${ip:-<pi-ip>}:20211"
-  say "Give it a minute to run its first ARP scan, then check the Devices page."
+  say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
 }
 
-# Detect the LAN CIDR + interface from the default route, e.g. "192.168.1.50/24 --interface=eth0".
+# Detect the LAN network + interface from the default route, e.g. "192.168.1.0/24 --interface=eth0".
 detect_subnet() {
-  local iface cidr
+  local iface ifip cidr
   iface="$(ip route show default 2>/dev/null | awk '
     /^default/ { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
   [[ -n "$iface" ]] || return 1
-  cidr="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4; exit}')"
-  [[ -n "$cidr" ]] || return 1
+  ifip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4; exit}')"
+  [[ -n "$ifip" ]] || return 1
+  cidr="$(net_base "$ifip")" || return 1
   printf '%s --interface=%s' "$cidr" "$iface"
 }
 
-# Patch SCAN_SUBNETS in NetAlertX's app.conf with the auto-detected value.
-configure_subnet() {
-  local conf="$1" cfg="$2"
-  install -m 0755 -d "$(dirname "$conf")"
-  [[ -f "$conf" ]] || return 0
-  if grep -q '^SCAN_SUBNETS' "$conf"; then
-    sed -i "s#^SCAN_SUBNETS.*#SCAN_SUBNETS = ['$cfg']#" "$conf"
-  else
-    printf "\nSCAN_SUBNETS = ['%s']\n" "$cfg" >>"$conf"
-  fi
-  say "Configured SCAN_SUBNETS = ['$cfg']"
+# Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
+net_base() {
+  local cidr="$1" ip="${1%/*}" prefix="${1##*/}" net
+  net="$(awk -v ip="$ip" -v p="$prefix" 'BEGIN {
+    split(ip, a, ".");
+    val = a[1] * 16777216 + a[2] * 65536 + a[3] * 256 + a[4];
+    step = 2 ^ (32 - p);
+    net = val - (int(val) % step);
+    printf "%d.%d.%d.%d/%d\n",
+      int(net / 16777216) % 256, int(net / 65536) % 256,
+      int(net / 256) % 256, net % 256, p;
+  }')" || return 1
+  printf '%s\n' "$net"
 }

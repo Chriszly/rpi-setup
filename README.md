@@ -128,7 +128,8 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
   interactive - follow the on-screen prompts.
 - `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
   It auto-detects your LAN subnet and interface and serves a device-presence
-  dashboard at `http://<pi-ip>:20211`.
+  dashboard at `http://<pi-ip>:20211`. The detected `SCAN_SUBNETS` can be
+  corrected in the UI under Settings > Subnets & Rules.
 - `teamspeak` requires Docker: run it via `sudo bash setup.sh docker teamspeak`.
   It runs the official TeamSpeak 6 server (native arm64 since beta 9). On first
   start the ServerAdmin privilege key is printed to the console - save it, it is
