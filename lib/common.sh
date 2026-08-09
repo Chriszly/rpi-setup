@@ -41,9 +41,12 @@ apt_installed() { dpkg -s "$1" >/dev/null 2>&1; }
 
 # --- Networking helpers ------------------------------------------------
 
-# First LAN IP of this host, or the empty string if none.
+# First LAN IP of this host, or non-zero exit (and empty output) if none.
 pi_ip() {
-  hostname -I 2>/dev/null | awk '{print $1}'
+  local ip
+  ip="$(hostname -I 2>/dev/null || true)"
+  [[ -n "$ip" ]] || return 1
+  printf '%s\n' "$ip" | awk '{print $1}'
 }
 
 # Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".

@@ -9,9 +9,11 @@ run_netalertx() {
 
   local dir=/opt/netalertx
   local name=netalertx
+  local ip=""
 
   if compose_is_up "$name"; then
-    say "NetAlertX is already running. Dashboard: http://$(pi_ip):20211"
+    ip="$(pi_ip)" || true
+    say "NetAlertX is already running. Dashboard: http://${ip:-<pi-ip>}:20211"
     return
   fi
 
@@ -74,8 +76,7 @@ EOF
   say 'Starting NetAlertX container'
   compose_up "$dir"
 
-  local ip
-  ip="$(pi_ip)"
+  ip="$(pi_ip)" || true
   say "NetAlertX dashboard: http://${ip:-<pi-ip>}:20211"
   say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
 }

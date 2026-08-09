@@ -9,9 +9,11 @@ run_teamspeak() {
 
   local dir=/opt/teamspeak
   local name=teamspeak
+  local ip=""
 
   if compose_is_up "$name"; then
-    say "TeamSpeak 6 is already running. Connect to $(pi_ip):9987"
+    ip="$(pi_ip)" || true
+    say "TeamSpeak 6 is already running. Connect to ${ip:-<pi-ip>}:9987"
     return
   fi
 
@@ -39,8 +41,8 @@ EOF
   say 'Starting TeamSpeak 6 container'
   compose_up "$dir"
 
-  local ip token
-  ip="$(pi_ip)"
+  local token
+  ip="$(pi_ip)" || true
   token="$(wait_for_log "$name" 'privilege key')"
 
   say "TeamSpeak 6 server ready at ${ip:-<pi-ip>}:9987 (file transfer :30033, web query :10080)"
