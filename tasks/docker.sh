@@ -14,6 +14,9 @@ run_docker() {
   os_id=$( . /etc/os-release && echo "$ID" )
   vcode=$( . /etc/os-release && echo "$VERSION_CODENAME" )
   arch=$(dpkg --print-architecture)
+  [[ -n "$os_id" ]] && [[ -n "$vcode" ]] || {
+    die "Could not determine OS release (ID='${os_id}', VERSION_CODENAME='${vcode}'). Docker's apt repo needs both."
+  }
 
   apt_install ca-certificates curl
   install -m 0755 -d /etc/apt/keyrings
