@@ -5,6 +5,9 @@ run one script, done. Designed for **Raspberry Pi OS** (64-bit, Bookworm or late
 
 ## Quick start
 
+> New to this? Follow the step-by-step guides: [setup-windows.md](setup-windows.md)
+> (flash from Windows) or [setup-linux.md](setup-linux.md) (flash from Linux).
+
 ```bash
 git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
@@ -26,10 +29,11 @@ sudo bash setup.sh --list
 
 ## Fresh OS on an SD card
 
-Both scripts prepare a bootable SD card for a **headless Raspberry Pi 5** (8GB):
-they download the latest **Raspberry Pi OS Lite (64-bit, arm64)** image, verify
-its SHA-256, write it to the card, and pre-configure first boot (SSH enabled +
-a login user).
+Both scripts prepare a bootable SD card for a **headless Raspberry Pi**: they
+download the latest **Raspberry Pi OS Lite (64-bit, arm64)** image, verify its
+SHA-256, write it to the card, and pre-configure first boot (SSH enabled + a
+login user). They are hardware-agnostic - any Pi that runs Raspberry Pi OS
+(64-bit) works.
 
 ### Windows host — `host/flash.ps1`
 
@@ -53,10 +57,10 @@ Other useful switches:
 
 | Switch          | Meaning                                                        |
 |-----------------|----------------------------------------------------------------|
-| `-Image <path>` | Flash a locally downloaded `.img` / `.img.xz` instead          |
-| `-SkipDownload` | Require a cached image in `.\downloads\` (no network)          |
-| `-SkipCustomize`| Skip SSH/user setup; boot to the on-screen first-run wizard    |
-| `-DownloadDir`  | Override the image download/cache folder (default `downloads/`)|
+| `-Image <path>` | Flash a locally downloaded `.img` / `.img.xz` instead              |
+| `-SkipDownload` | Require a cached image in `host\downloads\` (no network)           |
+| `-SkipCustomize`| Skip SSH/user setup; boot to the on-screen first-run wizard        |
+| `-DownloadDir`  | Override the image download/cache folder (default `host\downloads\`)|
 
 ### Linux host — `host/flash.sh`
 
@@ -81,7 +85,8 @@ sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
 | `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
 | `-l`              | List candidate disks and exit                                  |
 
-Both scripts cache the image in `downloads/` (git-ignored) and re-verify it each run.
+Both scripts cache the image in `host/downloads/` (git-ignored) and re-verify
+it each run.
 
 After flashing, put the card in the Pi, power it on, wait 1-2 minutes, then:
 
@@ -98,8 +103,8 @@ Notes:
   required because Raspberry Pi OS ships with no default account.
 - Enabling SSH alone is not enough to log in: Raspberry Pi OS ships with no
   default user, so the script always asks for a username/password too.
-- The downloaded image is cached in `downloads/` (git-ignored) and re-verified
-  on every run.
+- The downloaded image is cached in `host/downloads/` (git-ignored) and
+  re-verified on every run.
 
 ## Tasks
 
