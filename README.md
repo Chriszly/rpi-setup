@@ -112,7 +112,8 @@ Notes:
 | `samba`      | Simple read-write NAS share for the current user                 |
 | `web`        | nginx serving a "Raspberry Pi" index page                        |
 | `monitoring` | Netdata real-time dashboard on port 19999                        |
-| `teamspeak` | TeamSpeak 6 voice server (voice :9987, file :30033, web :10080) |
+| `netalertx`  | NetAlertX LAN device presence tracker on port 20211              |
+| `teamspeak`  | TeamSpeak 6 voice server (voice :9987, file :30033, web :10080) |
 
 Tasks are plain bash scripts inside `tasks/` - add your own by dropping in a
 file that appends to `TASKS` and defines a `run_<name>` function. See
@@ -125,6 +126,10 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
   normal user through `SUDO_USER`.
 - `pihole` and `tailscale` run their official installers and remain
   interactive - follow the on-screen prompts.
+- `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
+  It auto-detects your LAN subnet and interface and serves a device-presence
+  dashboard at `http://<pi-ip>:20211`. The detected `SCAN_SUBNETS` can be
+  corrected in the UI under Settings > Subnets & Rules.
 - `teamspeak` requires Docker: run it via `sudo bash setup.sh docker teamspeak`.
   It runs the official TeamSpeak 6 server (native arm64 since beta 9). On first
   start the ServerAdmin privilege key is printed to the console - save it, it is
