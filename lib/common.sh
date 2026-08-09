@@ -38,3 +38,77 @@ apt_install() {
 }
 
 apt_installed() { dpkg -s "$1" >/dev/null 2>&1; }
+
+# --- Networking helpers ------------------------------------------------
+
+# First LAN IP of this host, or the empty string if none.
+pi_ip() {
+  hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+# Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
+net_base() {
+  local cidr="$1" ip="${1%/*}" prefix="${1##*/}" net
+  net="$(awk -v ip="$ip" -v p="$prefix" 'BEGIN {
+    split(ip, a, ".");
+    val = a[1] * 16777216 + a[2] * 65536 + a[3] * 256 + a[4];
+    step = 2 ^ (32 - p);
+    net = val - (int(val) % step);
+    printf "%d.%d.%d.%d/%d\n",
+      int(net / 16777216) % 256, int(net / 65536) % 256,
+      int(net / 256) % 256, net % 256, p;
+  }')" || return 1
+  printf '%s\n' "$net"
+}
+
+# Detect the LAN network + interface from the default route, e.g. "192.168.1.0/24 --interface=eth0".
+detect_subnet() {
+  local iface ifip cidr
+  iface="$(ip route show default 2>/dev/null | awk '
+    /^default/ { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+  [[ -n "$iface" ]] || return 1
+  ifip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4; exit}')"
+  [[ -n "$ifip" ]] || return 1
+  cidr="$(net_base "$ifip")" || return 1
+  printf '%s --interface=%s' "$cidr" "$iface"
+}
+
+# --- Docker task helpers -----------------------------------------------
+
+# Die with a helpful message if Docker and the Compose plugin are missing.
+require_docker() {
+  command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
+  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
+}
+
+# True if a container with this exact name is currently running.
+compose_is_up() {
+  local name="$1"
+  docker ps -q --filter "name=^${name}\$" >/dev/null 2>&1
+}
+
+# Create $dir and $dir/data, with data owned (numerically) by $uid.
+ensure_container_dir() {
+  local dir="$1" uid="$2"
+  install -m 0755 -d "$dir"
+  install -m 0755 -d "$dir/data"
+  chown "$uid:$uid" "$dir/data"
+}
+
+# Start the compose project at $dir/docker-compose.yml, pulling images.
+compose_up() {
+  local dir="$1"
+  docker compose -f "$dir/docker-compose.yml" up -d --pull
+}
+
+# Grep container logs until a pattern matches (default: 30 tries, 1s apart).
+# Prints the last matching line, or the empty string on timeout.
+wait_for_log() {
+  local name="$1" pattern="$2" tries="${3:-30}" i line=""
+  for i in $(seq 1 "$tries"); do
+    line="$(docker logs "$name" 2>&1 | grep -i "$pattern" | tail -1)" || true
+    [[ -n "$line" ]] && break
+    sleep 1
+  done
+  printf '%s\n' "$line"
+}

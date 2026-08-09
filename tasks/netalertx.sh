@@ -5,21 +5,17 @@ set -euo pipefail
 TASKS+=("netalertx|LAN device presence tracking (web UI :20211)")
 
 run_netalertx() {
-  command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
-  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
+  require_docker
 
   local dir=/opt/netalertx
-  local compose="$dir/docker-compose.yml"
   local name=netalertx
 
-  if docker ps -q --filter "name=^${name}\$" >/dev/null 2>&1; then
-    say "NetAlertX is already running. Dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):20211"
+  if compose_is_up "$name"; then
+    say "NetAlertX is already running. Dashboard: http://$(pi_ip):20211"
     return
   fi
 
-  install -m 0755 -d "$dir"
-  install -m 0755 -d "$dir/data"
-  chown 20211:20211 "$dir/data"
+  ensure_container_dir "$dir" 20211
 
   local subnet_cfg conf_override=""
   if subnet_cfg="$(detect_subnet)"; then
@@ -31,7 +27,7 @@ run_netalertx() {
     warn "Could not auto-detect LAN subnet; set SCAN_SUBNETS in the UI (Settings > Subnets & Rules)"
   fi
 
-  cat >"$compose" <<EOF
+  cat >"$dir/docker-compose.yml" <<EOF
 services:
   netalertx:
     image: "ghcr.io/netalertx/netalertx:latest"
@@ -76,37 +72,8 @@ services:
 EOF
 
   say 'Starting NetAlertX container'
-  docker compose -f "$compose" up -d --pull
+  compose_up "$dir"
 
-  local ip
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  say "NetAlertX dashboard: http://${ip:-<pi-ip>}:20211"
+  say "NetAlertX dashboard: http://$(pi_ip):20211"
   say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
-}
-
-# Detect the LAN network + interface from the default route, e.g. "192.168.1.0/24 --interface=eth0".
-detect_subnet() {
-  local iface ifip cidr
-  iface="$(ip route show default 2>/dev/null | awk '
-    /^default/ { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
-  [[ -n "$iface" ]] || return 1
-  ifip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4; exit}')"
-  [[ -n "$ifip" ]] || return 1
-  cidr="$(net_base "$ifip")" || return 1
-  printf '%s --interface=%s' "$cidr" "$iface"
-}
-
-# Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
-net_base() {
-  local cidr="$1" ip="${1%/*}" prefix="${1##*/}" net
-  net="$(awk -v ip="$ip" -v p="$prefix" 'BEGIN {
-    split(ip, a, ".");
-    val = a[1] * 16777216 + a[2] * 65536 + a[3] * 256 + a[4];
-    step = 2 ^ (32 - p);
-    net = val - (int(val) % step);
-    printf "%d.%d.%d.%d/%d\n",
-      int(net / 16777216) % 256, int(net / 65536) % 256,
-      int(net / 256) % 256, net % 256, p;
-  }')" || return 1
-  printf '%s\n' "$net"
 }

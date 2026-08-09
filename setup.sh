@@ -51,19 +51,16 @@ dedupe() {
 
 prompt_selection() {
   local line p
-  while :; do
-    printf '> '
-    IFS= read -r line
-    line="${line//,/ }"
-    [[ -z "${line// /}" ]] && break
-    if [[ "$line" == "all" ]]; then
-      seq 1 ${#TASKS[@]}
-      break
-    fi
-    for p in $line; do
-      [[ "$p" =~ ^[0-9]+$ ]] && echo "$p"
-    done
-    break
+  printf '> '
+  IFS= read -r line
+  line="${line//,/ }"
+  [[ -z "${line// /}" ]] && return
+  if [[ "$line" == "all" ]]; then
+    seq 1 ${#TASKS[@]}
+    return
+  fi
+  for p in $line; do
+    [[ "$p" =~ ^[0-9]+$ ]] && echo "$p"
   done
 }
 
