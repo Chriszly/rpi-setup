@@ -95,10 +95,10 @@ ensure_container_dir() {
   chown "$uid:$uid" "$dir/data"
 }
 
-# Start the compose project at $dir/docker-compose.yml, pulling images.
+# Start the compose project at $dir/docker-compose.yml, always pulling images.
 compose_up() {
   local dir="$1"
-  docker compose -f "$dir/docker-compose.yml" up -d --pull
+  docker compose -f "$dir/docker-compose.yml" up -d --pull always
 }
 
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).

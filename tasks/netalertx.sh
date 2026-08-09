@@ -74,6 +74,8 @@ EOF
   say 'Starting NetAlertX container'
   compose_up "$dir"
 
-  say "NetAlertX dashboard: http://$(pi_ip):20211"
+  local ip
+  ip="$(pi_ip)"
+  say "NetAlertX dashboard: http://${ip:-<pi-ip>}:20211"
   say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
 }
