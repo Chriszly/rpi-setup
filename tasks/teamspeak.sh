@@ -17,6 +17,8 @@ run_teamspeak() {
   fi
 
   install -m 0755 -d "$dir"
+  install -m 0755 -d "$dir/data"
+  chown 9987:9987 "$dir/data"
 
   cat >"$compose" <<EOF
 services:
