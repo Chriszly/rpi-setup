@@ -5,23 +5,21 @@ set -euo pipefail
 TASKS+=("teamspeak|TeamSpeak 6 voice server (voice :9987, file :30033, web :10080)")
 
 run_teamspeak() {
-  command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
-  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
+  require_docker
 
   local dir=/opt/teamspeak
-  local compose="$dir/docker-compose.yml"
   local name=teamspeak
+  local ip=""
 
-  if docker ps -q --filter "name=^${name}\$" >/dev/null 2>&1; then
-    say "TeamSpeak 6 is already running. Connect to $(hostname -I 2>/dev/null | awk '{print $1}'):9987"
+  if compose_is_up "$name"; then
+    ip="$(pi_ip)" || true
+    say "TeamSpeak 6 is already running. Connect to ${ip:-<pi-ip>}:9987"
     return
   fi
 
-  install -m 0755 -d "$dir"
-  install -m 0755 -d "$dir/data"
-  chown 9987:9987 "$dir/data"
+  ensure_container_dir "$dir" 9987
 
-  cat >"$compose" <<EOF
+  cat >"$dir/docker-compose.yml" <<EOF
 services:
   teamspeak:
     image: "teamspeaksystems/teamspeak6-server:latest"
@@ -41,11 +39,11 @@ services:
 EOF
 
   say 'Starting TeamSpeak 6 container'
-  docker compose -f "$compose" up -d --pull
+  compose_up "$dir"
 
-  local ip token
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  token="$(wait_for_token "$name")"
+  local token
+  ip="$(pi_ip)" || true
+  token="$(wait_for_log "$name" 'privilege key')"
 
   say "TeamSpeak 6 server ready at ${ip:-<pi-ip>}:9987 (file transfer :30033, web query :10080)"
   if [[ -n "$token" ]]; then
@@ -56,15 +54,4 @@ EOF
     say "Find it later with: docker logs $name"
   fi
   say "Connect with the TeamSpeak 6 client and enter the privilege key when asked."
-}
-
-# Wait for the first-run ServerAdmin privilege key in the container logs.
-wait_for_token() {
-  local name="$1" i key=""
-  for i in {1..30}; do
-    key="$(docker logs "$name" 2>&1 | grep -i 'privilege key' | tail -1)" || true
-    [[ -n "$key" ]] && break
-    sleep 1
-  done
-  printf '%s\n' "$key"
 }
