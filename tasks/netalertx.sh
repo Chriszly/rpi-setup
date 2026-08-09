@@ -18,6 +18,8 @@ run_netalertx() {
   fi
 
   install -m 0755 -d "$dir"
+  install -m 0755 -d "$dir/data"
+  chown 20211:20211 "$dir/data"
 
   cat >"$compose" <<EOF
 services:
