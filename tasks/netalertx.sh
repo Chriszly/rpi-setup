@@ -44,8 +44,8 @@ services:
     tmpfs:
       - "/tmp:mode=1700,uid=20211,gid=20211,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
     environment:
-      NETALERTX_UID: 20211
-      NETALERTX_GID: 20211
+      PUID: 20211
+      PGID: 20211
       LISTEN_ADDR: 0.0.0.0
       PORT: 20211
       GRAPHQL_PORT: 20212
