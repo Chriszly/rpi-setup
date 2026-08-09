@@ -5,7 +5,8 @@ run one script, done. Designed for **Raspberry Pi OS** (64-bit, Bookworm or late
 
 ## Quick start
 
-> New to this? The full step-by-step walkthrough is in [SETUP.md](SETUP.md).
+> New to this? Follow the step-by-step guides: [setup-windows.md](setup-windows.md)
+> (flash from Windows) or [setup-linux.md](setup-linux.md) (flash from Linux).
 
 ```bash
 git clone https://github.com/Chriszly/rpi-setup.git

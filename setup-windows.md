@@ -1,39 +1,34 @@
-# Setup guide
+# Setup guide - Windows host
 
-This guide walks through the full workflow: prepare a bootable SD card from a
-Windows or Linux host, boot the Pi headless, then provision it with `setup.sh`.
-Everything you are asked to run is idempotent, so re-running is always safe.
+This guide walks through the full workflow from a **Windows** host: prepare a
+bootable SD card with `host/flash.ps1`, boot the Pi headless, then provision it
+with `setup.sh`. Everything you are asked to run is idempotent, so re-running
+is always safe.
+
+For the equivalent guide on a Linux host, see [setup-linux.md](setup-linux.md).
 
 ## Prerequisites
 
 - A Raspberry Pi (any model that runs Raspberry Pi OS 64-bit) and an SD card
-  (plus a card reader on the host machine).
-- The image is downloaded automatically by the flash scripts - you do not need
-  to download Raspberry Pi OS yourself.
-- SSH is used throughout; both flash scripts enable SSH and create a login user
-  on first boot.
-
-## Step 1 - Get the repo
-
-On your host machine (Windows or Linux):
-
-```bash
-git clone https://github.com/Chriszly/rpi-setup.git
-cd rpi-setup
-```
-
-## Step 2 - Flash the SD card on Windows
-
-Uses `host/flash.ps1`, which writes the card with **Raspberry Pi Imager**.
-
-### Windows requirements
-
+  (plus a card reader for your PC).
 - **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
 - **openssl** - bundled with Git for Windows. Only needed for the SSH/user
   setup step; skip it entirely with `-SkipCustomize`.
 - An **elevated** PowerShell (the script flashes a raw disk).
+- The image is downloaded automatically by the flash script - you do not need
+  to download Raspberry Pi OS yourself.
 
-### Run it
+## Step 1 - Get the repo
+
+```powershell
+git clone https://github.com/Chriszly/rpi-setup.git
+cd rpi-setup
+```
+
+## Step 2 - Flash the SD card
+
+The script writes the card via **Raspberry Pi Imager**. Run it from an
+elevated PowerShell:
 
 ```powershell
 .\host\flash.ps1
@@ -63,50 +58,9 @@ Useful switches (see the README for the full table):
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).
 
-## Step 3 - Flash the SD card on Linux
+## Step 3 - First boot and SSH
 
-Uses `host/flash.sh`, which writes the card directly with `dd`.
-
-### Linux requirements
-
-Install: `curl`, `xz`, `dd`, `mount`, `openssl` and `partprobe` (from
-`parted`). For example on Raspberry Pi OS / Debian / Ubuntu:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y curl xz-utils coreutils mount openssl parted
-```
-
-### Run it
-
-```bash
-sudo ./host/flash.sh
-```
-
-It asks you to:
-
-1. Pick the target disk from the listed candidates (a number, or a full
-   `/dev/node` such as `/dev/sda`).
-2. Type `yes` when asked to confirm it will DESTROY all data on that disk.
-3. Enter a username and password (same rules as on Windows).
-
-Or pass everything up front:
-
-```bash
-sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
-```
-
-Useful options:
-
-| Option          | Meant for                                              |
-|-----------------|--------------------------------------------------------|
-| `-l`            | List candidate disks and exit (no changes)             |
-| `-i IMAGE`      | Flash a locally downloaded `.img` / `.img.xz` instead  |
-| `-k`            | Skip SSH/user setup; boot to the on-screen wizard      |
-
-## Step 4 - First boot and SSH
-
-1. Eject the SD card from the host, insert it into the Pi, and power it on.
+1. Eject the SD card from the PC, insert it into the Pi, and power it on.
 2. Wait 1-2 minutes for first boot.
 3. Connect over SSH:
 
@@ -117,7 +71,7 @@ ssh <username>@raspberrypi.local
 If `raspberrypi.local` does not resolve, find the Pi's IP address from your
 router's DHCP client list and use `ssh <username>@<ip>` instead.
 
-## Step 5 - Provision the Pi
+## Step 4 - Provision the Pi
 
 On the Pi:
 
