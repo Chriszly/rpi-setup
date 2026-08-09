@@ -30,6 +30,29 @@ git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
 ```
 
+### If the repository is private
+
+Clone over HTTPS with your GitHub username and a **Personal Access Token**
+(the token replaces the password; GitHub no longer accepts account passwords for
+HTTPS):
+
+```bash
+git clone https://<USER>:<TOKEN>@github.com/Chriszly/rpi-setup.git
+cd rpi-setup
+```
+
+Right after cloning, remove the credentials from the remote URL so pull/push do
+not embed your token in `.git/config`:
+
+```bash
+git remote set-url origin https://github.com/Chriszly/rpi-setup.git
+```
+
+> Note: you only need to authenticate to *clone*; the setup scripts themselves
+> run without credentials. The same command is used again on the Pi in
+> Step 4. Passing the token inline puts it in your shell history - prefer a
+> `read -s` prompt or a credential helper if that matters to you.
+
 ## Step 2 - Flash the SD card
 
 The script writes the card directly with `dd`. Run it with `sudo`:
@@ -82,6 +105,16 @@ On the Pi:
 ```bash
 git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
+sudo bash setup.sh
+```
+
+If the repository is private, clone with your credentials as in Step 1, then
+drop the credentials from the remote right after:
+
+```bash
+git clone https://<USER>:<TOKEN>@github.com/Chriszly/rpi-setup.git
+cd rpi-setup
+git remote set-url origin https://github.com/Chriszly/rpi-setup.git
 sudo bash setup.sh
 ```
 
