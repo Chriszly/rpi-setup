@@ -42,7 +42,7 @@ services:
       net.ipv4.conf.all.arp_ignore: 1
       net.ipv4.conf.all.arp_announce: 2
     tmpfs:
-      - "/tmp:mode=1700,uid=0,gid=0,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
+      - "/tmp:mode=1700,uid=20211,gid=20211,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
     environment:
       NETALERTX_UID: 20211
       NETALERTX_GID: 20211
