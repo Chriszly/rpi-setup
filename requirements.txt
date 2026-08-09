@@ -5,6 +5,14 @@
 # dependency graph. Packages are installed from the Raspberry Pi OS /
 # Debian apt repositories, not PyPI.
 #
+# Format rationale: GitHub's dependency graph has no native apt ecosystem, so a
+# requirements.txt in the repo root is the simplest file the parser picks up.
+# The non-PyPI names (docker-ce, netdata, ...) therefore show as unresolved
+# "unknown" entries in the graph - that is expected and harmless. The only more
+# "correct" alternatives (Dependabot SBOM submission, SPDX/CycloneDX) add setup
+# and CI overhead for no real gain, since Dependabot cannot patch apt packages
+# anyway.
+#
 # Run on the Pi as root to install everything listed here:
 #   sudo apt-get install -y $(grep -vE '^\s*(#|$)' requirements.txt)
 
