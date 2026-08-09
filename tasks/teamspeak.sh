@@ -61,7 +61,7 @@ EOF
 wait_for_token() {
   local name="$1" i key=""
   for i in {1..30}; do
-    key="$(docker logs "$name" 2>&1 | grep -A1 -i 'privilege key' | tail -2)" || true
+    key="$(docker logs "$name" 2>&1 | grep -i 'privilege key' | tail -1)" || true
     [[ -n "$key" ]] && break
     sleep 1
   done
