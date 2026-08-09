@@ -6,6 +6,7 @@ TASKS+=("teamspeak|TeamSpeak 6 voice server (voice :9987, file :30033, web :1008
 
 run_teamspeak() {
   command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
+  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
 
   local dir=/opt/teamspeak
   local compose="$dir/docker-compose.yml"
