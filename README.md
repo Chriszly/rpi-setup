@@ -112,6 +112,7 @@ Notes:
 | `samba`      | Simple read-write NAS share for the current user                 |
 | `web`        | nginx serving a "Raspberry Pi" index page                        |
 | `monitoring` | Netdata real-time dashboard on port 19999                        |
+| `netalertx` | NetAlertX LAN device presence tracker on port 20211              |
 
 Tasks are plain bash scripts inside `tasks/` - add your own by dropping in a
 file that appends to `TASKS` and defines a `run_<name>` function. See
@@ -124,5 +125,8 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
   normal user through `SUDO_USER`.
 - `pihole` and `tailscale` run their official installers and remain
   interactive - follow the on-screen prompts.
+- `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
+  It auto-detects your LAN subnet and interface and serves a device-presence
+  dashboard at `http://<pi-ip>:20211`.
 - Diagnostics stay minimal on purpose; check exit codes of the completed
   `[+] Complete: <task>` lines.
