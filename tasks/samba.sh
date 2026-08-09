@@ -39,8 +39,9 @@ EOF
   (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
 
   systemctl enable --now smbd
-  if [[ $added -eq 1 ]] && systemctl is-active --quiet smbd; then
-    systemctl restart smbd
+  if [[ $added -eq 1 ]]; then
+    testparm -s "$conf" >/dev/null 2>&1 || die 'smb.conf failed testparm validation'
+    systemctl is-active --quiet smbd && systemctl restart smbd
   fi
   say "Share ready: \\\\$(hostname)\\nas-share (user ${u})"
 }
