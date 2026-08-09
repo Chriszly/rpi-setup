@@ -24,6 +24,83 @@ List available tasks without changing anything:
 sudo bash setup.sh --list
 ```
 
+## Fresh OS on an SD card
+
+Both scripts prepare a bootable SD card for a **headless Raspberry Pi 5** (8GB):
+they download the latest **Raspberry Pi OS Lite (64-bit, arm64)** image, verify
+its SHA-256, write it to the card, and pre-configure first boot (SSH enabled +
+a login user).
+
+### Windows host — `host/flash.ps1`
+
+Requirements:
+
+- **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
+- **openssl** - bundled with Git for Windows (skipped with `-SkipCustomize`)
+- An elevated PowerShell (the script flashes a raw disk)
+
+```powershell
+.\host\flash.ps1
+```
+
+It will ask for the target disk, username and password. Or pass everything up front:
+
+```powershell
+.\host\flash.ps1 -Disk 2 -UserName pi -Password 'change-me'
+```
+
+Other useful switches:
+
+| Switch          | Meaning                                                        |
+|-----------------|----------------------------------------------------------------|
+| `-Image <path>` | Flash a locally downloaded `.img` / `.img.xz` instead          |
+| `-SkipDownload` | Require a cached image in `.\downloads\` (no network)          |
+| `-SkipCustomize`| Skip SSH/user setup; boot to the on-screen first-run wizard    |
+| `-DownloadDir`  | Override the image download/cache folder (default `downloads/`)|
+
+### Linux host — `host/flash.sh`
+
+Requires `curl`, `xz`, `dd`, `mount`, `openssl` and `partprobe` (from `parted`).
+Uses `dd` directly, so no Raspberry Pi Imager needed.
+
+```bash
+sudo ./host/flash.sh
+```
+
+It will ask for the target disk, username and password. Or pass everything up front:
+
+```bash
+sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
+```
+
+| Option            | Meaning                                                        |
+|-------------------|----------------------------------------------------------------|
+| `-d DEVICE`       | SD card device node (e.g. `/dev/sda`); prompts if omitted      |
+| `-i IMAGE`        | Flash a locally downloaded `.img` / `.img.xz` instead          |
+| `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
+| `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
+| `-l`              | List candidate disks and exit                                  |
+
+Both scripts cache the image in `downloads/` (git-ignored) and re-verify it each run.
+
+After flashing, put the card in the Pi, power it on, wait 1-2 minutes, then:
+
+```bash
+ssh <username>@raspberrypi.local
+git clone https://github.com/Chriszly/rpi-setup.git
+cd rpi-setup && sudo bash setup.sh
+```
+
+Notes:
+
+- The script writes an empty `ssh` file and a `userconf.txt` file to the `bootfs`
+  partition; the OS creates the account and deletes both on first boot. A user is
+  required because Raspberry Pi OS ships with no default account.
+- Enabling SSH alone is not enough to log in: Raspberry Pi OS ships with no
+  default user, so the script always asks for a username/password too.
+- The downloaded image is cached in `downloads/` (git-ignored) and re-verified
+  on every run.
+
 ## Tasks
 
 | Task         | Description                                                      |
