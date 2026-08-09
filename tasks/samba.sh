@@ -15,6 +15,7 @@ run_samba() {
   chown "$u:$u" "$dir"
 
   local conf=/etc/samba/smb.conf
+  local added=0
   if ! grep -q '^\[nas-share\]' "$conf"; then
     cat >> "$conf" <<EOF
 [nas-share]
@@ -25,6 +26,7 @@ run_samba() {
    guest ok = no
    valid users = ${u}
 EOF
+    added=1
     say "Added [nas-share] section to ${conf}"
   else
     say 'smb.conf already contains the nas-share share'
@@ -37,5 +39,9 @@ EOF
   (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
 
   systemctl enable --now smbd
+  if [[ $added -eq 1 ]]; then
+    testparm -s "$conf" >/dev/null 2>&1 || die 'smb.conf failed testparm validation'
+    systemctl is-active --quiet smbd && systemctl restart smbd
+  fi
   say "Share ready: \\\\$(hostname)\\nas-share (user ${u})"
 }

@@ -6,6 +6,10 @@ TASKS+=("base|OS update, EEPROM firmware, SSH enable, essential tools")
 
 run_base() {
   info 'Refreshing apt lists'
+  apt_update
+  info 'Upgrading installed packages'
+  DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs
+
   apt_install ca-certificates curl gnupg git unzip vim htop tmux fail2ban
 
   if command -v raspi-config >/dev/null 2>&1; then
