@@ -6,6 +6,7 @@ TASKS+=("netalertx|LAN device presence tracking (web UI :20211)")
 
 run_netalertx() {
   command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
+  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
 
   local dir=/opt/netalertx
   local compose="$dir/docker-compose.yml"
