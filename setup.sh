@@ -24,16 +24,18 @@ print_tasks() {
 }
 
 name_to_nums() {
-  local name i found=0
+  local name i found
   for name in "$@"; do
+    found=0
     for i in "${!TASKS[@]}"; do
       if [[ "$(task_name "${TASKS[$i]}")" == "$name" ]]; then
         echo $((i + 1))
         found=1
+        break
       fi
     done
+    [[ $found -eq 1 ]] || die "unknown task: $name"
   done
-  [[ $found -eq 1 ]] || die "unknown task: $1"
 }
 
 dedupe() {
