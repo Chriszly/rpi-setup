@@ -32,6 +32,7 @@ services:
       - "10080:10080/tcp" # Web query
     environment:
       TSSERVER_LICENSE_ACCEPTED: "accept"
+      TSSERVER_QUERY_HTTP_ENABLED: "true"
     volumes:
       - type: bind
         source: $dir/data
