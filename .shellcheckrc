@@ -13,7 +13,4 @@ exclude=SC1090,SC1091,SC2034,SC2154,SC2164,SC2317
 # Shell dialect
 shell=bash
 
-# Enable checking of sourced files
-enable=all
-
 

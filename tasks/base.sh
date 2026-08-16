@@ -33,8 +33,6 @@ run_base() {
 [sshd]
 enabled = true
 port = ssh
-filter = sshd
-logpath = %(sshd_log)s
 backend = systemd
 maxretry = 5
 bantime = 1h

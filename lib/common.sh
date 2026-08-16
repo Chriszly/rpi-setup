@@ -144,6 +144,7 @@ assign_uid() {
       printf '%s\n' "$uid"
       return
     fi
+    warn "Stored UID $uid for $name is now owned by a system account; reassigning."
   fi
   uid="$(find_free_uid)"
   printf '%s\n' "$uid" >"$file"
