@@ -53,8 +53,6 @@ jobs:
     needs: syntax
     if: github.event_name == 'pull_request'
     timeout-minutes: 120
-    env:
-      RPI_IMG: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
     steps:
       - uses: actions/checkout@v4
 
@@ -78,9 +76,9 @@ jobs:
       - name: Extract image
         run: |
           set -euo pipefail
-          if [[ ! -f "$RPI_IMG" ]]; then
+          if [[ ! -f "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" ]]; then
             echo "Extracting Raspberry Pi OS image..."
-            xz -d -k "$RPI_IMG.xz"
+            xz -d -k "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz"
           fi
 
       - name: Grow root partition
@@ -89,9 +87,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq parted >/dev/null
           echo "Growing root partition to 8G..."
-          sudo truncate -s 8G "$RPI_IMG"
-          sudo parted -s "$RPI_IMG" resizepart 2 100%
-          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          sudo truncate -s 8G "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img"
+          sudo parted -s "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" resizepart 2 100%
+          dev="$(sudo losetup -fP --show "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img")"
           sudo e2fsck -fp "${dev}p2" || true
           sudo resize2fs "${dev}p2"
           sudo losetup -d "$dev"
@@ -125,8 +123,6 @@ jobs:
     needs: syntax
     if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 240
-    env:
-      RPI_IMG: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
     steps:
       - uses: actions/checkout@v4
 
@@ -150,9 +146,9 @@ jobs:
       - name: Extract image
         run: |
           set -euo pipefail
-          if [[ ! -f "$RPI_IMG" ]]; then
+          if [[ ! -f "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" ]]; then
             echo "Extracting Raspberry Pi OS image..."
-            xz -d -k "$RPI_IMG.xz"
+            xz -d -k "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz"
           fi
 
       - name: Grow root partition
@@ -161,9 +157,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq parted >/dev/null
           echo "Growing root partition to 8G..."
-          sudo truncate -s 8G "$RPI_IMG"
-          sudo parted -s "$RPI_IMG" resizepart 2 100%
-          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          sudo truncate -s 8G "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img"
+          sudo parted -s "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" resizepart 2 100%
+          dev="$(sudo losetup -fP --show "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img")"
           sudo e2fsck -fp "${dev}p2" || true
           sudo resize2fs "${dev}p2"
           sudo losetup -d "$dev"
@@ -172,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo mkdir -p /tmp/rpi-root
-          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          dev="$(sudo losetup -fP --show "$RUNNER_TEMP/raspios-bookworm-arm64-lite.img")"
           sudo mount "${dev}p2" /tmp/rpi-root
           sudo mkdir -p /tmp/rpi-root/opt
           sudo cp -a "$GITHUB_WORKSPACE" /tmp/rpi-root/opt/rpi-setup
