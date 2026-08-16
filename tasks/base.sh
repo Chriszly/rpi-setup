@@ -7,8 +7,8 @@ TASKS+=("base|OS update, EEPROM firmware, SSH enable, essential tools")
 run_base() {
   info 'Refreshing apt lists'
   apt_update
-  if [[ -n "${GITHUB_ACTIONS:-}" || -n "${CI:-}" ]]; then
-    info 'Skipping package upgrade in CI environment'
+  if [[ -n "${GITHUB_ACTIONS:-}" || -n "${CI:-}" ]] || [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+    info 'Skipping package upgrade in container/CI environment'
   else
     info 'Upgrading installed packages'
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs
