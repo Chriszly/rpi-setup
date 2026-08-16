@@ -72,7 +72,11 @@ function Get-ImagerPath {
         "$env:LOCALAPPDATA\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe",
         "$env:ProgramFiles(x86)\Raspberry Pi Imager\rpi-imager-cli.cmd",
-        "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager-cli.cmd"
+        "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager-cli.cmd",
+        "$env:ProgramFiles(x86)\Raspberry Pi Ltd\Imager\rpi-imager.exe",
+        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager.exe",
+        "$env:ProgramFiles(x86)\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd",
+        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd"
     )
     foreach ($p in $candidates) {
         if ($p -and (Test-Path -LiteralPath $p)) { return $p }
@@ -95,7 +99,7 @@ function Get-ImagerVersion {
     $raw = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
     if (-not $raw) { return $null }
     $v = $null
-    if ([version]::TryParse(($raw -split ' ')[0], [ref]$v)) { return $v }
+    if ([version]::TryParse(($raw -replace '^[vV]' -split ' ')[0], [ref]$v)) { return $v }
     return $null
 }
 
@@ -405,13 +409,13 @@ try {
         $img = Get-Image $DownloadDir
     }
 
-    $disk = Select-Disk $Disk
+    $targetDisk = Select-Disk $Disk
 
-    Invoke-Flash -Disk $disk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
+    Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 
     if (-not $SkipCustomize) {
         $cred = Get-Credentials -UserName $UserName -Password $Password
-        Add-FirstBootFiles -DiskNumber $disk.Number -UserName $cred.User -Password $cred.Pass
+        Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass
     }
 
     Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
