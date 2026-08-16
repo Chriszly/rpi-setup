@@ -40,6 +40,8 @@ login user). They are hardware-agnostic - any Pi that runs Raspberry Pi OS
 Requirements:
 
 - **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
+  (downloaded and installed automatically by the script if it is missing; skip
+  that with `-SkipImagerInstall`)
 - **openssl** - bundled with Git for Windows (skipped with `-SkipCustomize`)
 - An elevated PowerShell (the script flashes a raw disk)
 
@@ -60,7 +62,11 @@ Other useful switches:
 | `-Image <path>` | Flash a locally downloaded `.img` / `.img.xz` instead              |
 | `-SkipDownload` | Require a cached image in `host\downloads\` (no network)           |
 | `-SkipCustomize`| Skip SSH/user setup; boot to the on-screen first-run wizard        |
+| `-SkipImagerInstall` | Don't auto-install Raspberry Pi Imager; fail if it's missing   |
 | `-DownloadDir`  | Override the image download/cache folder (default `host\downloads\`)|
+
+If Raspberry Pi Imager is not installed, the script downloads the latest
+installer into `host\downloads\` and installs it silently before flashing.
 
 ### Linux host — `host/flash.sh`
 

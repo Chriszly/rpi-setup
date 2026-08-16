@@ -6,8 +6,9 @@
 #   * writes it to an SD card with Raspberry Pi Imager
 #   * enables SSH and creates a login user (headless first boot)
 #
-# Requires: Raspberry Pi Imager 2.x (https://www.raspberrypi.com/software/)
-#           and openssl (bundled with Git for Windows) unless -SkipCustomize.
+# If Raspberry Pi Imager is not installed it is downloaded and installed
+# automatically (unless -SkipImagerInstall). Also requires openssl (bundled
+# with Git for Windows) unless -SkipCustomize.
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
@@ -33,7 +34,9 @@ param(
     # Skip SSH/user pre-configuration (boot to the on-screen setup wizard instead).
     [switch]$SkipCustomize,
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
-    [string]$ImagerExe
+    [string]$ImagerExe,
+    # Do not auto-install Raspberry Pi Imager if it is missing (fail instead).
+    [switch]$SkipImagerInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,10 +55,10 @@ function Test-Admin {
     (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Find-Imager {
+function Get-ImagerPath {
     if ($ImagerExe) {
         if (Test-Path -LiteralPath $ImagerExe) { return $ImagerExe }
-        Fail "Raspberry Pi Imager not found at: $ImagerExe"
+        return $null
     }
     $candidates = @()
     if (Get-Command rpi-imager-cli -ErrorAction SilentlyContinue) { $candidates += (Get-Command rpi-imager-cli).Source }
@@ -70,6 +73,33 @@ function Find-Imager {
     foreach ($p in $candidates) {
         if ($p -and (Test-Path -LiteralPath $p)) { return $p }
     }
+    return $null
+}
+
+function Install-Imager {
+    if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
+    $installer = Join-Path $DownloadDir 'imager_latest.exe'
+    if (-not (Test-Path -LiteralPath $installer)) {
+        Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
+    }
+    Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
+    $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+    if ($p.ExitCode -ne 0) {
+        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode)."
+    }
+}
+
+function Find-Imager {
+    if ($ImagerExe) {
+        $p = Get-ImagerPath
+        if ($p) { return $p }
+        Fail "Raspberry Pi Imager not found at: $ImagerExe"
+    }
+    $p = Get-ImagerPath
+    if ($p) { return $p }
+    if (-not $SkipImagerInstall) { Install-Imager }
+    $p = Get-ImagerPath
+    if ($p) { return $p }
     Fail 'Raspberry Pi Imager not found. Install it from https://www.raspberrypi.com/software/ and re-run.'
 }
 

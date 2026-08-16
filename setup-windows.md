@@ -11,7 +11,8 @@ For the equivalent guide on a Linux host, see [setup-linux.md](setup-linux.md).
 
 - A Raspberry Pi (any model that runs Raspberry Pi OS 64-bit) and an SD card
   (plus a card reader for your PC).
-- **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
+- **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/. The flash
+  script installs it automatically if it is missing (silently, admin required).
 - **openssl** - bundled with Git for Windows. Only needed for the SSH/user
   setup step; skip it entirely with `-SkipCustomize`.
 - An **elevated** PowerShell (the script flashes a raw disk).
@@ -77,6 +78,10 @@ Useful switches (see the README for the full table):
 | `-Image <path>`  | Flash a locally downloaded `.img` / `.img.xz` instead  |
 | `-SkipDownload`  | Require a cached image in `host\downloads\` (offline)  |
 | `-SkipCustomize` | Skip SSH/user setup; boot to the on-screen wizard      |
+| `-SkipImagerInstall` | Fail if Raspberry Pi Imager is missing (no auto-install) |
+
+If Raspberry Pi Imager is not installed, the script downloads the latest
+installer into `host\downloads\` and installs it silently before flashing.
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).
