@@ -69,6 +69,8 @@ If Raspberry Pi Imager is missing or outdated, the script downloads the latest
 installer into `host\downloads\` and installs it silently before flashing. The
 installer is cached by version (`imager_<version>.exe`), so a newer release is
 fetched automatically; re-running also upgrades an already-installed Imager.
+If the script performed the install, Raspberry Pi Imager is uninstalled again
+automatically once the setup completes.
 
 ### Linux host — `host/flash.sh`
 

@@ -7,8 +7,10 @@
 #   * enables SSH and creates a login user (headless first boot)
 #
 # If Raspberry Pi Imager is missing or outdated, the latest installer is
-# downloaded and installed automatically (unless -SkipImagerInstall). Also
-# requires openssl (bundled with Git for Windows) unless -SkipCustomize.
+# downloaded and installed silently (unless -SkipImagerInstall). When the
+# script performed the install, Raspberry Pi Imager is uninstalled again once
+# flashing completes. Also requires openssl (bundled with Git for Windows)
+# unless -SkipCustomize.
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
@@ -44,6 +46,7 @@ $ErrorActionPreference = 'Stop'
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
 $Script:DefaultRelease = 'raspios_lite_arm64-2026-06-19'                    # fallback if the archive cannot be parsed
 $Script:DefaultImage   = '2026-06-18-raspios-trixie-arm64-lite.img.xz'     # fallback file within $Script:DefaultRelease
+$Script:ImagerInstalledByScript = $false                                    # set when Install-Imager succeeds
 
 function Write-Step { param([string]$m) Write-Host "[+] $m" -ForegroundColor Green }
 function Write-Info { param([string]$m) Write-Host "[*] $m" -ForegroundColor Cyan }
@@ -113,6 +116,28 @@ function Install-Imager {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
         Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). The cached installer was removed; re-run to download it again."
     }
+    $Script:ImagerInstalledByScript = $true
+}
+
+function Uninstall-Imager {
+    # Remove the Imager that this script installed, leaving the host clean.
+    # Inno Setup places unins000.exe next to rpi-imager.exe.
+    $exe = Get-ImagerPath
+    if (-not $exe) { Write-Warn 'Raspberry Pi Imager binary no longer found; nothing to uninstall.'; return }
+    $uninstaller = Join-Path (Split-Path -Parent $exe) 'unins000.exe'
+    if (-not (Test-Path -LiteralPath $uninstaller)) {
+        Write-Warn "Imager uninstaller not found at $uninstaller; leaving the installation in place."
+        return
+    }
+    Write-Step "Uninstalling Raspberry Pi Imager (silent)"
+    $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+    if ($p.ExitCode -ne 0) {
+        Write-Warn "Raspberry Pi Imager uninstaller exited with code $($p.ExitCode)."
+    }
+    $dir = $script:DownloadDir
+    if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
+    Get-ChildItem -LiteralPath $dir -Filter 'imager_*.exe' -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
 function Find-Imager {
@@ -374,6 +399,10 @@ Invoke-Flash -Disk $disk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 if (-not $SkipCustomize) {
     $cred = Get-Credentials -UserName $UserName -Password $Password
     Add-FirstBootFiles -DiskNumber $disk.Number -UserName $cred.User -Password $cred.Pass
+}
+
+if ($Script:ImagerInstalledByScript) {
+    Uninstall-Imager
 }
 
 Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
