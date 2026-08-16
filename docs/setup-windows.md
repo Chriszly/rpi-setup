@@ -72,14 +72,15 @@ Or pass everything up front:
 .\host\flash.ps1 -Disk 2 -UserName pi -Password 'change-me'
 ```
 
-Useful switches (see the README for the full table):
+All switches:
 
-| Switch              | Meant for                                                    |
-|---------------------|--------------------------------------------------------------|
-| `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead        |
-| `-SkipDownload`     | Require a cached image in `host\downloads\` (offline)        |
-| `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen wizard            |
-| `-SkipImagerInstall`| Don't auto-install/auto-update Imager; fail if missing       |
+| Switch              | Meaning                                                             |
+|---------------------|---------------------------------------------------------------------|
+| `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead               |
+| `-SkipDownload`     | Require a cached image in `host\downloads\` (no network)            |
+| `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
+| `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
+| `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 
 If Raspberry Pi Imager is missing or outdated, the script downloads the latest
 installer into `host\downloads\` and installs it silently before flashing. The

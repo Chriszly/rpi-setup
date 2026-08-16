@@ -5,9 +5,6 @@ run one script, done. Designed for **Raspberry Pi OS** (64-bit, Bookworm or late
 
 ## Quick start
 
-> New to this? Follow the step-by-step guides: [setup-windows.md](setup-windows.md)
-> (flash from Windows) or [setup-linux.md](setup-linux.md) (flash from Linux).
-
 ```bash
 git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
@@ -27,96 +24,6 @@ List available tasks without changing anything:
 sudo bash setup.sh --list
 ```
 
-## Fresh OS on an SD card
-
-Both scripts prepare a bootable SD card for a **headless Raspberry Pi**: they
-download the latest **Raspberry Pi OS Lite (64-bit, arm64)** image, verify its
-SHA-256, write it to the card, and pre-configure first boot (SSH enabled + a
-login user). They are hardware-agnostic - any Pi that runs Raspberry Pi OS
-(64-bit) works.
-
-### Windows host — `host/flash.ps1`
-
-Requirements:
-
-- **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
-  (downloaded, installed and kept up to date automatically by the script; skip
-  that with `-SkipImagerInstall`)
-- **openssl** - bundled with Git for Windows (skipped with `-SkipCustomize`)
-- An elevated PowerShell (the script flashes a raw disk)
-
-```powershell
-.\host\flash.ps1
-```
-
-It will ask for the target disk, username and password. Or pass everything up front:
-
-```powershell
-.\host\flash.ps1 -Disk 2 -UserName pi -Password 'change-me'
-```
-
-Other useful switches:
-
-| Switch              | Meaning                                                             |
-|---------------------|---------------------------------------------------------------------|
-| `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead               |
-| `-SkipDownload`     | Require a cached image in `host\downloads\` (no network)            |
-| `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
-| `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
-| `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
-
-If Raspberry Pi Imager is missing or outdated, the script downloads the latest
-installer into `host\downloads\` and installs it silently before flashing. The
-installer is cached by version (`imager_<version>.exe`), so a newer release is
-fetched automatically; re-running also upgrades an already-installed Imager.
-When the script installs or upgrades Imager, it is uninstalled again once the
-run finishes - even if it failed - including any pre-existing installation it
-replaced, leaving the host clean.
-
-### Linux host — `host/flash.sh`
-
-Requires `curl`, `xz`, `dd`, `mount`, `openssl` and `partprobe` (from `parted`).
-Uses `dd` directly, so no Raspberry Pi Imager needed.
-
-```bash
-sudo ./host/flash.sh
-```
-
-It will ask for the target disk, username and password. Or pass everything up front:
-
-```bash
-sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
-```
-
-| Option            | Meaning                                                        |
-|-------------------|----------------------------------------------------------------|
-| `-d DEVICE`       | SD card device node (e.g. `/dev/sda`); prompts if omitted      |
-| `-i IMAGE`        | Flash a locally downloaded `.img` / `.img.xz` instead          |
-| `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
-| `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
-| `-l`              | List candidate disks and exit                                  |
-
-Both scripts cache the image in `host/downloads/` (git-ignored) and re-verify
-it each run.
-
-After flashing, put the card in the Pi, power it on, wait 1-2 minutes, then:
-
-```bash
-ssh <username>@raspberrypi.local
-git clone https://github.com/Chriszly/rpi-setup.git
-cd rpi-setup && sudo bash setup.sh
-```
-
-Notes:
-
-- The script writes an empty `ssh` file and a `userconf.txt` file to the `bootfs`
-  partition; the OS creates the account and deletes both on first boot. A user is
-  required because Raspberry Pi OS ships with no default account.
-- Enabling SSH alone is not enough to log in: Raspberry Pi OS ships with no
-  default user, so the script always asks for a username/password too.
-- The downloaded image is cached in `host/downloads/` (git-ignored) and
-  re-verified on every run.
-
 ## Tasks
 
 | Task         | Description                                                      |
@@ -135,22 +42,14 @@ Tasks are plain bash scripts inside `tasks/` - add your own by dropping in a
 file that appends to `TASKS` and defines a `run_<name>` function. See
 `tasks/base.sh` for the pattern.
 
-## Testing in CI
+## Documentation
 
-Every PR is validated against a real **Raspberry Pi OS arm64** image in GitHub
-Actions, so task changes are exercised before they land:
-
-- **PR gate** (`provision-gate`) - boots the pinned Raspberry Pi OS image in a
-  `systemd-nspawn` container and runs the tasks plus service/port checks plus an
-  idempotency re-run. This is the fast per-PR check.
-- **Full VM** (`provision-qemu`) - boots the same image under QEMU (Raspberry Pi
-  3B+ emulation) for maximum fidelity. Runs manually via the *Run workflow*
-  button (`workflow_dispatch`) on GitHub.
-- **Lint** (`syntax`) - `bash -n`, `shellcheck` and `setup.sh --list` on every
-  PR, push to `main`, and manual run.
-
-See [docs/ci-testing.md](docs/ci-testing.md) for how it works, known
-limitations, and how to bump the pinned image.
+- [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
+  `host/flash.ps1` and provision the Pi, step by step.
+- [Setup guide - Linux host](docs/setup-linux.md) - flash an SD card with
+  `host/flash.sh` and provision the Pi, step by step.
+- [CI testing](docs/ci-testing.md) - how the GitHub Actions test environment
+  works, its limitations, and how to bump the pinned image.
 
 ## Notes
 
