@@ -148,6 +148,10 @@ function Uninstall-Imager {
         if ($p.ExitCode -ne 0) {
             Write-Warn "Raspberry Pi Imager uninstaller exited with code $($p.ExitCode)."
         }
+    } catch {
+        # A cleanup problem must never turn a successful run into a failure or
+        # mask the error the run actually failed with - report and carry on.
+        Write-Warn "Could not uninstall Raspberry Pi Imager: $($_.Exception.Message)"
     } finally {
         # The cache is always cleared - even if the uninstaller was missing or
         # failed - so a later run cannot reuse stale or partial artifacts.
@@ -415,11 +419,6 @@ try {
     if (-not $SkipCustomize) {
         $cred = Get-Credentials -UserName $UserName -Password $Password
         Add-FirstBootFiles -DiskNumber $disk.Number -UserName $cred.User -Password $cred.Pass
-    }
-
-    if ($Script:ImagerInstalledByScript) {
-        Uninstall-Imager
-        $Script:ImagerInstalledByScript = $false
     }
 
     Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
