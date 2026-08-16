@@ -51,7 +51,7 @@ dedupe() {
 
 prompt_selection() {
   local line p
-  printf '> '
+  printf '> ' >&2
   IFS= read -r line
   line="${line//,/ }"
   [[ -z "${line// /}" ]] && return
