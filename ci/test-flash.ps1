@@ -116,6 +116,21 @@ try {
     Remove-Item -LiteralPath $mock2 -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# --- Test-FlashableDisk: removable SD/USB flashable; virtual only via -AllowVirtualDisk
+$mockSD   = [pscustomobject]@{ IsSystem = $false; IsRemovable = $true;  BusType = 'SD' }
+$mockUSB  = [pscustomobject]@{ IsSystem = $false; IsRemovable = $true;  BusType = 'USB' }
+$mockVhdx = [pscustomobject]@{ IsSystem = $false; IsRemovable = $false; BusType = 'File Backed Virtual' }
+$mockSys  = [pscustomobject]@{ IsSystem = $true;  IsRemovable = $false; BusType = 'SATA' }
+
+Assert-True (Test-FlashableDisk $mockSD $false)        'Test-FlashableDisk: removable SD disk is flashable'
+Assert-True (Test-FlashableDisk $mockUSB $false)       'Test-FlashableDisk: removable USB disk is flashable'
+Assert-True (-not (Test-FlashableDisk $mockVhdx $false)) 'Test-FlashableDisk: virtual disk is NOT flashable by default'
+Assert-True (Test-FlashableDisk $mockVhdx $true)       'Test-FlashableDisk: virtual disk is flashable with -AllowVirtualDisk'
+Assert-True (-not (Test-FlashableDisk $mockSys $true)) 'Test-FlashableDisk: system disk is never flashable'
+
+# --- Invoke-Flash must let Imager write virtual SD cards (CI) without weakening production safety
+Assert-True ($source -match '(?s)\$AllowVirtualDisk.*--enable-writing-system-drives') "Invoke-Flash passes '--enable-writing-system-drives' only with -AllowVirtualDisk (Imager rejects non-removable VHDX otherwise)"
+
 # --- main() must not assign the selected disk to $disk (collides with [int]$Disk)
 Assert-True ($source -match '\$targetDisk\s*=\s*Select-Disk\s*\$Disk') "main() assigns Select-Disk result to `$targetDisk (avoids [int]`$Disk collision)"
 

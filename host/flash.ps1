@@ -39,7 +39,11 @@ param(
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
     [string]$ImagerExe,
     # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
-    [switch]$SkipImagerInstall
+    [switch]$SkipImagerInstall,
+    # Permit flashing a non-removable disk by number. Off by default; used by CI,
+    # which runs this setup flow against a virtual SD card (a mounted VHDX) on an
+    # isolated runner. Interactive selection still only offers removable SD/USB.
+    [switch]$AllowVirtualDisk
 )
 
 $ErrorActionPreference = 'Stop'
@@ -246,12 +250,19 @@ function Get-Image {
     return @{ Path = $imgPath; Hash = $expected.ToLowerInvariant() }
 }
 
+function Test-FlashableDisk {
+    param($Disk, [bool]$AllowVirtual = $false)
+    # A disk is flashable when it is a removable SD/USB/eMMC card, or - with
+    # -AllowVirtualDisk (CI mode) - any non-system disk such as a mounted VHDX
+    # virtual SD card on an isolated test runner. The system disk is never
+    # flashable.
+    -not $Disk.IsSystem -and ($AllowVirtual -or $Disk.IsRemovable -or $Disk.BusType -in @('SD', 'eMMC'))
+}
+
 function Select-Disk {
     param([int]$Requested)
 
-    $disks = Get-Disk | Where-Object {
-        ($_.IsRemovable -or $_.BusType -in @('SD', 'eMMC')) -and -not $_.IsSystem
-    } | Sort-Object Number
+    $disks = Get-Disk | Where-Object { Test-FlashableDisk $_ ([bool]$AllowVirtualDisk) } | Sort-Object Number
 
     if ($disks.Count -eq 0) {
         Write-Warn 'No removable SD/USB disk detected. Make sure your card reader is plugged in and the card is inserted.'
@@ -287,11 +298,15 @@ function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
-    if ($Hash) {
-        & $Imager --cli --sha256 $Hash --disable-telemetry $ImagePath $device
-    } else {
-        & $Imager --cli --disable-telemetry $ImagePath $device
+    $cliArgs = @('--cli', '--disable-telemetry')
+    if ($AllowVirtualDisk) {
+        # CI mode: the target is a mounted VHDX, which Imager does not consider
+        # removable and would otherwise reject (or eject after writing). The disk
+        # must stay attached so the boot partition can be set up afterwards.
+        $cliArgs += @('--enable-writing-system-drives', '--disable-eject')
     }
+    if ($Hash) { $cliArgs += '--sha256', $Hash }
+    & $Imager @cliArgs $ImagePath $device
     if ($LASTEXITCODE -ne 0) { Fail "Raspberry Pi Imager failed with exit code $LASTEXITCODE." }
 }
 
@@ -348,6 +363,10 @@ function Get-BootRoot {
     for ($i = 0; $i -lt 30; $i++) {
         if ($i -gt 0) { Start-Sleep -Seconds 2 }
         try {
+            # Best-effort: re-read the partition table the flasher just wrote.
+            # Not strictly needed on real cards, but required for virtual SD
+            # disks (CI), which Windows does not auto-rescan after a raw write.
+            Update-HostStorageCache | Out-Null
             foreach ($v in (Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'FAT32' })) {
                 $p = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction SilentlyContinue
                 if ($p -and $p.DiskNumber -eq $DiskNumber -and $p.Size -lt 2GB) { return "$($v.DriveLetter):\" }

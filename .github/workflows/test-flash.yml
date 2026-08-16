@@ -36,3 +36,89 @@ jobs:
       - name: Run flash.ps1 unit tests
         shell: pwsh
         run: ./ci/test-flash.ps1
+
+  flash-e2e:
+    name: Run flash.ps1 setup in isolated VM
+    runs-on: windows-latest
+    needs: flash
+    # PR gate + manual runs; the per-PR gate already covers merges to main.
+    if: github.event_name != 'push'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute download cache key
+        id: cachekey
+        shell: pwsh
+        run: |
+          "key=flash-downloads-$(Get-Date -Format yyyy-MM-dd)" >> $env:GITHUB_OUTPUT
+
+      - name: Restore cached image and Imager downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/flash-downloads
+          key: ${{ steps.cachekey.outputs.key }}
+
+      - name: Attach virtual SD card (VHDX)
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'sd.vhdx'
+          New-VHD -Path $vhd -SizeBytes 12GB -Dynamic | Out-Null
+          Mount-VHD -Path $vhd -ErrorAction SilentlyContinue
+          $disk = $null
+          for ($i = 0; $i -lt 30 -and -not $disk; $i++) {
+            $disk = Get-Disk | Where-Object {
+              $_.Location -like "*$vhd*" -or $_.BusType -eq 'File Backed Virtual'
+            } | Select-Object -First 1
+            if (-not $disk) { Start-Sleep -Seconds 2 }
+          }
+          if (-not $disk) { throw "Virtual SD card did not attach as a disk: $vhd" }
+          "VHD_PATH=$vhd" >> $env:GITHUB_ENV
+          "VHD_DISK=$($disk.Number)" >> $env:GITHUB_ENV
+          Write-Host "Attached virtual SD card as disk $($disk.Number)"
+
+      - name: Run flash.ps1 setup flow against the virtual SD card
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File host/flash.ps1 `
+            -Disk $env:VHD_DISK `
+            -UserName pi `
+            -Password 'ChangeMe123!' `
+            -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
+            -AllowVirtualDisk
+
+      - name: Verify first-boot files on the virtual SD card
+        shell: pwsh
+        run: |
+          $boot = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            $part = Get-Partition -DiskNumber ([int]$env:VHD_DISK) -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DriveLetter -and $_.Size -lt 2GB } | Select-Object -First 1
+            if ($part) { $boot = "$($part.DriveLetter):\"; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $boot) { throw "Boot partition not found on disk $env:VHD_DISK after flashing" }
+          $sshOk = Test-Path -LiteralPath (Join-Path $boot 'ssh')
+          $ucOk  = Test-Path -LiteralPath (Join-Path $boot 'userconf.txt')
+          if (-not ($sshOk -and $ucOk)) {
+            throw "First-boot files missing on $boot (ssh=$sshOk userconf=$ucOk)"
+          }
+          Write-Host "OK: 'ssh' and 'userconf.txt' present on $boot"
+
+      - name: Save downloads to cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/flash-downloads
+          key: ${{ steps.cachekey.outputs.key }}
+
+      - name: Detach and remove virtual SD card
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $vhd = $env:VHD_PATH
+          if (Test-Path -LiteralPath $vhd) {
+            try { Dismount-VHD -Path $vhd -ErrorAction Stop } catch { }
+            Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+          }

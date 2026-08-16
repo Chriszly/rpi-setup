@@ -81,6 +81,7 @@ All switches:
 | `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
 | `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
+| `-AllowVirtualDisk` | Permit flashing a non-removable disk by number (advanced; CI uses it to flash a mounted VHDX virtual SD card) |
 
 If Raspberry Pi Imager is missing or outdated, the script downloads the latest
 installer into `host\downloads\` and installs it silently before flashing. The
