@@ -1,0 +1,30 @@
+name: PR Template Validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate-pr-template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body matches template
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const requiredSections = [
+              '## Summary',
+              '## Type of change',
+              '## Checklist',
+              '## Testing'
+            ];
+
+            const heading = (section) => new RegExp(`^${section}(?: |\r?$|:|\n)`, 'm');
+            const missing = requiredSections.filter(section => !heading(section).test(body));
+
+            if (missing.length > 0) {
+              core.setFailed(`PR description is missing required sections: ${missing.join(', ')}. Please use the PR template.`);
+            } else {
+              console.log('PR template validation passed.');
+            }

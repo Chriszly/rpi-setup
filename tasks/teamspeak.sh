@@ -17,6 +17,8 @@ run_teamspeak() {
     return
   fi
 
+  # The official image runs as uid:gid 9987 and ignores PUID/PGID, so the data
+  # directory must stay owned by 9987 for the bind mount to be writable.
   ensure_container_dir "$dir" 9987
 
   cat >"$dir/docker-compose.yml" <<EOF

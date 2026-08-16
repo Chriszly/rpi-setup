@@ -91,6 +91,10 @@ main() {
 
   need_root
 
+  if ! is_pi; then
+    warn 'This does not appear to be a Raspberry Pi. Some tasks may not work correctly.'
+  fi
+
   local -a nums=()
   if [[ $# -gt 0 ]]; then
     nums=($(name_to_nums "$@"))

@@ -19,8 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/common.sh"
 
 BASE_URI="https://downloads.raspberrypi.com/raspios_lite_arm64"
-DEFAULT_RELEASE="raspios_lite_arm64-2026-06-19"        # fallback if the archive cannot be parsed
-DEFAULT_IMAGE="2026-06-18-raspios-trixie-arm64-lite.img.xz"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$SCRIPT_DIR/downloads}"
 MOUNT_DIR="${MOUNT_DIR:-/mnt/rpi-boot}"
 
@@ -88,15 +86,12 @@ list_candidates() {
 latest_release() {
   local html
   if ! html="$(curl -fsSL "$BASE_URI/images/")"; then
-    warn "Could not query image archive; using pinned release $DEFAULT_RELEASE."
-    echo "$DEFAULT_RELEASE"
-    return
+    die "Could not query image archive. Check network connectivity or use -i to specify a local image."
   fi
   local latest
   latest="$(echo "$html" | grep -oE 'raspios_lite_arm64-[0-9]{4}-[0-9]{2}-[0-9]{2}' | sort -u | tail -n1)"
   if [[ -z "$latest" ]]; then
-    warn "Could not determine latest release; using $DEFAULT_RELEASE."
-    latest="$DEFAULT_RELEASE"
+    die "Could not determine latest release from archive listing. Use -i to specify a local image."
   fi
   echo "$latest"
 }
@@ -105,8 +100,7 @@ fetch_image() {
   local release="$1" img sha
   img="$(curl -fsSL "$BASE_URI/images/$release/" | grep -oE 'href="[^"]+\.img\.xz"' | head -n1 | sed 's/href="//; s/"$//')"
   if [[ -z "$img" ]]; then
-    warn "Could not parse release listing; falling back to pinned file $DEFAULT_IMAGE."
-    img="$DEFAULT_IMAGE"
+    die "Could not parse release listing for $release. Use -i to specify a local image."
   fi
   sha="$img.sha256"
 
