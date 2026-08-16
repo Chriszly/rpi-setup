@@ -8,7 +8,7 @@ run_base() {
   info 'Refreshing apt lists'
   apt_update
   info 'Holding kernel packages to avoid issues in containers'
-  apt-mark hold 'linux-image-*' 'linux-headers-*' 'raspberrypi-kernel*' 'raspberrypi-kernel-headers*' 2>/dev/null || true
+  dpkg-query -W -f='${Package}\n' 'linux-image-*' 'linux-headers-*' 'raspberrypi-kernel*' 'raspberrypi-kernel-headers*' 2>/dev/null | xargs -r apt-mark hold 2>/dev/null || true
   info 'Upgrading installed packages'
   DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs
 
