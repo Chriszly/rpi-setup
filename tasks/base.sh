@@ -42,5 +42,5 @@ findtime = 10m
 EOF
     say 'Created /etc/fail2ban/jail.local with SSH protection'
   fi
-  systemctl enable --now fail2ban 2>/dev/null || true
+  systemctl enable --now fail2ban || warn 'fail2ban could not be enabled/started; check its configuration.'
 }

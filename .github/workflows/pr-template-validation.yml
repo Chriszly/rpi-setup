@@ -20,7 +20,8 @@ jobs:
               '## Testing'
             ];
 
-            const missing = requiredSections.filter(section => !body.includes(section));
+            const heading = (section) => new RegExp(`^${section}(?: |\r?$|:|\n)`, 'm');
+            const missing = requiredSections.filter(section => !heading(section).test(body));
 
             if (missing.length > 0) {
               core.setFailed(`PR description is missing required sections: ${missing.join(', ')}. Please use the PR template.`);

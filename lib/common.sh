@@ -118,12 +118,30 @@ wait_for_log() {
   printf '%s\n' "$line"
 }
 
-# Find an unused UID/GID >= 10000 to avoid conflicts with system users.
-# Returns the first available ID.
+# Find an unused UID/GID >= 10000 that isn't a system account and hasn't been
+# assigned to another rpi-setup service. Returns the first available ID.
 find_free_uid() {
-  local start=10000
-  while getent passwd "$start" >/dev/null 2>&1 || getent group "$start" >/dev/null 2>&1; do
+  local start=10000 used=""
+  used="$(cat /var/lib/rpi-setup/uids/* 2>/dev/null || true)"
+  while getent passwd "$start" >/dev/null 2>&1 ||
+        getent group "$start" >/dev/null 2>&1 ||
+        grep -qx "$start" <<<"$used"; do
     start=$((start + 1))
   done
   printf '%s\n' "$start"
+}
+
+# Assign (or recall) a stable UID/GID for a named service, persisted under
+# /var/lib/rpi-setup/uids/. Re-runs reuse the same ID so container data keeps a
+# consistent owner and services never collide.
+assign_uid() {
+  local name="$1" file="/var/lib/rpi-setup/uids/$name" uid
+  if [[ -r "$file" ]] && [[ "$(<"$file")" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$(<"$file")"
+    return
+  fi
+  uid="$(find_free_uid)"
+  install -m 0755 -d /var/lib/rpi-setup/uids
+  printf '%s\n' "$uid" >"$file"
+  printf '%s\n' "$uid"
 }

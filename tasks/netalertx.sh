@@ -18,7 +18,7 @@ run_netalertx() {
   fi
 
   local uid
-  uid="$(find_free_uid)"
+  uid="$(assign_uid netalertx)"
   ensure_container_dir "$dir" "$uid"
 
   local subnet_cfg conf_override=""

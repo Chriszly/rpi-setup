@@ -36,7 +36,8 @@ When adding a new task:
 3. Define `run_<name>()` function
 4. Use `require_docker` helper for Docker-dependent tasks
 5. Use `ensure_container_dir` and `compose_up` for container tasks
-6. Use dynamic UIDs via `find_free_uid()` to avoid conflicts
+6. Use `assign_uid <service>` for a stable per-service UID/GID (persisted under `/var/lib/rpi-setup/uids/`) so re-runs keep the same owner and services never collide
+7. Keep a fixed UID where the upstream image requires one - e.g. `teamspeak` runs as `9987` and ignores `PUID`/`PGID`, so its data dir must stay owned by `9987`
 
 ## Security Guidelines
 
@@ -72,7 +73,7 @@ All PRs must include:
 
 ## Common Pitfalls to Avoid
 
-- Don't assume specific UIDs/GIDs - use `find_free_uid()`
+- Don't assume specific UIDs/GIDs - use `assign_uid <service>` (except where the image needs a fixed one, like `teamspeak`)
 - Don't skip `apt_update()` before `apt_install()`
 - Don't use `curl | bash` without warning
 - Don't hardcode fallback versions/dates - fail with actionable error instead

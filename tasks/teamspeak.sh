@@ -17,9 +17,9 @@ run_teamspeak() {
     return
   fi
 
-  local uid
-  uid="$(find_free_uid)"
-  ensure_container_dir "$dir" "$uid"
+  # The official image runs as uid:gid 9987 and ignores PUID/PGID, so the data
+  # directory must stay owned by 9987 for the bind mount to be writable.
+  ensure_container_dir "$dir" 9987
 
   cat >"$dir/docker-compose.yml" <<EOF
 services:
@@ -34,8 +34,6 @@ services:
     environment:
       TSSERVER_LICENSE_ACCEPTED: "accept"
       TSSERVER_QUERY_HTTP_ENABLED: "true"
-      PUID: $uid
-      PGID: $uid
     volumes:
       - type: bind
         source: $dir/data
