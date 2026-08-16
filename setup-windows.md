@@ -12,7 +12,8 @@ For the equivalent guide on a Linux host, see [setup-linux.md](setup-linux.md).
 - A Raspberry Pi (any model that runs Raspberry Pi OS 64-bit) and an SD card
   (plus a card reader for your PC).
 - **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/. The flash
-  script installs it automatically if it is missing (silently, admin required).
+  script installs it automatically and keeps it up to date if it is missing or
+  outdated (silently, admin required).
 - **openssl** - bundled with Git for Windows. Only needed for the SSH/user
   setup step; skip it entirely with `-SkipCustomize`.
 - An **elevated** PowerShell (the script flashes a raw disk).
@@ -73,15 +74,17 @@ Or pass everything up front:
 
 Useful switches (see the README for the full table):
 
-| Switch           | Meant for                                              |
-|------------------|--------------------------------------------------------|
-| `-Image <path>`  | Flash a locally downloaded `.img` / `.img.xz` instead  |
-| `-SkipDownload`  | Require a cached image in `host\downloads\` (offline)  |
-| `-SkipCustomize` | Skip SSH/user setup; boot to the on-screen wizard      |
-| `-SkipImagerInstall` | Fail if Raspberry Pi Imager is missing (no auto-install) |
+| Switch              | Meant for                                                    |
+|---------------------|--------------------------------------------------------------|
+| `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead        |
+| `-SkipDownload`     | Require a cached image in `host\downloads\` (offline)        |
+| `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen wizard            |
+| `-SkipImagerInstall`| Don't auto-install/auto-update Imager; fail if missing       |
 
-If Raspberry Pi Imager is not installed, the script downloads the latest
-installer into `host\downloads\` and installs it silently before flashing.
+If Raspberry Pi Imager is missing or outdated, the script downloads the latest
+installer into `host\downloads\` and installs it silently before flashing. The
+installer is cached by version (`imager_<version>.exe`), so a newer release is
+fetched automatically; re-running also upgrades an already-installed Imager.
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).

@@ -6,9 +6,9 @@
 #   * writes it to an SD card with Raspberry Pi Imager
 #   * enables SSH and creates a login user (headless first boot)
 #
-# If Raspberry Pi Imager is not installed it is downloaded and installed
-# automatically (unless -SkipImagerInstall). Also requires openssl (bundled
-# with Git for Windows) unless -SkipCustomize.
+# If Raspberry Pi Imager is missing or outdated, the latest installer is
+# downloaded and installed automatically (unless -SkipImagerInstall). Also
+# requires openssl (bundled with Git for Windows) unless -SkipCustomize.
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
@@ -35,7 +35,7 @@ param(
     [switch]$SkipCustomize,
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
     [string]$ImagerExe,
-    # Do not auto-install Raspberry Pi Imager if it is missing (fail instead).
+    # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
     [switch]$SkipImagerInstall
 )
 
@@ -67,6 +67,7 @@ function Get-ImagerPath {
         "$env:ProgramFiles(x86)\Raspberry Pi Imager\rpi-imager.exe",
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Raspberry Pi Imager\rpi-imager.exe",
+        "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe",
         "$env:ProgramFiles(x86)\Raspberry Pi Imager\rpi-imager-cli.cmd",
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager-cli.cmd"
     )
@@ -76,16 +77,41 @@ function Get-ImagerPath {
     return $null
 }
 
+function Get-ImagerLatestVersion {
+    # imager_latest.exe 302-redirects to imager_<version>.exe; the final URL encodes the version.
+    $target = & curl.exe -sIL -o NUL -w '%{url_effective}' 'https://downloads.raspberrypi.com/imager/imager_latest.exe'
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $m = [regex]::Match($target, 'imager_(\d+\.\d+\.\d+(?:\.\d+)?)\.exe')
+    $v = $null
+    if ($m.Success -and [version]::TryParse($m.Groups[1].Value, [ref]$v)) { return $v }
+    return $null
+}
+
+function Get-ImagerVersion {
+    param([string]$Path)
+    $raw = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
+    if (-not $raw) { return $null }
+    $v = $null
+    if ([version]::TryParse(($raw -split ' ')[0], [ref]$v)) { return $v }
+    return $null
+}
+
 function Install-Imager {
-    if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
-    $installer = Join-Path $DownloadDir 'imager_latest.exe'
-    if (-not (Test-Path -LiteralPath $installer)) {
+    $dir = $script:DownloadDir
+    if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+
+    $latest = Get-ImagerLatestVersion
+    $fileName = if ($latest) { "imager_$latest.exe" } else { 'imager_latest.exe' }
+    $installer = Join-Path $dir $fileName
+    if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -eq 0) {
         Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
     }
     Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
     $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
     if ($p.ExitCode -ne 0) {
-        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode)."
+        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). The cached installer was removed; re-run to download it again."
     }
 }
 
@@ -95,9 +121,16 @@ function Find-Imager {
         if ($p) { return $p }
         Fail "Raspberry Pi Imager not found at: $ImagerExe"
     }
-    $p = Get-ImagerPath
-    if ($p) { return $p }
-    if (-not $SkipImagerInstall) { Install-Imager }
+    if (-not $SkipImagerInstall) {
+        $p        = Get-ImagerPath
+        $latest   = Get-ImagerLatestVersion
+        $installed = if ($p) { Get-ImagerVersion $p } else { $null }
+        if ($p -and $installed -and $latest -and $installed -ge $latest) {
+            Write-Step "Raspberry Pi Imager is up to date (v$latest)."
+            return $p
+        }
+        Install-Imager
+    }
     $p = Get-ImagerPath
     if ($p) { return $p }
     Fail 'Raspberry Pi Imager not found. Install it from https://www.raspberrypi.com/software/ and re-run.'

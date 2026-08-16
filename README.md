@@ -40,7 +40,7 @@ login user). They are hardware-agnostic - any Pi that runs Raspberry Pi OS
 Requirements:
 
 - **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/
-  (downloaded and installed automatically by the script if it is missing; skip
+  (downloaded, installed and kept up to date automatically by the script; skip
   that with `-SkipImagerInstall`)
 - **openssl** - bundled with Git for Windows (skipped with `-SkipCustomize`)
 - An elevated PowerShell (the script flashes a raw disk)
@@ -57,16 +57,18 @@ It will ask for the target disk, username and password. Or pass everything up fr
 
 Other useful switches:
 
-| Switch          | Meaning                                                        |
-|-----------------|----------------------------------------------------------------|
-| `-Image <path>` | Flash a locally downloaded `.img` / `.img.xz` instead              |
-| `-SkipDownload` | Require a cached image in `host\downloads\` (no network)           |
-| `-SkipCustomize`| Skip SSH/user setup; boot to the on-screen first-run wizard        |
-| `-SkipImagerInstall` | Don't auto-install Raspberry Pi Imager; fail if it's missing   |
-| `-DownloadDir`  | Override the image download/cache folder (default `host\downloads\`)|
+| Switch              | Meaning                                                             |
+|---------------------|---------------------------------------------------------------------|
+| `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead               |
+| `-SkipDownload`     | Require a cached image in `host\downloads\` (no network)            |
+| `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
+| `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
+| `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 
-If Raspberry Pi Imager is not installed, the script downloads the latest
-installer into `host\downloads\` and installs it silently before flashing.
+If Raspberry Pi Imager is missing or outdated, the script downloads the latest
+installer into `host\downloads\` and installs it silently before flashing. The
+installer is cached by version (`imager_<version>.exe`), so a newer release is
+fetched automatically; re-running also upgrades an already-installed Imager.
 
 ### Linux host — `host/flash.sh`
 
