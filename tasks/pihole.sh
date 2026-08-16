@@ -16,8 +16,15 @@ run_pihole() {
     read -r -p 'Type "yes" to continue, anything else to skip: ' ans || { warn 'Skipped Pi-hole install.'; return; }
     [[ "$ans" == "yes" ]] || { warn 'Skipped Pi-hole install.'; return; }
   fi
-  info 'Running the official Pi-hole installer - follow its on-screen prompts'
-  curl -fsSL https://install.pi-hole.net | bash
+
+  if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+    warn 'Pi-hole installer is interactive and not supported in container environments; skipping'
+    return
+  else
+    info 'Running the official Pi-hole installer - follow its on-screen prompts'
+    curl -fsSL https://install.pi-hole.net | bash
+  fi
+
   if command -v pihole >/dev/null 2>&1; then
     say "Pi-hole installed - web admin: http://$(hostname)/admin"
   else

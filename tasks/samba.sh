@@ -33,9 +33,13 @@ EOF
   fi
 
   local pw pw2
-  read -rsp "Samba password for ${u}: " pw; echo
-  read -rsp 'Repeat password: ' pw2; echo
-  [[ -n "$pw" ]] && [[ "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
+  if [[ -n "${SAMBA_PASSWORD:-}" ]]; then
+    pw="${SAMBA_PASSWORD}"
+  else
+    read -rsp "Samba password for ${u}: " pw; echo
+    read -rsp 'Repeat password: ' pw2; echo
+    [[ -n "$pw" ]] && [[ "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
+  fi
   (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
 
   systemctl enable --now smbd
