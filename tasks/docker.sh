@@ -26,7 +26,8 @@ run_docker() {
 
   apt_update
   DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl enable --now docker
+  systemctl daemon-reload
+  systemctl enable --now docker || warn 'Docker service could not be enabled/started; Docker installed but not running as a service. Re-login or reboot to complete setup.'
 
   local u
   u="$(real_user)"
