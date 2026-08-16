@@ -1,0 +1,246 @@
+name: Virtual Testing Environment
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtual-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned Raspberry Pi OS Lite (64-bit) image. See docs/ci-testing.md for the
+  # bump procedure and why this exact image/version is pinned.
+  RPI_IMAGE_VERSION: 2025-05-13
+  RPI_IMAGE_SHA256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
+  RPI_IMAGE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+
+jobs:
+  syntax:
+    name: Syntax check, lint, and task registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Validate bash syntax
+        run: |
+          set -euo pipefail
+          find . -type f -name '*.sh' -print0 | while IFS= read -r -d '' f; do
+            bash -n "$f"
+          done
+          echo "All shell scripts pass 'bash -n'"
+
+      - name: Run shellcheck
+        run: shellcheck --color=never setup.sh lib/*.sh tasks/*.sh host/*.sh
+
+      - name: Verify task registry loads
+        run: bash setup.sh --list
+
+  provision-gate:
+    name: Provision tasks in booted nspawn (PR gate)
+    runs-on: ubuntu-latest
+    needs: syntax
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 120
+    env:
+      RPI_IMG: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Raspberry Pi OS image
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img.xz
+          key: raspios-bookworm-arm64-${{ env.RPI_IMAGE_VERSION }}
+          save-always: true
+
+      - name: Download and verify image
+        run: |
+          set -euo pipefail
+          IMG_XZ="$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz"
+          if [[ ! -f "$IMG_XZ" ]]; then
+            echo "Downloading Raspberry Pi OS image..."
+            curl -fL --retry 3 -o "$IMG_XZ" "$RPI_IMAGE_URL"
+          fi
+          echo "$RPI_IMAGE_SHA256  $IMG_XZ" | sha256sum -c -
+
+      - name: Extract image
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RPI_IMG" ]]; then
+            echo "Extracting Raspberry Pi OS image..."
+            xz -d -k "$RPI_IMG.xz"
+          fi
+
+      - name: Grow root partition
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq parted >/dev/null
+          echo "Growing root partition to 8G..."
+          sudo truncate -s 8G "$RPI_IMG"
+          sudo parted -s "$RPI_IMG" resizepart 2 100%
+          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          sudo e2fsck -fp "${dev}p2" || true
+          sudo resize2fs "${dev}p2"
+          sudo losetup -d "$dev"
+
+      - name: Provision tasks in booted container
+        uses: ethanjli/pinspawn-action@v0.1.5
+        with:
+          image: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
+          shell: bash
+          boot: true
+          user: root
+          args: --capability=CAP_NET_ADMIN --bind ${{ github.workspace }}:/workspace
+          run: |
+            set -euo pipefail
+            cd /workspace
+            export PIHOLE_CONFIRM=yes
+
+            echo "=== Provisioning ==="
+            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
+
+            echo "=== Verifying services ==="
+            for svc in docker smbd nginx netdata fail2ban; do
+              systemctl is-active "$svc"
+            done
+
+            echo "=== Verifying containers ==="
+            docker ps
+
+            echo "=== Verifying web endpoints ==="
+            wait_url() {
+              local url="$1" tries="${2:-60}" i
+              for i in $(seq 1 "$tries"); do
+                if curl -fsS -o /dev/null "$url"; then
+                  echo "OK: $url"
+                  return 0
+                fi
+                sleep 5
+              done
+              echo "FAILED: $url not reachable" >&2
+              return 1
+            }
+            wait_url http://localhost:19999
+            wait_url http://localhost:20211 120
+
+            echo "=== Idempotency re-run ==="
+            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
+
+            echo "=== All checks passed ==="
+
+  provision-qemu:
+    name: Provision tasks in QEMU VM (manual)
+    runs-on: ubuntu-latest
+    needs: syntax
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 240
+    env:
+      RPI_IMG: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Raspberry Pi OS image
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img.xz
+          key: raspios-bookworm-arm64-${{ env.RPI_IMAGE_VERSION }}
+          save-always: true
+
+      - name: Download and verify image
+        run: |
+          set -euo pipefail
+          IMG_XZ="$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz"
+          if [[ ! -f "$IMG_XZ" ]]; then
+            echo "Downloading Raspberry Pi OS image..."
+            curl -fL --retry 3 -o "$IMG_XZ" "$RPI_IMAGE_URL"
+          fi
+          echo "$RPI_IMAGE_SHA256  $IMG_XZ" | sha256sum -c -
+
+      - name: Extract image
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RPI_IMG" ]]; then
+            echo "Extracting Raspberry Pi OS image..."
+            xz -d -k "$RPI_IMG.xz"
+          fi
+
+      - name: Grow root partition
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq parted >/dev/null
+          echo "Growing root partition to 8G..."
+          sudo truncate -s 8G "$RPI_IMG"
+          sudo parted -s "$RPI_IMG" resizepart 2 100%
+          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          sudo e2fsck -fp "${dev}p2" || true
+          sudo resize2fs "${dev}p2"
+          sudo losetup -d "$dev"
+
+      - name: Copy repository into image
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /tmp/rpi-root
+          dev="$(sudo losetup -fP --show "$RPI_IMG")"
+          sudo mount "${dev}p2" /tmp/rpi-root
+          sudo mkdir -p /tmp/rpi-root/opt
+          sudo cp -a "$GITHUB_WORKSPACE" /tmp/rpi-root/opt/rpi-setup
+          sudo chown -R root:root /tmp/rpi-root/opt/rpi-setup
+          sudo umount /tmp/rpi-root
+          sudo losetup -d "$dev"
+
+      - name: Provision tasks in QEMU VM
+        uses: ethanjli/piqemu-action@v0.1.1
+        with:
+          image: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
+          machine: rpi-3b+
+          shell: bash
+          run: |
+            set -euo pipefail
+            cd /opt/rpi-setup
+            export PIHOLE_CONFIRM=yes
+
+            echo "=== Provisioning ==="
+            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
+
+            echo "=== Verifying services ==="
+            for svc in docker smbd nginx netdata fail2ban; do
+              systemctl is-active "$svc"
+            done
+
+            echo "=== Verifying containers ==="
+            docker ps
+
+            echo "=== Verifying web endpoints ==="
+            wait_url() {
+              local url="$1" tries="${2:-60}" i
+              for i in $(seq 1 "$tries"); do
+                if curl -fsS -o /dev/null "$url"; then
+                  echo "OK: $url"
+                  return 0
+                fi
+                sleep 5
+              done
+              echo "FAILED: $url not reachable" >&2
+              return 1
+            }
+            wait_url http://localhost:19999
+            wait_url http://localhost:20211 120
+
+            echo "=== Idempotency re-run ==="
+            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
+
+            echo "=== All checks passed ==="
