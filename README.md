@@ -124,7 +124,7 @@ Notes:
 | `base`       | OS update, EEPROM firmware, SSH enable, essential tools, fail2ban |
 | `docker`     | Docker Engine, buildx and Compose (apt)                          |
 | `tailscale`  | Tailscale WireGuard VPN (official installer, `tailscale up`)     |
-| `pihole`     | Pi-hole ad blocker (official installer, interactive)             |
+| `pihole`     | Pi-hole ad blocker (official installer)                          |
 | `samba`      | Simple read-write NAS share for the current user                 |
 | `web`        | nginx serving a "Raspberry Pi" index page                        |
 | `monitoring` | Netdata real-time dashboard on port 19999                        |
@@ -140,8 +140,10 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
 - Scripts are written to be idempotent: re-running is safe.
 - Run with `sudo`, not `root`. The `docker` and `samba` tasks pick up your
   normal user through `SUDO_USER`.
-- `pihole` and `tailscale` run their official installers and remain
-  interactive - follow the on-screen prompts.
+- `pihole` and `tailscale` run their official installers. `pihole` prints a
+  security warning and prompts for confirmation when run interactively; in
+  non-interactive runs it installs directly. `tailscale` stays interactive -
+  follow the on-screen prompts.
 - `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
   It auto-detects your LAN subnet and interface and serves a device-presence
   dashboard at `http://<pi-ip>:20211`. The detected `SCAN_SUBNETS` can be
