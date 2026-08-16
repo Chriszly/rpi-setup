@@ -85,6 +85,9 @@ If Raspberry Pi Imager is missing or outdated, the script downloads the latest
 installer into `host\downloads\` and installs it silently before flashing. The
 installer is cached by version (`imager_<version>.exe`), so a newer release is
 fetched automatically; re-running also upgrades an already-installed Imager.
+When the script installs or upgrades Imager, it is uninstalled again once the
+run finishes - even if it failed - including any pre-existing installation it
+replaced, leaving the host clean.
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).

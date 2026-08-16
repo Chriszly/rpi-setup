@@ -7,8 +7,11 @@
 #   * enables SSH and creates a login user (headless first boot)
 #
 # If Raspberry Pi Imager is missing or outdated, the latest installer is
-# downloaded and installed automatically (unless -SkipImagerInstall). Also
-# requires openssl (bundled with Git for Windows) unless -SkipCustomize.
+# downloaded and installed silently (unless -SkipImagerInstall). Once the run
+# finishes - successfully or not - the Imager installed or upgraded by this
+# script is uninstalled again, including any pre-existing installation it
+# replaced, leaving the host clean. Also requires openssl (bundled with Git
+# for Windows) unless -SkipCustomize.
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
@@ -44,6 +47,8 @@ $ErrorActionPreference = 'Stop'
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
 $Script:DefaultRelease = 'raspios_lite_arm64-2026-06-19'                    # fallback if the archive cannot be parsed
 $Script:DefaultImage   = '2026-06-18-raspios-trixie-arm64-lite.img.xz'     # fallback file within $Script:DefaultRelease
+$Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager
+                                            # it installed/upgraded (including any pre-existing install)
 
 function Write-Step { param([string]$m) Write-Host "[+] $m" -ForegroundColor Green }
 function Write-Info { param([string]$m) Write-Host "[*] $m" -ForegroundColor Cyan }
@@ -96,6 +101,14 @@ function Get-ImagerVersion {
     return $null
 }
 
+function Clear-ImagerCache {
+    param([string]$Dir)
+    # Remove every cached Imager installer so a later run starts clean and can
+    # never reuse a stale or partial artifact after a failed install/uninstall.
+    Get-ChildItem -LiteralPath $Dir -Filter 'imager_*.exe' -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 function Install-Imager {
     $dir = $script:DownloadDir
     if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
@@ -110,8 +123,39 @@ function Install-Imager {
     Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
     $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
     if ($p.ExitCode -ne 0) {
-        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). The cached installer was removed; re-run to download it again."
+        Clear-ImagerCache -Dir $dir
+        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). Cached installers were removed; re-run to download again."
+    }
+    $Script:ImagerInstalledByScript = $true
+}
+
+function Uninstall-Imager {
+    # Remove the Imager that this script installed (or upgraded, if a
+    # pre-existing installation was outdated), leaving the host clean.
+    # Inno Setup places unins000.exe next to rpi-imager.exe.
+    $dir = $script:DownloadDir
+    if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
+    try {
+        $exe = Get-ImagerPath
+        if (-not $exe) { Write-Warn 'Raspberry Pi Imager binary no longer found; nothing to uninstall.'; return }
+        $uninstaller = Join-Path (Split-Path -Parent $exe) 'unins000.exe'
+        if (-not (Test-Path -LiteralPath $uninstaller)) {
+            Write-Warn "Imager uninstaller not found at $uninstaller; leaving the installation in place."
+            return
+        }
+        Write-Step "Uninstalling Raspberry Pi Imager (silent)"
+        $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+        if ($p.ExitCode -ne 0) {
+            Write-Warn "Raspberry Pi Imager uninstaller exited with code $($p.ExitCode)."
+        }
+    } catch {
+        # A cleanup problem must never turn a successful run into a failure or
+        # mask the error the run actually failed with - report and carry on.
+        Write-Warn "Could not uninstall Raspberry Pi Imager: $($_.Exception.Message)"
+    } finally {
+        # The cache is always cleared - even if the uninstaller was missing or
+        # failed - so a later run cannot reuse stale or partial artifacts.
+        Clear-ImagerCache -Dir $dir
     }
 }
 
@@ -344,44 +388,53 @@ function Add-FirstBootFiles {
 
 # --- main -------------------------------------------------------------
 
-if (-not (Test-Admin)) {
-    Fail 'Please run this script as Administrator (right-click PowerShell > "Run as administrator").'
+try {
+    if (-not (Test-Admin)) {
+        Fail 'Please run this script as Administrator (right-click PowerShell > "Run as administrator").'
+    }
+
+    if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
+
+    $imager = Find-Imager
+    Write-Step "Using Raspberry Pi Imager: $imager"
+
+    if ($Image) {
+        if (-not (Test-Path -LiteralPath $Image)) { Fail "Image not found: $Image" }
+        Write-Step "Using image: $Image"
+        $img = @{ Path = $Image; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Image).Hash.ToLowerInvariant() }
+    } elseif ($SkipDownload) {
+        $cached = Get-ChildItem -LiteralPath $DownloadDir -Filter '*.img.xz' -ErrorAction SilentlyContinue |
+                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $cached) { Fail "No cached image found in $DownloadDir (and -SkipDownload was given)." }
+        Write-Step "Using cached image: $($cached.FullName)"
+        $img = @{ Path = $cached.FullName; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cached.FullName).Hash.ToLowerInvariant() }
+    } else {
+        $img = Get-Image $DownloadDir
+    }
+
+    $disk = Select-Disk $Disk
+
+    Invoke-Flash -Disk $disk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
+
+    if (-not $SkipCustomize) {
+        $cred = Get-Credentials -UserName $UserName -Password $Password
+        Add-FirstBootFiles -DiskNumber $disk.Number -UserName $cred.User -Password $cred.Pass
+    }
+
+    Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
+    if (-not $SkipCustomize) {
+        Write-Host ''
+        Write-Info 'After the Pi has booted (give it ~1-2 minutes on first boot), connect over SSH:'
+        Write-Host ("    ssh {0}@raspberrypi.local" -f $cred.User)
+        Write-Info 'Then on the Pi:'
+        Write-Host '    git clone https://github.com/Chriszly/rpi-setup.git'
+        Write-Host '    cd rpi-setup && sudo bash setup.sh'
+    }
 }
-
-if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
-
-$imager = Find-Imager
-Write-Step "Using Raspberry Pi Imager: $imager"
-
-if ($Image) {
-    if (-not (Test-Path -LiteralPath $Image)) { Fail "Image not found: $Image" }
-    Write-Step "Using image: $Image"
-    $img = @{ Path = $Image; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Image).Hash.ToLowerInvariant() }
-} elseif ($SkipDownload) {
-    $cached = Get-ChildItem -LiteralPath $DownloadDir -Filter '*.img.xz' -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $cached) { Fail "No cached image found in $DownloadDir (and -SkipDownload was given)." }
-    Write-Step "Using cached image: $($cached.FullName)"
-    $img = @{ Path = $cached.FullName; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cached.FullName).Hash.ToLowerInvariant() }
-} else {
-    $img = Get-Image $DownloadDir
-}
-
-$disk = Select-Disk $Disk
-
-Invoke-Flash -Disk $disk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
-
-if (-not $SkipCustomize) {
-    $cred = Get-Credentials -UserName $UserName -Password $Password
-    Add-FirstBootFiles -DiskNumber $disk.Number -UserName $cred.User -Password $cred.Pass
-}
-
-Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
-if (-not $SkipCustomize) {
-    Write-Host ''
-    Write-Info 'After the Pi has booted (give it ~1-2 minutes on first boot), connect over SSH:'
-    Write-Host ("    ssh {0}@raspberrypi.local" -f $cred.User)
-    Write-Info 'Then on the Pi:'
-    Write-Host '    git clone https://github.com/Chriszly/rpi-setup.git'
-    Write-Host '    cd rpi-setup && sudo bash setup.sh'
+finally {
+    # Cleanup is never skipped: once the script installed Imager, it is
+    # removed on success AND on any failure - including any pre-existing
+    # installation it upgraded - and the cached installers are cleared, so the
+    # next run starts clean without stale artifacts.
+    if ($Script:ImagerInstalledByScript) { Uninstall-Imager }
 }
