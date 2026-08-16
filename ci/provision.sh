@@ -5,7 +5,17 @@ set -euo pipefail
 # Used by both provision-gate (nspawn) and provision-qemu (QEMU) jobs
 
 # Tasks to provision - single source of truth
-TASKS=(
+# Container-friendly tasks (work in systemd-nspawn without Docker)
+TASKS_CONTAINER=(
+    base
+    samba
+    web
+    monitoring
+    pihole
+)
+
+# Full task list including Docker-dependent tasks (for QEMU VM)
+TASKS_FULL=(
     base
     docker
     samba
@@ -16,8 +26,23 @@ TASKS=(
     teamspeak
 )
 
-# Service verification list
-SERVICES=(
+# Detect container environment and select appropriate task list
+if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+    TASKS=("${TASKS_CONTAINER[@]}")
+else
+    TASKS=("${TASKS_FULL[@]}")
+fi
+
+# Service verification list (container-friendly)
+SERVICES_CONTAINER=(
+    smbd
+    nginx
+    netdata
+    fail2ban
+)
+
+# Full service verification list (including Docker)
+SERVICES_FULL=(
     docker
     smbd
     nginx
@@ -25,11 +50,25 @@ SERVICES=(
     fail2ban
 )
 
-# Web endpoint verification: "url:max_tries"
-ENDPOINTS=(
+# Web endpoint verification: "url:max_tries" (container-friendly)
+ENDPOINTS_CONTAINER=(
+    "http://localhost:19999:60"
+)
+
+# Full web endpoint verification (including netalertx)
+ENDPOINTS_FULL=(
     "http://localhost:19999:60"
     "http://localhost:20211:120"
 )
+
+# Select appropriate lists based on environment
+if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+    SERVICES=("${SERVICES_CONTAINER[@]}")
+    ENDPOINTS=("${ENDPOINTS_CONTAINER[@]}")
+else
+    SERVICES=("${SERVICES_FULL[@]}")
+    ENDPOINTS=("${ENDPOINTS_FULL[@]}")
+fi
 
 run_provisioning() {
     local workdir="$1"
@@ -50,6 +89,10 @@ verify_services() {
 }
 
 verify_containers() {
+    if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+        echo "=== Skipping container verification in container environment ==="
+        return
+    fi
     echo "=== Verifying containers ==="
     docker ps
 }
