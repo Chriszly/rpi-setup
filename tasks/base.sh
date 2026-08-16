@@ -7,10 +7,12 @@ TASKS+=("base|OS update, EEPROM firmware, SSH enable, essential tools")
 run_base() {
   info 'Refreshing apt lists'
   apt_update
-  info 'Holding kernel and initramfs packages to avoid issues in containers'
-  dpkg-query -W -f='${Package}\n' 'linux-image-*' 'linux-headers-*' 'raspberrypi-kernel*' 'raspberrypi-kernel-headers*' 'initramfs-tools*' 2>/dev/null | xargs -r apt-mark hold 2>/dev/null || true
-  info 'Upgrading installed packages'
-  DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs
+  if [[ -n "${GITHUB_ACTIONS:-}" || -n "${CI:-}" ]]; then
+    info 'Skipping package upgrade in CI environment'
+  else
+    info 'Upgrading installed packages'
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs
+  fi
 
   apt_install ca-certificates curl gnupg git unzip vim htop tmux fail2ban
 
