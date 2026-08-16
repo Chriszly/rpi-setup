@@ -97,7 +97,7 @@ jobs:
           sudo losetup -d "$dev"
 
       - name: Provision tasks in booted container
-        uses: ethanjli/pinspawn-action@v0.1.5
+        uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
         with:
           image: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
           shell: bash
@@ -107,39 +107,17 @@ jobs:
           run: |
             set -euo pipefail
             cd /workspace
-            export PIHOLE_CONFIRM=yes
+            bash ci/provision.sh /workspace
 
-            echo "=== Provisioning ==="
-            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
-
-            echo "=== Verifying services ==="
-            for svc in docker smbd nginx netdata fail2ban; do
-              systemctl is-active "$svc"
-            done
-
-            echo "=== Verifying containers ==="
-            docker ps
-
-            echo "=== Verifying web endpoints ==="
-            wait_url() {
-              local url="$1" tries="${2:-60}" i
-              for i in $(seq 1 "$tries"); do
-                if curl -fsS -o /dev/null "$url"; then
-                  echo "OK: $url"
-                  return 0
-                fi
-                sleep 5
-              done
-              echo "FAILED: $url not reachable" >&2
-              return 1
-            }
-            wait_url http://localhost:19999
-            wait_url http://localhost:20211 120
-
-            echo "=== Idempotency re-run ==="
-            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
-
-            echo "=== All checks passed ==="
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provision-gate-logs
+          path: |
+            /var/log/*.log
+            /var/log/syslog*
+          retention-days: 7
 
   provision-qemu:
     name: Provision tasks in QEMU VM (manual)
@@ -203,44 +181,21 @@ jobs:
           sudo losetup -d "$dev"
 
       - name: Provision tasks in QEMU VM
-        uses: ethanjli/piqemu-action@v0.1.1
+        uses: ethanjli/piqemu-action@e5583ccf2ecf06ef869dd102a01909d887d96b11
         with:
           image: ${{ runner.temp }}/raspios-bookworm-arm64-lite.img
           machine: rpi-3b+
           shell: bash
           run: |
             set -euo pipefail
-            cd /opt/rpi-setup
-            export PIHOLE_CONFIRM=yes
+            bash ci/provision.sh /opt/rpi-setup
 
-            echo "=== Provisioning ==="
-            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
-
-            echo "=== Verifying services ==="
-            for svc in docker smbd nginx netdata fail2ban; do
-              systemctl is-active "$svc"
-            done
-
-            echo "=== Verifying containers ==="
-            docker ps
-
-            echo "=== Verifying web endpoints ==="
-            wait_url() {
-              local url="$1" tries="${2:-60}" i
-              for i in $(seq 1 "$tries"); do
-                if curl -fsS -o /dev/null "$url"; then
-                  echo "OK: $url"
-                  return 0
-                fi
-                sleep 5
-              done
-              echo "FAILED: $url not reachable" >&2
-              return 1
-            }
-            wait_url http://localhost:19999
-            wait_url http://localhost:20211 120
-
-            echo "=== Idempotency re-run ==="
-            printf 'testpw\ntestpw\n' | bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
-
-            echo "=== All checks passed ==="
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provision-qemu-logs
+          path: |
+            /var/log/*.log
+            /var/log/syslog*
+          retention-days: 7
