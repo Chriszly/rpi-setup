@@ -1,0 +1,38 @@
+name: Flash Script Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flash-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flash:
+    name: Validate host/flash.ps1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'host/flash.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "[error] $($_.Message)" }
+            exit 1
+          }
+          Write-Host "flash.ps1 parses without syntax errors"
+
+      - name: Run flash.ps1 unit tests
+        shell: pwsh
+        run: ./ci/test-flash.ps1
