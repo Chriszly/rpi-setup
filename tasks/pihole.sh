@@ -11,10 +11,10 @@ run_pihole() {
   fi
   warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
   warn 'Review the script at https://install.pi-hole.net before proceeding.'
-  if [[ "${PIHOLE_CONFIRM:-}" != "yes" ]]; then
+  if [[ "${PIHOLE_CONFIRM:-}" != "yes" ]] && [[ -t 0 ]]; then
     local ans=""
-    read -r -p 'Type "yes" to continue, anything else to skip: ' ans || { say 'Skipped Pi-hole install.'; return; }
-    [[ "$ans" == "yes" ]] || { say 'Skipped Pi-hole install.'; return; }
+    read -r -p 'Type "yes" to continue, anything else to skip: ' ans || { warn 'Skipped Pi-hole install.'; return; }
+    [[ "$ans" == "yes" ]] || { warn 'Skipped Pi-hole install.'; return; }
   fi
   info 'Running the official Pi-hole installer - follow its on-screen prompts'
   curl -fsSL https://install.pi-hole.net | bash

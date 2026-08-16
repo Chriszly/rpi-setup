@@ -149,7 +149,9 @@ sudo bash setup.sh base
 sudo bash setup.sh docker netalertx teamspeak
 ```
 
-`pihole` and `tailscale` run their official installers and stay interactive -
+`pihole` and `tailscale` run their official installers. `pihole` prints a
+security warning and prompts for confirmation when run interactively; in
+non-interactive runs it installs directly. `tailscale` stays interactive -
 follow the on-screen prompts.
 
 ## Task rundown
@@ -159,7 +161,7 @@ follow the on-screen prompts.
 | `base`       | OS update, EEPROM firmware, SSH enable, essential tools, fail2ban   | Run this first. The EEPROM update needs a reboot to apply.|
 | `docker`     | Docker Engine, buildx and Compose (via apt)                         | Adds your user to the `docker` group - re-login to use it|
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | Interactive: run `tailscale up` and open the auth URL   |
-| `pihole`     | Pi-hole ad blocker (official installer)                             | Interactive. Admin UI at `http://<hostname>/admin`      |
+| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing (skips prompt in non-interactive runs). Admin UI at `http://<hostname>/admin` |
 | `samba`      | Simple read-write NAS share for the current user                    | Prompts for an SMB password. Share at `\\<hostname>\nas-share` |
 | `web`        | nginx serving a "Raspberry Pi" index page                           | Open `http://<hostname>`                                |
 | `monitoring` | Netdata real-time dashboard                                         | Dashboard at `http://<hostname>:19999`                  |
