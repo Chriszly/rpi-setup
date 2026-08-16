@@ -74,13 +74,15 @@ Or pass everything up front:
 sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
 ```
 
-Useful options:
+All options:
 
-| Option          | Meant for                                              |
-|-----------------|--------------------------------------------------------|
-| `-l`            | List candidate disks and exit (no changes)             |
-| `-i IMAGE`      | Flash a locally downloaded `.img` / `.img.xz` instead  |
-| `-k`            | Skip SSH/user setup; boot to the on-screen wizard      |
+| Option            | Meaning                                                        |
+|-------------------|----------------------------------------------------------------|
+| `-d DEVICE`       | SD card device node (e.g. `/dev/sda`); prompts if omitted      |
+| `-i IMAGE`        | Flash a locally downloaded `.img` / `.img.xz` instead          |
+| `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
+| `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
+| `-l`              | List candidate disks and exit                                  |
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).
