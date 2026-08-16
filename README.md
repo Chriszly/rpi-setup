@@ -135,6 +135,23 @@ Tasks are plain bash scripts inside `tasks/` - add your own by dropping in a
 file that appends to `TASKS` and defines a `run_<name>` function. See
 `tasks/base.sh` for the pattern.
 
+## Testing in CI
+
+Every PR is validated against a real **Raspberry Pi OS arm64** image in GitHub
+Actions, so task changes are exercised before they land:
+
+- **PR gate** (`provision-gate`) - boots the pinned Raspberry Pi OS image in a
+  `systemd-nspawn` container and runs the tasks plus service/port checks plus an
+  idempotency re-run. This is the fast per-PR check.
+- **Full VM** (`provision-qemu`) - boots the same image under QEMU (Raspberry Pi
+  3B+ emulation) for maximum fidelity. Runs manually via the *Run workflow*
+  button (`workflow_dispatch`) on GitHub.
+- **Lint** (`syntax`) - `bash -n`, `shellcheck` and `setup.sh --list` on every
+  PR, push to `main`, and manual run.
+
+See [docs/ci-testing.md](docs/ci-testing.md) for how it works, known
+limitations, and how to bump the pinned image.
+
 ## Notes
 
 - Scripts are written to be idempotent: re-running is safe.
