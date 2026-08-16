@@ -126,14 +126,16 @@ function Install-Imager {
     $fileName = if ($latest) { "imager_$latest.exe" } else { 'imager_latest.exe' }
     $installer = Join-Path $dir $fileName
     if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -eq 0) {
+        Write-Step "Downloading Raspberry Pi Imager installer..."
         Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
     }
-    Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
+    Write-Step "Installing Raspberry Pi Imager from $installer (silent)..."
     $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
     if ($p.ExitCode -ne 0) {
         Clear-ImagerCache -Dir $dir
         Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). Cached installers were removed; re-run to download again."
     }
+    Write-Step "Raspberry Pi Imager installed successfully"
     $Script:ImagerInstalledByScript = $true
 }
 
@@ -215,38 +217,46 @@ function Get-ReleaseFiles {
 
 function Invoke-Download {
     param([string]$Url, [string]$OutFile)
-    Write-Info "Downloading $([System.IO.Path]::GetFileName($OutFile))"
-    & curl.exe -L --fail --silent --show-error --output $OutFile $Url
+    Write-Step "Downloading $([System.IO.Path]::GetFileName($OutFile))"
+    & curl.exe -L --fail --progress-bar --output $OutFile $Url
     if ($LASTEXITCODE -ne 0) { Fail "Download failed: $Url" }
+    Write-Step "Downloaded $([System.IO.Path]::GetFileName($OutFile))"
 }
 
 function Get-Image {
     param([string]$Dir)
     if (-not (Test-Path -LiteralPath $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }
 
+    Write-Step "Querying latest Raspberry Pi OS release..."
     $release = Get-LatestRelease
+    Write-Step "Latest release: $release"
+
+    Write-Step "Fetching release file listing..."
     $files   = Get-ReleaseFiles $release
 
     $imgPath = Join-Path $Dir $files.Image
     $shaPath = Join-Path $Dir $files.Sha
 
     if (-not (Test-Path -LiteralPath $imgPath)) {
+        Write-Step "Downloading OS image ($($files.Image))..."
         Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath
     } else {
-        Write-Info "Using cached image: $imgPath"
+        Write-Step "Using cached OS image: $imgPath"
     }
     if (-not (Test-Path -LiteralPath $shaPath)) {
+        Write-Step "Downloading checksum file ($($files.Sha))..."
         Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Sha)" -OutFile $shaPath
     }
 
     $expected = ((Get-Content -LiteralPath $shaPath -TotalCount 1) -split ' ')[0].Trim()
     if (-not $expected) { Fail "Could not read the expected checksum from $shaPath" }
 
-    Write-Step "Verifying SHA-256 of $($files.Image)"
+    Write-Step "Verifying SHA-256 of $($files.Image)..."
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $imgPath).Hash.ToLowerInvariant()
     if ($actual -ne $expected.ToLowerInvariant()) {
         Fail "SHA-256 mismatch for $imgPath`n  expected: $expected`n  actual:   $actual"
     }
+    Write-Step "SHA-256 verification passed"
     return @{ Path = $imgPath; Hash = $expected.ToLowerInvariant() }
 }
 
@@ -297,7 +307,7 @@ function Select-Disk {
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
-    Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
+    Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes several minutes)..."
     $cliArgs = @('--cli', '--disable-telemetry')
     if ($AllowVirtualDisk) {
         # CI mode: the target is a mounted VHDX, which Imager does not consider
@@ -308,6 +318,7 @@ function Invoke-Flash {
     if ($Hash) { $cliArgs += '--sha256', $Hash }
     & $Imager @cliArgs $ImagePath $device
     if ($LASTEXITCODE -ne 0) { Fail "Raspberry Pi Imager failed with exit code $LASTEXITCODE." }
+    Write-Step "Flash completed successfully"
 }
 
 function Find-OpenSsl {
@@ -430,11 +441,14 @@ try {
         $img = Get-Image $DownloadDir
     }
 
+    Write-Step "Selecting target disk..."
     $targetDisk = Select-Disk $Disk
 
+    Write-Step "Starting flash operation..."
     Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 
     if (-not $SkipCustomize) {
+        Write-Step "Configuring first-boot files (SSH + user)..."
         $cred = Get-Credentials -UserName $UserName -Password $Password
         Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass
     }
