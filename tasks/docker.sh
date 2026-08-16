@@ -26,8 +26,8 @@ run_docker() {
 
   apt_update
   DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl daemon-reload
-  systemctl enable --now docker || warn 'Docker service could not be enabled/started; Docker installed but not running as a service. Re-login or reboot to complete setup.'
+  systemctl daemon-reload || true
+  systemctl enable --now docker || warn 'Docker installed but service not started; run "systemctl enable --now docker" after reboot or re-login.'
 
   local u
   u="$(real_user)"
@@ -36,6 +36,10 @@ run_docker() {
     say "Added '$u' to the docker group (re-login to use it)"
   fi
 
-  docker --version
-  docker compose version
+  if systemctl is-active --quiet docker; then
+    docker --version
+    docker compose version
+  else
+    warn "Docker service not running; skipping version check"
+  fi
 }
