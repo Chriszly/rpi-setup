@@ -18,22 +18,8 @@ run_pihole() {
   fi
 
   if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
-    info 'Running Pi-hole installer in unattended mode for container environment'
-    export PIHOLE_SKIP_OS_CHECK=1
-    export PIHOLE_INTERFACE="${PIHOLE_INTERFACE:-eth0}"
-    export IPV4_ADDRESS="${IPV4_ADDRESS:-}"
-    export IPV6_ADDRESS="${IPV6_ADDRESS:-}"
-    export PIHOLE_DNS_1="${PIHOLE_DNS_1:-1.1.1.1}"
-    export PIHOLE_DNS_2="${PIHOLE_DNS_2:-1.0.0.1}"
-    export QUERY_LOGGING="${QUERY_LOGGING:-true}"
-    export INSTALL_WEB_INTERFACE="${INSTALL_WEB_INTERFACE:-true}"
-    export INSTALL_WEB_SERVER="${INSTALL_WEB_SERVER:-true}"
-    export LIGHTTPD_ENABLED="${LIGHTTPD_ENABLED:-true}"
-    export BLOCKING_ENABLED="${BLOCKING_ENABLED:-true}"
-    export PIHOLE_SKIP_STATIC_IP=1
-    export PIHOLE_STATIC_IPV4=""
-    export PIHOLE_STATIC_IPV6=""
-    curl -fsSL https://install.pi-hole.net | RUN_INSTALLER=true bash -s -- --unattended
+    warn 'Pi-hole installer is interactive and not supported in container environments; skipping'
+    return
   else
     info 'Running the official Pi-hole installer - follow its on-screen prompts'
     curl -fsSL https://install.pi-hole.net | bash
