@@ -113,7 +113,8 @@ wait_url() {
 verify_endpoints() {
     echo "=== Verifying web endpoints ==="
     for endpoint in "${ENDPOINTS[@]}"; do
-        IFS=':' read -r url tries <<< "$endpoint"
+        url="${endpoint%:*}"
+        tries="${endpoint##*:}"
         wait_url "$url" "$tries"
     done
 }
