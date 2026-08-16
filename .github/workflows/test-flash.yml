@@ -2,10 +2,19 @@ name: Flash Script Tests
 
 on:
   pull_request:
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
   push:
     branches:
       - main
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
   workflow_dispatch:
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
 
 permissions:
   contents: read
