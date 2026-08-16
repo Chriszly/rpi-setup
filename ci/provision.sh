@@ -36,9 +36,10 @@ run_provisioning() {
     cd "$workdir"
 
     export PIHOLE_CONFIRM=yes
+    export SAMBA_PASSWORD=testpw
 
     echo "=== Provisioning ==="
-    printf 'testpw\ntestpw\n' | bash setup.sh "${TASKS[@]}"
+    bash setup.sh "${TASKS[@]}"
 }
 
 verify_services() {
@@ -79,7 +80,9 @@ run_idempotency() {
     cd "$workdir"
 
     echo "=== Idempotency re-run ==="
-    printf 'testpw\ntestpw\n' | bash setup.sh "${TASKS[@]}"
+    export PIHOLE_CONFIRM=yes
+    export SAMBA_PASSWORD=testpw
+    bash setup.sh "${TASKS[@]}"
 }
 
 main() {

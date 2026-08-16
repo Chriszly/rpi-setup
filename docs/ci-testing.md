@@ -60,7 +60,7 @@ regression to fix, not a flake to retry.
 
 | Task        | CI handling                                                                 |
 |-------------|-----------------------------------------------------------------------------|
-| `samba`     | Password piped via stdin (`printf 'testpw\ntestpw\n'`).                     |
+| `samba`     | Non-interactive via the `SAMBA_PASSWORD` env override (`SAMBA_PASSWORD=testpw`); stdin is not used because the long `apt-get install samba` in the task consumes a piped stdin before the prompt runs. |
 | `pihole`    | `PIHOLE_CONFIRM=yes` skips the interactive confirmation; the installer then runs with defaults. |
 | `tailscale` | **Excluded** - `tailscale up` blocks waiting for interactive login.         |
 
@@ -152,7 +152,7 @@ the gate by hand:
 ```bash
 sudo systemd-nspawn --directory=/mnt/raspi-root --boot --bind "$PWD:/workspace"
 # inside the container:
-cd /workspace && PIHOLE_CONFIRM=yes bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
+cd /workspace && PIHOLE_CONFIRM=yes SAMBA_PASSWORD=testpw bash setup.sh base docker samba web monitoring pihole netalertx teamspeak
 ```
 
 The GitHub Actions workflow is the supported path though; the actions install
