@@ -96,10 +96,12 @@ function Get-ImagerLatestVersion {
 
 function Get-ImagerVersion {
     param([string]$Path)
-    $raw = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
-    if (-not $raw) { return $null }
-    $v = $null
-    if ([version]::TryParse(($raw -replace '^[vV]' -split ' ')[0], [ref]$v)) { return $v }
+    $info = (Get-Item -LiteralPath $Path).VersionInfo
+    foreach ($raw in @($info.ProductVersion, $info.FileVersion, $info.InformationalVersion)) {
+        if (-not $raw) { continue }
+        $v = $null
+        if ([version]::TryParse(($raw -replace '^[vV]' -split ' ')[0], [ref]$v)) { return $v }
+    }
     return $null
 }
 
