@@ -136,7 +136,8 @@ find_free_uid() {
 # /var/lib/rpi-setup/uids/. Re-runs reuse the same ID so container data keeps a
 # consistent owner and services never collide.
 assign_uid() {
-  local name="$1" file="/var/lib/rpi-setup/uids/$name" uid
+  local name="$1"
+  local file="/var/lib/rpi-setup/uids/$name" uid
   if [[ -r "$file" ]] && [[ "$(<"$file")" =~ ^[0-9]+$ ]]; then
     uid="$(<"$file")"
     if ! getent passwd "$uid" >/dev/null 2>&1 &&
