@@ -70,3 +70,31 @@ file that appends to `TASKS` and defines a `run_<name>` function. See
   only shown once and is needed to log in from the TS6 client at `<pi-ip>:9987`.
 - Diagnostics stay minimal on purpose; check exit codes of the completed
   `[+] Complete: <task>` lines.
+
+## Acknowledgements
+
+This project does not redistribute any third-party software. It only downloads
+and installs software from its official source at runtime, and pulls official
+Docker images when a task needs them:
+
+- [Raspberry Pi OS](https://www.raspberrypi.com/software/) - OS image downloaded
+  and verified by `host/flash.sh` / `host/flash.ps1`
+- [Raspberry Pi Imager](https://www.raspberrypi.com/software/) - used by
+  `host/flash.ps1` to write SD cards
+- [Pi-hole](https://pi-hole.net/) - official installer (`tasks/pihole.sh`)
+- [Tailscale](https://tailscale.com/) - official install script
+  (`tasks/tailscale.sh`)
+- [Docker Engine](https://www.docker.com/) - installed from Docker's apt
+  repository (`tasks/docker.sh`)
+- [Netdata](https://www.netdata.cloud/) - apt package (`tasks/monitoring.sh`)
+- [nginx](https://nginx.org/) - apt package (`tasks/web.sh`)
+- [Samba](https://www.samba.org/) - apt package (`tasks/samba.sh`)
+- [fail2ban](https://www.fail2ban.org/) - apt package (`tasks/base.sh`)
+- [NetAlertX](https://github.com/aitrix/NetAlertX) - official Docker image
+  (`ghcr.io/netalertx/netalertx`, `tasks/netalertx.sh`)
+- [TeamSpeak 6](https://teamspeak.com/) - official Docker image
+  (`teamspeaksystems/teamspeak6-server`, `tasks/teamspeak.sh`)
+
+Raspberry Pi, Raspberry Pi OS, and Raspberry Pi Imager are trademarks of
+Raspberry Pi Ltd. All other product names are trademarks of their respective
+owners. Their use here is descriptive and does not imply endorsement.
