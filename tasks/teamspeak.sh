@@ -17,7 +17,9 @@ run_teamspeak() {
     return
   fi
 
-  ensure_container_dir "$dir" 9987
+  local uid
+  uid="$(find_free_uid)"
+  ensure_container_dir "$dir" "$uid"
 
   cat >"$dir/docker-compose.yml" <<EOF
 services:
@@ -32,6 +34,8 @@ services:
     environment:
       TSSERVER_LICENSE_ACCEPTED: "accept"
       TSSERVER_QUERY_HTTP_ENABLED: "true"
+      PUID: $uid
+      PGID: $uid
     volumes:
       - type: bind
         source: $dir/data

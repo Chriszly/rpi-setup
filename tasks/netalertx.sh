@@ -17,7 +17,9 @@ run_netalertx() {
     return
   fi
 
-  ensure_container_dir "$dir" 20211
+  local uid
+  uid="$(find_free_uid)"
+  ensure_container_dir "$dir" "$uid"
 
   local subnet_cfg conf_override=""
   if subnet_cfg="$(detect_subnet)"; then
@@ -56,10 +58,10 @@ services:
       net.ipv4.conf.all.arp_ignore: 1
       net.ipv4.conf.all.arp_announce: 2
     tmpfs:
-      - "/tmp:mode=1700,uid=20211,gid=20211,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
+      - "/tmp:mode=1700,uid=$uid,gid=$uid,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
     environment:
-      PUID: 20211
-      PGID: 20211
+      PUID: $uid
+      PGID: $uid
       LISTEN_ADDR: 0.0.0.0
       PORT: 20211
       $conf_override

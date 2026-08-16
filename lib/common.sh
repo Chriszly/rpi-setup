@@ -117,3 +117,13 @@ wait_for_log() {
   done
   printf '%s\n' "$line"
 }
+
+# Find an unused UID/GID >= 10000 to avoid conflicts with system users.
+# Returns the first available ID.
+find_free_uid() {
+  local start=10000
+  while getent passwd "$start" >/dev/null 2>&1 || getent group "$start" >/dev/null 2>&1; do
+    start=$((start + 1))
+  done
+  printf '%s\n' "$start"
+}

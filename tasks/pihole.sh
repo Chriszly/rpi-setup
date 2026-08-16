@@ -9,6 +9,8 @@ run_pihole() {
     say "Pi-hole is already installed (run 'pihole -d' to debug)"
     return
   fi
+  warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
+  warn 'Review the script at https://install.pi-hole.net before proceeding.'
   info 'Running the official Pi-hole installer - follow its on-screen prompts'
   curl -fsSL https://install.pi-hole.net | bash
   if command -v pihole >/dev/null 2>&1; then

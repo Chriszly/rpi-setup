@@ -26,4 +26,21 @@ run_base() {
     info 'Enabling periodic TRIM for SD/eMMC hygiene'
     systemctl enable --now fstrim.timer 2>/dev/null || true
   fi
+
+  info 'Configuring fail2ban for SSH protection'
+  if [[ ! -f /etc/fail2ban/jail.local ]]; then
+    cat > /etc/fail2ban/jail.local <<'EOF'
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = %(sshd_log)s
+backend = systemd
+maxretry = 5
+bantime = 1h
+findtime = 10m
+EOF
+    say 'Created /etc/fail2ban/jail.local with SSH protection'
+  fi
+  systemctl enable --now fail2ban 2>/dev/null || true
 }

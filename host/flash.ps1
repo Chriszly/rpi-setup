@@ -45,8 +45,6 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
-$Script:DefaultRelease = 'raspios_lite_arm64-2026-06-19'                    # fallback if the archive cannot be parsed
-$Script:DefaultImage   = '2026-06-18-raspios-trixie-arm64-lite.img.xz'     # fallback file within $Script:DefaultRelease
 $Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager
                                             # it installed/upgraded (including any pre-existing install)
 
@@ -185,11 +183,10 @@ function Get-LatestRelease {
         $html = (Invoke-WebRequest -UseBasicParsing -Uri "$Script:BaseUri/images/").Content
         $dates = [regex]::Matches($html, 'raspios_lite_arm64-(\d{4}-\d{2}-\d{2})/') |
                  ForEach-Object { $_.Groups[1].Value }
-        if ($dates.Count -eq 0) { return $Script:DefaultRelease }
+        if ($dates.Count -eq 0) { Fail "Could not determine latest release from archive listing. Use -Image to specify a local image." }
         return "raspios_lite_arm64-$((($dates | Sort-Object) | Select-Object -Last 1))"
     } catch {
-        Write-Warn "Could not query the image archive ($($_.Exception.Message)); using pinned release $Script:DefaultRelease."
-        return $Script:DefaultRelease
+        Fail "Could not query the image archive ($($_.Exception.Message)). Check network connectivity or use -Image to specify a local image."
     }
 }
 
@@ -198,11 +195,11 @@ function Get-ReleaseFiles {
     try {
         $html = (Invoke-WebRequest -UseBasicParsing -Uri "$Script:BaseUri/images/$Release/").Content
         $img = [regex]::Match($html, 'href="([^"]+\.img\.xz)"').Groups[1].Value
-        if (-not $img) { return $null }
+        if (-not $img) { Fail "Could not parse release listing for $Release. Use -Image to specify a local image." }
         $sha = [regex]::Match($html, 'href="([^"]+\.img\.xz\.sha256)"').Groups[1].Value
         return @{ Image = $img; Sha = $sha }
     } catch {
-        return $null
+        Fail "Could not fetch release files for $Release ($($_.Exception.Message))."
     }
 }
 
@@ -219,10 +216,6 @@ function Get-Image {
 
     $release = Get-LatestRelease
     $files   = Get-ReleaseFiles $release
-    if (-not $files) {
-        $files = @{ Image = $Script:DefaultImage; Sha = "$Script:DefaultImage.sha256" }
-        Write-Warn "Could not parse the release listing; falling back to pinned file $($files.Image)."
-    }
 
     $imgPath = Join-Path $Dir $files.Image
     $shaPath = Join-Path $Dir $files.Sha
