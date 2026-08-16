@@ -12,14 +12,6 @@
 - [ ] Refactor / cleanup
 - [ ] Build / CI / tooling
 
-## Testing
-
-<!-- How was this verified? Include the exact commands/script you ran. -->
-
-- [ ] Ran `bash -n tasks/<file>.sh` (shell syntax check) / `PSScriptAnalyzer` on changed scripts
-- [ ] Ran the affected task(s) on a Raspberry Pi: `sudo bash setup.sh <task>`
-- [ ] Re-ran an existing task to confirm idempotency (safe to re-run)
-
 ## Checklist
 
 - [ ] Code follows the existing pattern in `tasks/` (see `tasks/base.sh`)
@@ -30,6 +22,14 @@
 ---
 
 <!-- Optional -->
+
+## Testing
+
+<!-- How was this verified? Include the exact commands/script you ran. -->
+
+- [ ] Ran `bash -n tasks/<file>.sh` (shell syntax check) / `PSScriptAnalyzer` on changed scripts
+- [ ] Ran the affected task(s) on a Raspberry Pi: `sudo bash setup.sh <task>`
+- [ ] Re-ran an existing task to confirm idempotency (safe to re-run)
 
 ## Related issues / PRs
 
