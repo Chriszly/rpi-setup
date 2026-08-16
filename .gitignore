@@ -1,2 +1,5 @@
 # Downloaded Raspberry Pi OS images / checksums (created by host/flash.ps1)
 downloads/
+
+# JetBrains IDE project files
+.idea/
