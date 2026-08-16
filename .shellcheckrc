@@ -16,5 +16,4 @@ shell=bash
 # Enable checking of sourced files
 enable=all
 
-# Output format
-format=gcc
+

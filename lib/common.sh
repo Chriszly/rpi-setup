@@ -122,6 +122,7 @@ wait_for_log() {
 # assigned to another rpi-setup service. Returns the first available ID.
 find_free_uid() {
   local start=10000 used=""
+  install -m 0755 -d /var/lib/rpi-setup/uids
   used="$(cat /var/lib/rpi-setup/uids/* 2>/dev/null || true)"
   while getent passwd "$start" >/dev/null 2>&1 ||
         getent group "$start" >/dev/null 2>&1 ||
@@ -137,11 +138,14 @@ find_free_uid() {
 assign_uid() {
   local name="$1" file="/var/lib/rpi-setup/uids/$name" uid
   if [[ -r "$file" ]] && [[ "$(<"$file")" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$(<"$file")"
-    return
+    uid="$(<"$file")"
+    if ! getent passwd "$uid" >/dev/null 2>&1 &&
+       ! getent group "$uid" >/dev/null 2>&1; then
+      printf '%s\n' "$uid"
+      return
+    fi
   fi
   uid="$(find_free_uid)"
-  install -m 0755 -d /var/lib/rpi-setup/uids
   printf '%s\n' "$uid" >"$file"
   printf '%s\n' "$uid"
 }
