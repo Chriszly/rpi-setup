@@ -30,6 +30,9 @@ run_pihole() {
     export INSTALL_WEB_SERVER="${INSTALL_WEB_SERVER:-true}"
     export LIGHTTPD_ENABLED="${LIGHTTPD_ENABLED:-true}"
     export BLOCKING_ENABLED="${BLOCKING_ENABLED:-true}"
+    export PIHOLE_SKIP_STATIC_IP=1
+    export PIHOLE_STATIC_IPV4=""
+    export PIHOLE_STATIC_IPV6=""
     curl -fsSL https://install.pi-hole.net | RUN_INSTALLER=true bash -s -- --unattended
   else
     info 'Running the official Pi-hole installer - follow its on-screen prompts'
