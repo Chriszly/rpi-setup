@@ -11,11 +11,7 @@ run_pihole() {
   fi
   warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
   warn 'Review the script at https://install.pi-hole.net before proceeding.'
-  if [[ "${PIHOLE_CONFIRM:-}" != "yes" ]]; then
-    if [[ ! -t 0 ]]; then
-      warn 'Non-interactive session detected; Pi-hole install skipped (set PIHOLE_CONFIRM=yes to override).'
-      return
-    fi
+  if [[ "${PIHOLE_CONFIRM:-}" != "yes" ]] && [[ -t 0 ]]; then
     local ans=""
     read -r -p 'Type "yes" to continue, anything else to skip: ' ans || { warn 'Skipped Pi-hole install.'; return; }
     [[ "$ans" == "yes" ]] || { warn 'Skipped Pi-hole install.'; return; }
