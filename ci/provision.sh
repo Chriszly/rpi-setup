@@ -5,16 +5,14 @@ set -euo pipefail
 # Used by both provision-gate (nspawn) and provision-qemu (QEMU) jobs
 
 # Tasks to provision - single source of truth
-# Container-friendly tasks (work in systemd-nspawn without Docker)
+# Container-friendly tasks (work in systemd-nspawn without Docker).
+# Everything except base now runs in Docker, so nspawn can only cover base.
 TASKS_CONTAINER=(
     base
-    samba
-    web
-    monitoring
-    pihole
 )
 
-# Full task list including Docker-dependent tasks (for QEMU VM)
+# Full task list including Docker-dependent tasks (for QEMU VM).
+# tailscale is excluded because it needs interactive browser login.
 TASKS_FULL=(
     base
     docker
@@ -33,31 +31,27 @@ else
     TASKS=("${TASKS_FULL[@]}")
 fi
 
-# Service verification list (container-friendly)
+# Host service verification list (container-friendly). All other services run
+# in Docker containers and are verified via "docker ps" instead.
 SERVICES_CONTAINER=(
-    smbd
-    nginx
-    netdata
     fail2ban
 )
 
-# Full service verification list (including Docker)
+# Full host service verification list (including Docker itself)
 SERVICES_FULL=(
     docker
-    smbd
-    nginx
-    netdata
     fail2ban
 )
 
-# Web endpoint verification: "url:max_tries" (container-friendly)
-ENDPOINTS_CONTAINER=(
-    "http://localhost:19999:60"
-)
+# Web endpoint verification: "host:port/path:max_tries" (keep the explicit
+# port - the parser splits on the last colon).
+ENDPOINTS_CONTAINER=()
 
-# Full web endpoint verification (including netalertx)
+# Full web endpoint verification (nginx, netdata, pihole, netalertx)
 ENDPOINTS_FULL=(
+    "http://localhost:80:30"
     "http://localhost:19999:60"
+    "http://localhost:8080/admin/:60"
     "http://localhost:20211:120"
 )
 
@@ -74,7 +68,6 @@ run_provisioning() {
     local workdir="$1"
     cd "$workdir"
 
-    export PIHOLE_CONFIRM=yes
     export SAMBA_PASSWORD=testpw
 
     echo "=== Provisioning ==="
@@ -124,7 +117,6 @@ run_idempotency() {
     cd "$workdir"
 
     echo "=== Idempotency re-run ==="
-    export PIHOLE_CONFIRM=yes
     export SAMBA_PASSWORD=testpw
     bash setup.sh "${TASKS[@]}"
 }
