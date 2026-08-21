@@ -86,12 +86,27 @@ jobs:
           "INNOEXTRACT_EXE=$ie" >> $env:GITHUB_ENV
           Write-Host "innoextract ready at $ie"
 
-      - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
+      - name: Ensure Imager installer is downloaded (cache miss on first run of day)
         shell: pwsh
         run: |
           $dl = "$env:RUNNER_TEMP\flash-downloads"
+          if (-not (Test-Path -LiteralPath $dl)) { New-Item -ItemType Directory -Path $dl -Force | Out-Null }
           $installer = Get-ChildItem -LiteralPath $dl -Filter 'imager_*.exe' | Select-Object -First 1
-          if (-not $installer) { throw "No Imager installer found in $dl" }
+          if (-not $installer) {
+            Write-Host "Imager installer not in cache; downloading latest..."
+            $latestUrl = 'https://downloads.raspberrypi.com/imager/imager_latest.exe'
+            & curl.exe -L --fail --progress-bar --output (Join-Path $dl 'imager_latest.exe') $latestUrl
+            $installer = Get-ChildItem -LiteralPath $dl -Filter 'imager_*.exe' | Select-Object -First 1
+          }
+          if (-not $installer) { throw "Failed to obtain Imager installer" }
+          "IMAGER_INSTALLER=$($installer.FullName)" >> $env:GITHUB_ENV
+          Write-Host "Using Imager installer: $($installer.Name)"
+
+      - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
+        shell: pwsh
+        run: |
+          $installer = Get-Item -LiteralPath $env:IMAGER_INSTALLER
+          $dl = Split-Path -Parent $installer.FullName
           $extractDir = Join-Path $dl 'imager-extracted'
           if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
           $ie = $env:INNOEXTRACT_EXE
