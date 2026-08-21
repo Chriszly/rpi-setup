@@ -107,14 +107,22 @@ jobs:
             cd /workspace
             bash ci/provision.sh /workspace
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/failure-logs"
+          mkdir -p "$dir"
+          sudo find /var/log -maxdepth 1 \( -name '*.log' -o -name 'syslog*' \) \
+            -exec cp -a {} "$dir/" \;
+          sudo chown -R "$(id -u):$(id -g)" "$dir"
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: provision-gate-logs
-          path: |
-            /var/log/*.log
-            /var/log/syslog*
+          path: ${{ runner.temp }}/failure-logs
           retention-days: 7
 
   provision-qemu:
@@ -173,6 +181,11 @@ jobs:
           sudo mkdir -p /tmp/rpi-root/opt
           sudo cp -a "$GITHUB_WORKSPACE" /tmp/rpi-root/opt/rpi-setup
           sudo chown -R root:root /tmp/rpi-root/opt/rpi-setup
+          # The emulated 3B+ has a fixed 1G of RAM and all container tasks run
+          # concurrently; enlarge the swap file so transient spikes don't OOM.
+          sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=512/' /tmp/rpi-root/etc/dphys-swapfile
+          grep -q '^CONF_SWAPSIZE=' /tmp/rpi-root/etc/dphys-swapfile ||
+            echo 'CONF_SWAPSIZE=512' | sudo tee -a /tmp/rpi-root/etc/dphys-swapfile >/dev/null
           sudo umount /tmp/rpi-root
           sudo losetup -d "$dev"
 
@@ -184,14 +197,23 @@ jobs:
           shell: bash
           run: |
             set -euo pipefail
+            cd /opt/rpi-setup
             bash ci/provision.sh /opt/rpi-setup
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/failure-logs"
+          mkdir -p "$dir"
+          sudo find /var/log -maxdepth 1 \( -name '*.log' -o -name 'syslog*' \) \
+            -exec cp -a {} "$dir/" \;
+          sudo chown -R "$(id -u):$(id -g)" "$dir"
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: provision-qemu-logs
-          path: |
-            /var/log/*.log
-            /var/log/syslog*
+          path: ${{ runner.temp }}/failure-logs
           retention-days: 7

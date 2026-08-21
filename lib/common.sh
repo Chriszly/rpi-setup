@@ -80,10 +80,20 @@ detect_subnet() {
 
 # --- Docker task helpers -----------------------------------------------
 
-# Die with a helpful message if Docker and the Compose plugin are missing.
+# Ensure Docker and the Compose plugin are available. When missing, install
+# them on the fly via the docker task so container-based tasks just work.
 require_docker() {
-  command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
-  docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$(type -t run_docker)" == "function" ]]; then
+    warn 'Docker or Compose missing - running the docker task first'
+    run_docker
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
 }
 
 # True if a container with this exact name is currently running.
