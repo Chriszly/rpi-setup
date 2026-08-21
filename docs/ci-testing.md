@@ -136,6 +136,8 @@ runs two jobs:
 | `flash`    | Static: parses `host/flash.ps1` for syntax errors and runs the pure-logic unit tests in `ci/test-flash.ps1` (version parsing, install-path detection, disk-filtering logic). |
 | `flash-e2e`| Runs the real `host/flash.ps1` setup flow end-to-end on a GitHub-hosted Windows VM, against a **virtual SD card** instead of a physical one. |
 
+The `flash` and `flash-e2e` jobs run **in parallel** (no `needs:` between them) to reduce total PR latency.
+
 The `flash-e2e` job is the part that "runs the setup in a virtual environment":
 
 1. The runner VM (already isolated and ephemeral) creates a dynamic 12 GB VHDX
@@ -146,7 +148,7 @@ The `flash-e2e` job is the part that "runs the setup in a virtual environment":
    runs its real flow: download + SHA-256-verify the latest Raspberry Pi OS
    image, silently install Raspberry Pi Imager, flash the image to the virtual
    disk, and write the `ssh` / `userconf.txt` first-boot files. The image and
-   Imager installers are cached (date-keyed) so PRs do not re-download.
+   Imager installers are cached (date-keyed with a `restore-keys: flash-downloads-` fallback) so PRs do not re-download.
 3. The job then re-attaches and checks that the boot partition really contains
    `ssh` and `userconf.txt` - the same result a user gets on a physical card.
 
@@ -157,6 +159,21 @@ PRs and manual runs (it skips plain `push` to `main`, which the PR gate already
 covers). It needs admin - GitHub-hosted Windows VMs run elevated with UAC
 disabled, which is also required to attach the VHDX and to run Imager's silent
 installer.
+
+**Failure diagnostics:** On failure the job collects the Imager installer logs
+(`/LOG` output from both install and uninstall), any Imager app logs under
+`%LOCALAPPDATA%\Raspberry Pi*`, and uploads them as the `flash-e2e-failure-logs`
+artifact so the exact stall point is visible without re-running.
+
+**Timeout guard:** `Install-Imager` and `Uninstall-Imager` now use a watched
+process with a 5 min / 3 min hard timeout and 15 s heartbeats. If the
+`pnputil` driver step inside the Imager installer hangs (a known issue on
+headless CI runners), the script kills the process tree and fails fast with the
+installer log tail instead of burning the full 60 min job timeout.
+
+**Verbosity:** Every progress line from `flash.ps1` is now prefixed with an
+elapsed `[hh:mm:ss]` timestamp, and the workflow emits `::group::` folds with
+disk state dumps before/after the flash step.
 
 ## Known limitations
 

@@ -49,8 +49,7 @@ jobs:
   flash-e2e:
     name: Run flash.ps1 setup in isolated VM
     runs-on: windows-latest
-    needs: flash
-    # PR gate + manual runs; the per-PR gate already covers merges to main.
+    # Runs in parallel with the syntax/unit job; nothing here depends on it.
     if: github.event_name != 'push'
     timeout-minutes: 60
     steps:
@@ -67,10 +66,24 @@ jobs:
         with:
           path: ${{ runner.temp }}/flash-downloads
           key: ${{ steps.cachekey.outputs.key }}
+          restore-keys: |
+            flash-downloads-
+
+      - name: Keep driver installs off Windows Update
+        shell: pwsh
+        run: |
+          # The Imager installer runs `pnputil /add-driver ... /install`, which
+          # can hang indefinitely on headless runners while consulting Windows
+          # Update. Point driver installation at local sources only.
+          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontSearchWindowsUpdate -Value 1 -Type DWord
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontPromptForWindowsUpdate -Value 1 -Type DWord
+          Write-Host "DriverSearching policy: DontSearchWindowsUpdate=1 DontPromptForWindowsUpdate=1"
 
       - name: Attach virtual SD card (VHDX)
         shell: pwsh
         run: |
+          Write-Host "::group::Attach virtual SD card"
           $vhd = Join-Path $env:RUNNER_TEMP 'sd.vhdx'
           New-VHD -Path $vhd -SizeBytes 12GB -Dynamic | Out-Null
           Mount-VHD -Path $vhd -ErrorAction SilentlyContinue
@@ -85,16 +98,21 @@ jobs:
           "VHD_PATH=$vhd" >> $env:GITHUB_ENV
           "VHD_DISK=$($disk.Number)" >> $env:GITHUB_ENV
           Write-Host "Attached virtual SD card as disk $($disk.Number)"
+          Get-Disk | Format-Table -AutoSize Number,FriendlyName,BusType,IsSystem,IsRemovable,@{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}} | Out-String | Write-Host
+          Write-Host "::endgroup::"
 
       - name: Run flash.ps1 setup flow against the virtual SD card
         shell: pwsh
         run: |
+          Write-Host "::group::Flash operation"
+          Get-Disk -Number $env:VHD_DISK | Get-Partition | Get-Volume | Format-Table -AutoSize | Out-String | Write-Host
           pwsh -NoProfile -File host/flash.ps1 `
             -Disk $env:VHD_DISK `
             -UserName pi `
             -Password 'ChangeMe123!' `
             -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
             -AllowVirtualDisk
+          Write-Host "::endgroup::"
 
       - name: Verify first-boot files on the virtual SD card
         shell: pwsh
@@ -113,6 +131,33 @@ jobs:
             throw "First-boot files missing on $boot (ssh=$sshOk userconf=$ucOk)"
           }
           Write-Host "OK: 'ssh' and 'userconf.txt' present on $boot"
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $dst = Join-Path $env:RUNNER_TEMP 'ci-logs'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          foreach ($f in @(
+            (Join-Path $env:RUNNER_TEMP 'flash-downloads\imager-install.log'),
+            (Join-Path $env:RUNNER_TEMP 'flash-downloads\imager-uninstall.log')
+          )) {
+            if (Test-Path -LiteralPath $f) { Copy-Item -LiteralPath $f -Destination $dst -Force }
+          }
+          Get-ChildItem "$env:LOCALAPPDATA\Raspberry Pi*" -Recurse -Filter '*.log' -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $dst -Force
+          if (Test-Path -LiteralPath $dst) {
+            Write-Host "Collected logs to $dst"
+            Get-ChildItem $dst | Format-Table Name,Length | Out-String | Write-Host
+          }
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-e2e-failure-logs
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
 
       - name: Save downloads to cache
         if: success()

@@ -48,11 +48,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Wall-clock timer for the whole run; Write-Step stamps every progress line
+# with the elapsed time so CI logs show how long each phase took.
+$Script:Timer = [System.Diagnostics.Stopwatch]::StartNew()
+
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
 $Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager
                                             # it installed/upgraded (including any pre-existing install)
 
-function Write-Step { param([string]$m) Write-Host "[+] $m" -ForegroundColor Green }
+function Write-Step {
+    param([string]$m)
+    $elapsed = if ($Script:Timer) { ' [{0:hh\:mm\:ss}]' -f $Script:Timer.Elapsed } else { '' }
+    Write-Host "[+]$elapsed $m" -ForegroundColor Green
+}
 function Write-Info { param([string]$m) Write-Host "[*] $m" -ForegroundColor Cyan }
 function Write-Warn { param([string]$m) Write-Host "[!] $m" -ForegroundColor Yellow }
 function Fail       { param([string]$m) Write-Host "[x] $m" -ForegroundColor Red; exit 1 }
@@ -117,6 +125,42 @@ function Clear-ImagerCache {
         Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
+function Write-LogTail {
+    param([string]$Log)
+    if (Test-Path -LiteralPath $Log) {
+        Write-Warn "Last lines of $($Log):"
+        Get-Content -LiteralPath $Log -Tail 25 | ForEach-Object { Write-Host "    $_" }
+    }
+}
+
+function Invoke-WatchedProcess {
+    # Run an installer and wait with a heartbeat and a hard timeout. A stalled
+    # silent install (e.g. the Imager's pnputil driver step blocking forever on
+    # a headless CI runner) must fail fast with diagnostics instead of hanging
+    # until an outer job timeout kills it.
+    param(
+        [Parameter(Mandatory)] [string]$FilePath,
+        [Parameter(Mandatory)] [string[]]$ArgumentList,
+        [Parameter(Mandatory)] [string]$Label,
+        [int]$TimeoutSeconds = 300
+    )
+    $p  = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Write-Info "$Label running (pid $($p.Id)); heartbeat every 15s, hard timeout ${TimeoutSeconds}s"
+    while ($true) {
+        if ($p.HasExited) { return $p.ExitCode }
+        if ($sw.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            Write-Warn "$Label timed out after ${TimeoutSeconds}s - killing its process tree..."
+            & taskkill /T /F /PID $p.Id 2>$null | Out-Null
+            throw "$Label did not finish within ${TimeoutSeconds}s and was killed (started from '$FilePath'). Its log shows which step stalled."
+        }
+        Start-Sleep -Seconds 15
+        if (-not $p.HasExited) {
+            Write-Host ("[*] {0} still running ({1:mm\:ss} elapsed)" -f $Label, $sw.Elapsed) -ForegroundColor Cyan
+        }
+    }
+}
+
 function Install-Imager {
     $dir = $script:DownloadDir
     if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
@@ -129,12 +173,27 @@ function Install-Imager {
         Write-Step "Downloading Raspberry Pi Imager installer..."
         Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
     }
+
+    # /LOG gives a full transcript of the install; when the installer stalls
+    # (its pnputil driver step is known to hang on headless CI runners) the log
+    # shows exactly where, and CI uploads it as an artifact.
+    $log = Join-Path $dir 'imager-install.log'
     Write-Step "Installing Raspberry Pi Imager from $installer (silent)..."
-    $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-    if ($p.ExitCode -ne 0) {
+    try {
+        $code = Invoke-WatchedProcess -FilePath $installer `
+            -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") `
+            -Label 'Raspberry Pi Imager installer' -TimeoutSeconds 300
+    } catch {
+        Write-LogTail $log
         Clear-ImagerCache -Dir $dir
-        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). Cached installers were removed; re-run to download again."
+        Fail $_.Exception.Message
     }
+    if ($code -ne 0) {
+        Write-LogTail $log
+        Clear-ImagerCache -Dir $dir
+        Fail "Raspberry Pi Imager installer failed with exit code $code. Cached installers were removed; re-run to download again."
+    }
+    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
     Write-Step "Raspberry Pi Imager installed successfully"
     $Script:ImagerInstalledByScript = $true
 }
@@ -154,9 +213,12 @@ function Uninstall-Imager {
             return
         }
         Write-Step "Uninstalling Raspberry Pi Imager (silent)"
-        $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-        if ($p.ExitCode -ne 0) {
-            Write-Warn "Raspberry Pi Imager uninstaller exited with code $($p.ExitCode)."
+        $uninstallLog = Join-Path $dir 'imager-uninstall.log'
+        $code = Invoke-WatchedProcess -FilePath $uninstaller `
+            -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$uninstallLog`"") `
+            -Label 'Raspberry Pi Imager uninstaller' -TimeoutSeconds 180
+        if ($code -ne 0) {
+            Write-Warn "Raspberry Pi Imager uninstaller exited with code $code."
         }
     } catch {
         # A cleanup problem must never turn a successful run into a failure or
