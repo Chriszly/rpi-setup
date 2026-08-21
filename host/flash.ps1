@@ -184,6 +184,16 @@ function Install-Imager {
             -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") `
             -Label 'Raspberry Pi Imager installer' -TimeoutSeconds 120
     } catch {
+        # Watchdog timed out (pnputil hung in [Run] section). The file copy phase
+        # already succeeded; check if the binary was installed.
+        Write-Warn "Installer watchdog timed out; checking for installed binary..."
+        $installedExe = Get-ImagerPath
+        if ($installedExe) {
+            Write-Step "Imager binary found at $installedExe despite watchdog timeout"
+            Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+            $Script:ImagerInstalledByScript = $true
+            return
+        }
         Write-LogTail $log
         Clear-ImagerCache -Dir $dir
         Fail $_.Exception.Message

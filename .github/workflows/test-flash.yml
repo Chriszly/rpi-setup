@@ -69,35 +69,6 @@ jobs:
           restore-keys: |
             flash-downloads-
 
-      - name: Download innoextract 1.10.0 (Linux binary via WSL to unpack Imager installer)
-        shell: pwsh
-        run: |
-          $txz = Join-Path $env:RUNNER_TEMP 'innoextract.tar.xz'
-          $extractDir = Join-Path $env:RUNNER_TEMP 'innoextract'
-          if (-not (Test-Path -LiteralPath (Join-Path $extractDir 'innoextract'))) {
-            Write-Host "Downloading innoextract 1.10.0 (Linux)..."
-            & curl.exe -L --fail --progress-bar --output $txz 'https://github.com/dscharrer/innoextract/releases/download/1.10.0/innoextract-1.10.0-linux.tar.xz'
-            if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-            New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-            & wsl tar -xJf "/mnt/c/$(($txz -replace 'C:', '').Replace('\', '/'))" -C "/mnt/c/$(($extractDir -replace 'C:', '').Replace('\', '/'))" --strip-components=1
-            Remove-Item -LiteralPath $txz -Force
-          }
-          $ie = Join-Path $extractDir 'innoextract'
-          if (-not (Test-Path -LiteralPath $ie)) { throw "innoextract not found at $ie after extraction" }
-          "INNOEXTRACT_EXE=$ie" >> $env:GITHUB_ENV
-          Write-Host "innoextract ready at $ie (will run via WSL)"
-
-      - name: Keep driver installs off Windows Update
-        shell: pwsh
-        run: |
-          # The Imager installer runs `pnputil /add-driver ... /install`, which
-          # can hang indefinitely on headless runners while consulting Windows
-          # Update. Point driver installation at local sources only.
-          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Force | Out-Null
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontSearchWindowsUpdate -Value 1 -Type DWord
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontPromptForWindowsUpdate -Value 1 -Type DWord
-          Write-Host "DriverSearching policy: DontSearchWindowsUpdate=1 DontPromptForWindowsUpdate=1"
-
       - name: Ensure Imager installer is downloaded (cache miss on first run of day)
         shell: pwsh
         run: |
@@ -111,26 +82,7 @@ jobs:
             $installer = Get-ChildItem -LiteralPath $dl -Filter 'imager_*.exe' | Select-Object -First 1
           }
           if (-not $installer) { throw "Failed to obtain Imager installer" }
-          "IMAGER_INSTALLER=$($installer.FullName)" >> $env:GITHUB_ENV
           Write-Host "Using Imager installer: $($installer.Name)"
-
-      - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
-        shell: pwsh
-        run: |
-          $installer = Get-Item -LiteralPath $env:IMAGER_INSTALLER
-          $dl = Split-Path -Parent $installer.FullName
-          $extractDir = Join-Path $dl 'imager-extracted'
-          if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-          $ie = $env:INNOEXTRACT_EXE
-          # Convert Windows paths to WSL paths
-          $installerWsl = $installer.FullName -replace 'C:', '/mnt/c' -replace '\\', '/'
-          $extractDirWsl = $extractDir -replace 'C:', '/mnt/c' -replace '\\', '/'
-          Write-Host "Extracting $($installer.Name) to $extractDir with innoextract (via WSL)..."
-          & wsl "$ie" --silent --output-dir "$extractDirWsl" "$installerWsl"
-          $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
-          if (-not $imagerExe) { throw "Extracted rpi-imager.exe not found under $extractDir" }
-          "IMAGER_EXE=$($imagerExe.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Using extracted Imager: $($imagerExe.FullName)"
 
       - name: Attach virtual SD card (VHDX)
         shell: pwsh
@@ -163,8 +115,7 @@ jobs:
             -UserName pi `
             -Password 'ChangeMe123!' `
             -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
-            -AllowVirtualDisk `
-            -ImagerExe $env:IMAGER_EXE
+            -AllowVirtualDisk
           Write-Host "::endgroup::"
 
       - name: Verify first-boot files on the virtual SD card
