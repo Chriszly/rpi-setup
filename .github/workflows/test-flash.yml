@@ -104,7 +104,7 @@ jobs:
           $sz = $env:SEVENZIP
           Write-Host "Extracting $($installer.Name) to $extractDir with 7-Zip..."
           & $sz x -o"$extractDir" -y "$($installer.FullName)"
-          Write-Host "Extraction complete. Contents of $extractDir:"
+          Write-Host "Extraction complete. Contents of ${extractDir}:"
           Get-ChildItem -LiteralPath $extractDir -Recurse | Format-Table FullName,Length | Out-String | Write-Host
           $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
           if (-not $imagerExe) { throw "Extracted rpi-imager.exe not found under $extractDir" }
