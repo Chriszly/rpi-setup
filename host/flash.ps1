@@ -182,7 +182,7 @@ function Install-Imager {
     try {
         $code = Invoke-WatchedProcess -FilePath $installer `
             -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") `
-            -Label 'Raspberry Pi Imager installer' -TimeoutSeconds 300
+            -Label 'Raspberry Pi Imager installer' -TimeoutSeconds 120
     } catch {
         Write-LogTail $log
         Clear-ImagerCache -Dir $dir
@@ -216,7 +216,7 @@ function Uninstall-Imager {
         $uninstallLog = Join-Path $dir 'imager-uninstall.log'
         $code = Invoke-WatchedProcess -FilePath $uninstaller `
             -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$uninstallLog`"") `
-            -Label 'Raspberry Pi Imager uninstaller' -TimeoutSeconds 180
+            -Label 'Raspberry Pi Imager uninstaller' -TimeoutSeconds 60
         if ($code -ne 0) {
             Write-Warn "Raspberry Pi Imager uninstaller exited with code $code."
         }

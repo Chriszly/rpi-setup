@@ -69,14 +69,16 @@ jobs:
           restore-keys: |
             flash-downloads-
 
-      - name: Ensure 7-Zip is available (for unpacking Imager installer without running pnputil)
+      - name: Keep driver installs off Windows Update
         shell: pwsh
         run: |
-          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
-          if (-not (Test-Path -LiteralPath $sevenZip)) { $sevenZip = 'C:\Program Files (x86)\7-Zip\7z.exe' }
-          if (-not (Test-Path -LiteralPath $sevenZip)) { throw "7-Zip not found on runner" }
-          "SEVENZIP=$sevenZip" >> $env:GITHUB_ENV
-          Write-Host "7-Zip ready at $sevenZip"
+          # The Imager installer runs `pnputil /add-driver ... /install`, which
+          # can hang indefinitely on headless runners while consulting Windows
+          # Update. Point driver installation at local sources only.
+          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontSearchWindowsUpdate -Value 1 -Type DWord
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching' -Name DontPromptForWindowsUpdate -Value 1 -Type DWord
+          Write-Host "DriverSearching policy: DontSearchWindowsUpdate=1 DontPromptForWindowsUpdate=1"
 
       - name: Ensure Imager installer is downloaded (cache miss on first run of day)
         shell: pwsh
@@ -93,34 +95,6 @@ jobs:
           if (-not $installer) { throw "Failed to obtain Imager installer" }
           "IMAGER_INSTALLER=$($installer.FullName)" >> $env:GITHUB_ENV
           Write-Host "Using Imager installer: $($installer.Name)"
-
-      - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
-        shell: pwsh
-        run: |
-          $installer = Get-Item -LiteralPath $env:IMAGER_INSTALLER
-          $dl = Split-Path -Parent $installer.FullName
-          $extractDir = Join-Path $dl 'imager-extracted'
-          if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-          $sz = $env:SEVENZIP
-          Write-Host "Extracting $($installer.Name) to $extractDir with 7-Zip (pass 1)..."
-          & $sz x -o"$extractDir" -y "$($installer.FullName)"
-          Write-Host "Pass 1 complete. Contents of ${extractDir}:"
-          Get-ChildItem -LiteralPath $extractDir -Recurse | Format-Table FullName,Length | Out-String | Write-Host
-          # Inno Setup 6 installers often have the payload in a file named [0]
-          $payload = Get-ChildItem -LiteralPath $extractDir -Filter '[0]' | Select-Object -First 1
-          if ($payload) {
-            Write-Host "Found Inno Setup payload [$($payload.Name)] ($($payload.Length) bytes), extracting..."
-            $payloadDir = Join-Path $extractDir 'payload'
-            & $sz x -o"$payloadDir" -y "$($payload.FullName)"
-            Write-Host "Pass 2 complete. Contents of ${payloadDir}:"
-            Get-ChildItem -LiteralPath $payloadDir -Recurse | Format-Table FullName,Length | Out-String | Write-Host
-            $imagerExe = Get-ChildItem -LiteralPath $payloadDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
-          } else {
-            $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
-          }
-          if (-not $imagerExe) { throw "Extracted rpi-imager.exe not found under $extractDir" }
-          "IMAGER_EXE=$($imagerExe.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Using extracted Imager: $($imagerExe.FullName)"
 
       - name: Attach virtual SD card (VHDX)
         shell: pwsh
@@ -153,8 +127,7 @@ jobs:
             -UserName pi `
             -Password 'ChangeMe123!' `
             -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
-            -AllowVirtualDisk `
-            -ImagerExe $env:IMAGER_EXE
+            -AllowVirtualDisk
           Write-Host "::endgroup::"
 
       - name: Verify first-boot files on the virtual SD card
