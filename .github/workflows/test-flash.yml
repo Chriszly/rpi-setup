@@ -72,13 +72,18 @@ jobs:
       - name: Download innoextract (to unpack Imager installer without running pnputil)
         shell: pwsh
         run: |
-          $ie = Join-Path $env:RUNNER_TEMP 'innoextract.exe'
-          if (-not (Test-Path -LiteralPath $ie)) {
+          $zip = Join-Path $env:RUNNER_TEMP 'innoextract.zip'
+          $extractDir = Join-Path $env:RUNNER_TEMP 'innoextract'
+          if (-not (Test-Path -LiteralPath (Join-Path $extractDir 'innoextract.exe'))) {
             Write-Host "Downloading innoextract..."
-            & curl.exe -L --fail --progress-bar --output $ie 'https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-windows.zip'
-            Expand-Archive -LiteralPath $ie -DestinationPath (Split-Path -Parent $ie) -Force
-            Remove-Item -LiteralPath $ie -Force
+            & curl.exe -L --fail --progress-bar --output $zip 'https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-windows.zip'
+            if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
+            Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
+            Remove-Item -LiteralPath $zip -Force
           }
+          $ie = Join-Path $extractDir 'innoextract.exe'
+          if (-not (Test-Path -LiteralPath $ie)) { throw "innoextract.exe not found at $ie after extraction" }
+          "INNOEXTRACT_EXE=$ie" >> $env:GITHUB_ENV
           Write-Host "innoextract ready at $ie"
 
       - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
@@ -89,7 +94,7 @@ jobs:
           if (-not $installer) { throw "No Imager installer found in $dl" }
           $extractDir = Join-Path $dl 'imager-extracted'
           if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-          $ie = Join-Path $env:RUNNER_TEMP 'innoextract.exe'
+          $ie = $env:INNOEXTRACT_EXE
           Write-Host "Extracting $($installer.Name) to $extractDir..."
           & $ie --silent --output-dir $extractDir $installer.FullName
           $imagerExe = Join-Path $extractDir 'app' 'rpi-imager.exe'
