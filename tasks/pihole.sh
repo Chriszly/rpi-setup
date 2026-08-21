@@ -32,7 +32,7 @@ run_pihole() {
   local pwfile="$dir/webpassword" pw=""
   if [[ -n "${PIHOLE_PASSWORD:-}" ]]; then
     pw="${PIHOLE_PASSWORD}"
-    say 'Using web UI password from $PIHOLE_PASSWORD'
+    say 'Using web UI password from the PIHOLE_PASSWORD environment variable'
   elif [[ -r "$pwfile" ]] && [[ -s "$pwfile" ]]; then
     pw="$(<"$pwfile")"
     say "Using existing web UI password from $pwfile"
