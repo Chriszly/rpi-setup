@@ -453,9 +453,10 @@ function Get-BootRoot {
             # Not strictly needed on real cards, but required for virtual SD
             # disks (CI), which Windows does not auto-rescan after a raw write.
             Update-HostStorageCache | Out-Null
-            # Extra nudge for virtual disks: force a disk rescan
+            # Extra nudge for virtual disks: force a disk rescan via diskpart
             if ($AllowVirtualDisk) {
                 Get-Disk -Number $DiskNumber | Update-Disk | Out-Null
+                "rescan" | diskpart | Out-Null
             }
             foreach ($v in (Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'FAT32' })) {
                 $p = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction SilentlyContinue
