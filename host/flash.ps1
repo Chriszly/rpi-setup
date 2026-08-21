@@ -445,7 +445,7 @@ function Get-BootRoot {
     param([int]$DiskNumber)
     # Virtual disks (CI) need more retries because Windows doesn't auto-rescan
     # the partition table after a raw write as reliably as physical media.
-    $maxRetries = if ($AllowVirtualDisk) { 60 } else { 30 }
+    $maxRetries = if ($AllowVirtualDisk) { 90 } else { 30 }
     for ($i = 0; $i -lt $maxRetries; $i++) {
         if ($i -gt 0) { Start-Sleep -Seconds 2 }
         try {
@@ -456,7 +456,15 @@ function Get-BootRoot {
             # Extra nudge for virtual disks: force a disk rescan via diskpart
             if ($AllowVirtualDisk) {
                 Get-Disk -Number $DiskNumber | Update-Disk | Out-Null
-                "rescan" | diskpart | Out-Null
+                $diskpartScript = @"
+rescan
+select disk $DiskNumber
+list partition
+"@
+                $scriptPath = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($scriptPath, $diskpartScript)
+                & diskpart /s $scriptPath | Out-Null
+                Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
             }
             foreach ($v in (Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'FAT32' })) {
                 $p = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction SilentlyContinue
