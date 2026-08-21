@@ -69,6 +69,23 @@ jobs:
           restore-keys: |
             flash-downloads-
 
+      - name: Download innoextract 1.10.0 (to unpack Imager installer without running pnputil)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'innoextract.zip'
+          $extractDir = Join-Path $env:RUNNER_TEMP 'innoextract'
+          if (-not (Test-Path -LiteralPath (Join-Path $extractDir 'innoextract.exe'))) {
+            Write-Host "Downloading innoextract 1.10.0..."
+            & curl.exe -L --fail --progress-bar --output $zip 'https://github.com/dscharrer/innoextract/releases/download/1.10.0/innoextract-1.10.0-windows.zip'
+            if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
+            Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
+            Remove-Item -LiteralPath $zip -Force
+          }
+          $ie = Join-Path $extractDir 'innoextract.exe'
+          if (-not (Test-Path -LiteralPath $ie)) { throw "innoextract.exe not found at $ie after extraction" }
+          "INNOEXTRACT_EXE=$ie" >> $env:GITHUB_ENV
+          Write-Host "innoextract ready at $ie"
+
       - name: Keep driver installs off Windows Update
         shell: pwsh
         run: |
@@ -95,6 +112,21 @@ jobs:
           if (-not $installer) { throw "Failed to obtain Imager installer" }
           "IMAGER_INSTALLER=$($installer.FullName)" >> $env:GITHUB_ENV
           Write-Host "Using Imager installer: $($installer.Name)"
+
+      - name: Extract Raspberry Pi Imager from installer (bypasses pnputil driver step)
+        shell: pwsh
+        run: |
+          $installer = Get-Item -LiteralPath $env:IMAGER_INSTALLER
+          $dl = Split-Path -Parent $installer.FullName
+          $extractDir = Join-Path $dl 'imager-extracted'
+          if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
+          $ie = $env:INNOEXTRACT_EXE
+          Write-Host "Extracting $($installer.Name) to $extractDir with innoextract..."
+          & $ie --silent --output-dir $extractDir $installer.FullName
+          $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
+          if (-not $imagerExe) { throw "Extracted rpi-imager.exe not found under $extractDir" }
+          "IMAGER_EXE=$($imagerExe.FullName)" >> $env:GITHUB_ENV
+          Write-Host "Using extracted Imager: $($imagerExe.FullName)"
 
       - name: Attach virtual SD card (VHDX)
         shell: pwsh
@@ -127,7 +159,8 @@ jobs:
             -UserName pi `
             -Password 'ChangeMe123!' `
             -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
-            -AllowVirtualDisk
+            -AllowVirtualDisk `
+            -ImagerExe $env:IMAGER_EXE
           Write-Host "::endgroup::"
 
       - name: Verify first-boot files on the virtual SD card
