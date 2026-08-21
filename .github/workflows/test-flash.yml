@@ -69,22 +69,14 @@ jobs:
           restore-keys: |
             flash-downloads-
 
-      - name: Download innoextract (to unpack Imager installer without running pnputil)
+      - name: Ensure 7-Zip is available (for unpacking Imager installer without running pnputil)
         shell: pwsh
         run: |
-          $zip = Join-Path $env:RUNNER_TEMP 'innoextract.zip'
-          $extractDir = Join-Path $env:RUNNER_TEMP 'innoextract'
-          if (-not (Test-Path -LiteralPath (Join-Path $extractDir 'innoextract.exe'))) {
-            Write-Host "Downloading innoextract..."
-            & curl.exe -L --fail --progress-bar --output $zip 'https://github.com/dscharrer/innoextract/releases/download/1.10/innoextract-1.10-windows.zip'
-            if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-            Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
-            Remove-Item -LiteralPath $zip -Force
-          }
-          $ie = Join-Path $extractDir 'innoextract.exe'
-          if (-not (Test-Path -LiteralPath $ie)) { throw "innoextract.exe not found at $ie after extraction" }
-          "INNOEXTRACT_EXE=$ie" >> $env:GITHUB_ENV
-          Write-Host "innoextract ready at $ie"
+          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
+          if (-not (Test-Path -LiteralPath $sevenZip)) { $sevenZip = 'C:\Program Files (x86)\7-Zip\7z.exe' }
+          if (-not (Test-Path -LiteralPath $sevenZip)) { throw "7-Zip not found on runner" }
+          "SEVENZIP=$sevenZip" >> $env:GITHUB_ENV
+          Write-Host "7-Zip ready at $sevenZip"
 
       - name: Ensure Imager installer is downloaded (cache miss on first run of day)
         shell: pwsh
@@ -109,11 +101,16 @@ jobs:
           $dl = Split-Path -Parent $installer.FullName
           $extractDir = Join-Path $dl 'imager-extracted'
           if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
-          $ie = $env:INNOEXTRACT_EXE
-          Write-Host "Extracting $($installer.Name) to $extractDir..."
-          & $ie --silent --output-dir $extractDir $installer.FullName
+          $sz = $env:SEVENZIP
+          Write-Host "Extracting $($installer.Name) to $extractDir with 7-Zip..."
+          & $sz x -o"$extractDir" -y "$($installer.FullName)" | Out-Null
           $imagerExe = Join-Path $extractDir 'app' 'rpi-imager.exe'
-          if (-not (Test-Path -LiteralPath $imagerExe)) { throw "Extracted rpi-imager.exe not found at $imagerExe" }
+          if (-not (Test-Path -LiteralPath $imagerExe)) {
+            # 7-Zip might extract to a different structure; search for rpi-imager.exe
+            $found = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
+            if ($found) { $imagerExe = $found.FullName }
+          }
+          if (-not (Test-Path -LiteralPath $imagerExe)) { throw "Extracted rpi-imager.exe not found under $extractDir" }
           "IMAGER_EXE=$imagerExe" >> $env:GITHUB_ENV
           Write-Host "Using extracted Imager: $imagerExe"
 
