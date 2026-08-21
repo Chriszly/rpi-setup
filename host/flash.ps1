@@ -443,13 +443,20 @@ function Get-Credentials {
 
 function Get-BootRoot {
     param([int]$DiskNumber)
-    for ($i = 0; $i -lt 30; $i++) {
+    # Virtual disks (CI) need more retries because Windows doesn't auto-rescan
+    # the partition table after a raw write as reliably as physical media.
+    $maxRetries = if ($AllowVirtualDisk) { 60 } else { 30 }
+    for ($i = 0; $i -lt $maxRetries; $i++) {
         if ($i -gt 0) { Start-Sleep -Seconds 2 }
         try {
             # Best-effort: re-read the partition table the flasher just wrote.
             # Not strictly needed on real cards, but required for virtual SD
             # disks (CI), which Windows does not auto-rescan after a raw write.
             Update-HostStorageCache | Out-Null
+            # Extra nudge for virtual disks: force a disk rescan
+            if ($AllowVirtualDisk) {
+                Get-Disk -Number $DiskNumber | Update-Disk | Out-Null
+            }
             foreach ($v in (Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'FAT32' })) {
                 $p = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction SilentlyContinue
                 if ($p -and $p.DiskNumber -eq $DiskNumber -and $p.Size -lt 2GB) { return "$($v.DriveLetter):\" }
