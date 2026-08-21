@@ -76,7 +76,7 @@ jobs:
           $extractDir = Join-Path $env:RUNNER_TEMP 'innoextract'
           if (-not (Test-Path -LiteralPath (Join-Path $extractDir 'innoextract.exe'))) {
             Write-Host "Downloading innoextract..."
-            & curl.exe -L --fail --progress-bar --output $zip 'https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-windows.zip'
+            & curl.exe -L --fail --progress-bar --output $zip 'https://github.com/dscharrer/innoextract/releases/download/1.10/innoextract-1.10-windows.zip'
             if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
             Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
             Remove-Item -LiteralPath $zip -Force
