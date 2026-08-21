@@ -160,16 +160,17 @@ covers). It needs admin - GitHub-hosted Windows VMs run elevated with UAC
 disabled, which is also required to attach the VHDX and to run Imager's silent
 installer.
 
-**Failure diagnostics:** On failure the job collects the Imager installer logs
-(`/LOG` output from both install and uninstall), any Imager app logs under
-`%LOCALAPPDATA%\Raspberry Pi*`, and uploads them as the `flash-e2e-failure-logs`
-artifact so the exact stall point is visible without re-running.
-
 **Timeout guard:** `Install-Imager` and `Uninstall-Imager` now use a watched
 process with a 5 min / 3 min hard timeout and 15 s heartbeats. If the
 `pnputil` driver step inside the Imager installer hangs (a known issue on
 headless CI runners), the script kills the process tree and fails fast with the
 installer log tail instead of burning the full 60 min job timeout.
+
+**CI avoids the installer entirely:** The `flash-e2e` job downloads
+`innoextract`, unpacks the Imager installer (which does **not** execute the
+`[Run]` section where `pnputil` lives), and passes the extracted
+`rpi-imager.exe` to `flash.ps1` via `-ImagerExe`. This completely sidesteps the
+driver-install hang while using the exact same Imager binary.
 
 **Verbosity:** Every progress line from `flash.ps1` is now prefixed with an
 elapsed `[hh:mm:ss]` timestamp, and the workflow emits `::group::` folds with
