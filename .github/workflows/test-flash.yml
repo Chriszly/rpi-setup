@@ -102,11 +102,22 @@ jobs:
           $extractDir = Join-Path $dl 'imager-extracted'
           if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force }
           $sz = $env:SEVENZIP
-          Write-Host "Extracting $($installer.Name) to $extractDir with 7-Zip..."
+          Write-Host "Extracting $($installer.Name) to $extractDir with 7-Zip (pass 1)..."
           & $sz x -o"$extractDir" -y "$($installer.FullName)"
-          Write-Host "Extraction complete. Contents of ${extractDir}:"
+          Write-Host "Pass 1 complete. Contents of ${extractDir}:"
           Get-ChildItem -LiteralPath $extractDir -Recurse | Format-Table FullName,Length | Out-String | Write-Host
-          $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
+          # Inno Setup 6 installers often have the payload in a file named [0]
+          $payload = Get-ChildItem -LiteralPath $extractDir -Filter '[0]' | Select-Object -First 1
+          if ($payload) {
+            Write-Host "Found Inno Setup payload [$($payload.Name)] ($($payload.Length) bytes), extracting..."
+            $payloadDir = Join-Path $extractDir 'payload'
+            & $sz x -o"$payloadDir" -y "$($payload.FullName)"
+            Write-Host "Pass 2 complete. Contents of ${payloadDir}:"
+            Get-ChildItem -LiteralPath $payloadDir -Recurse | Format-Table FullName,Length | Out-String | Write-Host
+            $imagerExe = Get-ChildItem -LiteralPath $payloadDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
+          } else {
+            $imagerExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'rpi-imager.exe' | Select-Object -First 1
+          }
           if (-not $imagerExe) { throw "Extracted rpi-imager.exe not found under $extractDir" }
           "IMAGER_EXE=$($imagerExe.FullName)" >> $env:GITHUB_ENV
           Write-Host "Using extracted Imager: $($imagerExe.FullName)"
