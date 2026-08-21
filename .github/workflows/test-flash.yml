@@ -2,10 +2,19 @@ name: Flash Script Tests
 
 on:
   pull_request:
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
   push:
     branches:
       - main
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
   workflow_dispatch:
+    paths:
+      - 'host/flash.ps1'
+      - '.github/workflows/test-flash.yml'
 
 permissions:
   contents: read
@@ -36,3 +45,138 @@ jobs:
       - name: Run flash.ps1 unit tests
         shell: pwsh
         run: ./ci/test-flash.ps1
+
+  flash-e2e:
+    name: Run flash.ps1 setup in isolated VM
+    runs-on: windows-latest
+    # Runs in parallel with the syntax/unit job; nothing here depends on it.
+    if: github.event_name != 'push'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute download cache key
+        id: cachekey
+        shell: pwsh
+        run: |
+          "key=flash-downloads-$(Get-Date -Format yyyy-MM-dd)" >> $env:GITHUB_OUTPUT
+
+      - name: Restore cached image and Imager downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/flash-downloads
+          key: ${{ steps.cachekey.outputs.key }}
+          restore-keys: |
+            flash-downloads-
+
+      - name: Ensure Imager installer is downloaded (cache miss on first run of day)
+        shell: pwsh
+        run: |
+          $dl = "$env:RUNNER_TEMP\flash-downloads"
+          if (-not (Test-Path -LiteralPath $dl)) { New-Item -ItemType Directory -Path $dl -Force | Out-Null }
+          $installer = Get-ChildItem -LiteralPath $dl -Filter 'imager_*.exe' | Select-Object -First 1
+          if (-not $installer) {
+            Write-Host "Imager installer not in cache; downloading latest..."
+            $latestUrl = 'https://downloads.raspberrypi.com/imager/imager_latest.exe'
+            & curl.exe -L --fail --progress-bar --output (Join-Path $dl 'imager_latest.exe') $latestUrl
+            $installer = Get-ChildItem -LiteralPath $dl -Filter 'imager_*.exe' | Select-Object -First 1
+          }
+          if (-not $installer) { throw "Failed to obtain Imager installer" }
+          Write-Host "Using Imager installer: $($installer.Name)"
+
+      - name: Attach virtual SD card (VHDX)
+        shell: pwsh
+        run: |
+          Write-Host "::group::Attach virtual SD card"
+          $vhd = Join-Path $env:RUNNER_TEMP 'sd.vhdx'
+          New-VHD -Path $vhd -SizeBytes 12GB -Dynamic | Out-Null
+          Mount-VHD -Path $vhd -ErrorAction SilentlyContinue
+          $disk = $null
+          for ($i = 0; $i -lt 30 -and -not $disk; $i++) {
+            $disk = Get-Disk | Where-Object {
+              $_.Location -like "*$vhd*" -or $_.BusType -eq 'File Backed Virtual'
+            } | Select-Object -First 1
+            if (-not $disk) { Start-Sleep -Seconds 2 }
+          }
+          if (-not $disk) { throw "Virtual SD card did not attach as a disk: $vhd" }
+          "VHD_PATH=$vhd" >> $env:GITHUB_ENV
+          "VHD_DISK=$($disk.Number)" >> $env:GITHUB_ENV
+          Write-Host "Attached virtual SD card as disk $($disk.Number)"
+          Get-Disk | Format-Table -AutoSize Number,FriendlyName,BusType,IsSystem,IsRemovable,@{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}} | Out-String | Write-Host
+          Write-Host "::endgroup::"
+
+      - name: Run flash.ps1 setup flow against the virtual SD card
+        shell: pwsh
+        run: |
+          Write-Host "::group::Flash operation"
+          Get-Disk -Number $env:VHD_DISK | Get-Partition | Get-Volume | Format-Table -AutoSize | Out-String | Write-Host
+          pwsh -NoProfile -File host/flash.ps1 `
+            -Disk $env:VHD_DISK `
+            -UserName pi `
+            -Password 'ChangeMe123!' `
+            -DownloadDir "$env:RUNNER_TEMP\flash-downloads" `
+            -AllowVirtualDisk
+          Write-Host "::endgroup::"
+
+      - name: Verify first-boot files on the virtual SD card
+        shell: pwsh
+        run: |
+          $boot = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            $part = Get-Partition -DiskNumber ([int]$env:VHD_DISK) -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DriveLetter -and $_.Size -lt 2GB } | Select-Object -First 1
+            if ($part) { $boot = "$($part.DriveLetter):\"; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $boot) { throw "Boot partition not found on disk $env:VHD_DISK after flashing" }
+          $sshOk = Test-Path -LiteralPath (Join-Path $boot 'ssh')
+          $ucOk  = Test-Path -LiteralPath (Join-Path $boot 'userconf.txt')
+          if (-not ($sshOk -and $ucOk)) {
+            throw "First-boot files missing on $boot (ssh=$sshOk userconf=$ucOk)"
+          }
+          Write-Host "OK: 'ssh' and 'userconf.txt' present on $boot"
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $dst = Join-Path $env:RUNNER_TEMP 'ci-logs'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          foreach ($f in @(
+            (Join-Path $env:RUNNER_TEMP 'flash-downloads\imager-install.log'),
+            (Join-Path $env:RUNNER_TEMP 'flash-downloads\imager-uninstall.log')
+          )) {
+            if (Test-Path -LiteralPath $f) { Copy-Item -LiteralPath $f -Destination $dst -Force }
+          }
+          Get-ChildItem "$env:LOCALAPPDATA\Raspberry Pi*" -Recurse -Filter '*.log' -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $dst -Force
+          if (Test-Path -LiteralPath $dst) {
+            Write-Host "Collected logs to $dst"
+            Get-ChildItem $dst | Format-Table Name,Length | Out-String | Write-Host
+          }
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-e2e-failure-logs
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+
+      - name: Save downloads to cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/flash-downloads
+          key: ${{ steps.cachekey.outputs.key }}
+
+      - name: Detach and remove virtual SD card
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $vhd = $env:VHD_PATH
+          if (Test-Path -LiteralPath $vhd) {
+            try { Dismount-VHD -Path $vhd -ErrorAction Stop } catch { }
+            Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+          }

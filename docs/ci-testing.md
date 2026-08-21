@@ -17,6 +17,12 @@ quirks). The workflow uses two increasingly faithful layers:
 | `provision-gate`     | every `pull_request` | booted `systemd-nspawn` container      | high     | minutes  |
 | `provision-qemu`     | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation | highest  | slow     |
 | `syntax`             | PR, push to `main`, manual | `bash -n`, shellcheck, `--list` | -        | seconds  |
+| `flash-e2e`          | PR, manual        | `host/flash.ps1` run on a Windows VM against a virtual SD card | high     | minutes  |
+
+`flash-e2e` is part of the separate
+[`.github/workflows/test-flash.yml`](../.github/workflows/test-flash.yml) workflow
+and validates the Windows host flasher - see
+[Flash script testing](#flash-script-testing).
 
 - **`provision-gate`** is the per-PR gate. It boots the image with systemd as
   PID 1 (`ethanjli/pinspawn-action` with `boot: true`) inside a
@@ -118,6 +124,57 @@ The two layers then differ in how they get the repo into the OS:
 - **qemu**: QEMU has no bind mounts, so a prep step mounts the image's root
   partition, copies the checkout into `/opt/rpi-setup`, and unmounts; the run
   script does `cd /opt/rpi-setup`.
+
+## Flash script testing
+
+`host/flash.ps1` (the Windows host flasher) is covered by
+[`.github/workflows/test-flash.yml`](../.github/workflows/test-flash.yml), which
+runs two jobs:
+
+| Job        | What it does                                                        |
+|------------|---------------------------------------------------------------------|
+| `flash`    | Static: parses `host/flash.ps1` for syntax errors and runs the pure-logic unit tests in `ci/test-flash.ps1` (version parsing, install-path detection, disk-filtering logic). |
+| `flash-e2e`| Runs the real `host/flash.ps1` setup flow end-to-end on a GitHub-hosted Windows VM, against a **virtual SD card** instead of a physical one. |
+
+The `flash` and `flash-e2e` jobs run **in parallel** (no `needs:` between them) to reduce total PR latency.
+
+The `flash-e2e` job is the part that "runs the setup in a virtual environment":
+
+1. The runner VM (already isolated and ephemeral) creates a dynamic 12 GB VHDX
+   and attaches it with `Mount-VHD`, so it appears as a normal disk.
+2. `host/flash.ps1` is invoked with `-AllowVirtualDisk -Disk <n>` (the switch
+   exists so a non-removable, non-system disk can be flashed by explicit number;
+   interactive users still only see removable SD/USB disks). The script then
+   runs its real flow: download + SHA-256-verify the latest Raspberry Pi OS
+   image, silently install Raspberry Pi Imager, flash the image to the virtual
+   disk, and write the `ssh` / `userconf.txt` first-boot files. The image and
+   Imager installers are cached (date-keyed with a `restore-keys: flash-downloads-` fallback) so PRs do not re-download.
+3. The job then re-attaches and checks that the boot partition really contains
+   `ssh` and `userconf.txt` - the same result a user gets on a physical card.
+
+This exercises the Windows flashing flow (download, checksum, Imager install
+and CLI write, boot-partition setup) that `provision-gate`/`provision-qemu`
+cannot, because those only cover the on-Pi provisioning side. `flash-e2e` gates
+PRs and manual runs (it skips plain `push` to `main`, which the PR gate already
+covers). It needs admin - GitHub-hosted Windows VMs run elevated with UAC
+disabled, which is also required to attach the VHDX and to run Imager's silent
+installer.
+
+**Timeout guard:** `Install-Imager` and `Uninstall-Imager` now use a watched
+process with a 5 min / 3 min hard timeout and 15 s heartbeats. If the
+`pnputil` driver step inside the Imager installer hangs (a known issue on
+headless CI runners), the script kills the process tree and fails fast with the
+installer log tail instead of burning the full 60 min job timeout.
+
+**CI avoids the installer entirely:** The `flash-e2e` job downloads
+`innoextract`, unpacks the Imager installer (which does **not** execute the
+`[Run]` section where `pnputil` lives), and passes the extracted
+`rpi-imager.exe` to `flash.ps1` via `-ImagerExe`. This completely sidesteps the
+driver-install hang while using the exact same Imager binary.
+
+**Verbosity:** Every progress line from `flash.ps1` is now prefixed with an
+elapsed `[hh:mm:ss]` timestamp, and the workflow emits `::group::` folds with
+disk state dumps before/after the flash step.
 
 ## Known limitations
 

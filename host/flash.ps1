@@ -39,16 +39,28 @@ param(
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
     [string]$ImagerExe,
     # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
-    [switch]$SkipImagerInstall
+    [switch]$SkipImagerInstall,
+    # Permit flashing a non-removable disk by number. Off by default; used by CI,
+    # which runs this setup flow against a virtual SD card (a mounted VHDX) on an
+    # isolated runner. Interactive selection still only offers removable SD/USB.
+    [switch]$AllowVirtualDisk
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Wall-clock timer for the whole run; Write-Step stamps every progress line
+# with the elapsed time so CI logs show how long each phase took.
+$Script:Timer = [System.Diagnostics.Stopwatch]::StartNew()
 
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
 $Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager
                                             # it installed/upgraded (including any pre-existing install)
 
-function Write-Step { param([string]$m) Write-Host "[+] $m" -ForegroundColor Green }
+function Write-Step {
+    param([string]$m)
+    $elapsed = if ($Script:Timer) { ' [{0:hh\:mm\:ss}]' -f $Script:Timer.Elapsed } else { '' }
+    Write-Host "[+]$elapsed $m" -ForegroundColor Green
+}
 function Write-Info { param([string]$m) Write-Host "[*] $m" -ForegroundColor Cyan }
 function Write-Warn { param([string]$m) Write-Host "[!] $m" -ForegroundColor Yellow }
 function Fail       { param([string]$m) Write-Host "[x] $m" -ForegroundColor Red; exit 1 }
@@ -113,6 +125,42 @@ function Clear-ImagerCache {
         Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
+function Write-LogTail {
+    param([string]$Log)
+    if (Test-Path -LiteralPath $Log) {
+        Write-Warn "Last lines of $($Log):"
+        Get-Content -LiteralPath $Log -Tail 25 | ForEach-Object { Write-Host "    $_" }
+    }
+}
+
+function Invoke-WatchedProcess {
+    # Run an installer and wait with a heartbeat and a hard timeout. A stalled
+    # silent install (e.g. the Imager's pnputil driver step blocking forever on
+    # a headless CI runner) must fail fast with diagnostics instead of hanging
+    # until an outer job timeout kills it.
+    param(
+        [Parameter(Mandatory)] [string]$FilePath,
+        [Parameter(Mandatory)] [string[]]$ArgumentList,
+        [Parameter(Mandatory)] [string]$Label,
+        [int]$TimeoutSeconds = 300
+    )
+    $p  = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Write-Info "$Label running (pid $($p.Id)); heartbeat every 15s, hard timeout ${TimeoutSeconds}s"
+    while ($true) {
+        if ($p.HasExited) { return $p.ExitCode }
+        if ($sw.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            Write-Warn "$Label timed out after ${TimeoutSeconds}s - killing its process tree..."
+            & taskkill /T /F /PID $p.Id 2>$null | Out-Null
+            throw "$Label did not finish within ${TimeoutSeconds}s and was killed (started from '$FilePath'). Its log shows which step stalled."
+        }
+        Start-Sleep -Seconds 15
+        if (-not $p.HasExited) {
+            Write-Host ("[*] {0} still running ({1:mm\:ss} elapsed)" -f $Label, $sw.Elapsed) -ForegroundColor Cyan
+        }
+    }
+}
+
 function Install-Imager {
     $dir = $script:DownloadDir
     if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
@@ -122,14 +170,41 @@ function Install-Imager {
     $fileName = if ($latest) { "imager_$latest.exe" } else { 'imager_latest.exe' }
     $installer = Join-Path $dir $fileName
     if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -eq 0) {
+        Write-Step "Downloading Raspberry Pi Imager installer..."
         Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
     }
-    Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
-    $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-    if ($p.ExitCode -ne 0) {
+
+    # /LOG gives a full transcript of the install; when the installer stalls
+    # (its pnputil driver step is known to hang on headless CI runners) the log
+    # shows exactly where, and CI uploads it as an artifact.
+    $log = Join-Path $dir 'imager-install.log'
+    Write-Step "Installing Raspberry Pi Imager from $installer (silent)..."
+    try {
+        $code = Invoke-WatchedProcess -FilePath $installer `
+            -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") `
+            -Label 'Raspberry Pi Imager installer' -TimeoutSeconds 120
+    } catch {
+        # Watchdog timed out (pnputil hung in [Run] section). The file copy phase
+        # already succeeded; check if the binary was installed.
+        Write-Warn "Installer watchdog timed out; checking for installed binary..."
+        $installedExe = Get-ImagerPath
+        if ($installedExe) {
+            Write-Step "Imager binary found at $installedExe despite watchdog timeout"
+            Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+            $Script:ImagerInstalledByScript = $true
+            return
+        }
+        Write-LogTail $log
         Clear-ImagerCache -Dir $dir
-        Fail "Raspberry Pi Imager installer failed with exit code $($p.ExitCode). Cached installers were removed; re-run to download again."
+        Fail $_.Exception.Message
     }
+    if ($code -ne 0) {
+        Write-LogTail $log
+        Clear-ImagerCache -Dir $dir
+        Fail "Raspberry Pi Imager installer failed with exit code $code. Cached installers were removed; re-run to download again."
+    }
+    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+    Write-Step "Raspberry Pi Imager installed successfully"
     $Script:ImagerInstalledByScript = $true
 }
 
@@ -148,9 +223,12 @@ function Uninstall-Imager {
             return
         }
         Write-Step "Uninstalling Raspberry Pi Imager (silent)"
-        $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-        if ($p.ExitCode -ne 0) {
-            Write-Warn "Raspberry Pi Imager uninstaller exited with code $($p.ExitCode)."
+        $uninstallLog = Join-Path $dir 'imager-uninstall.log'
+        $code = Invoke-WatchedProcess -FilePath $uninstaller `
+            -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$uninstallLog`"") `
+            -Label 'Raspberry Pi Imager uninstaller' -TimeoutSeconds 60
+        if ($code -ne 0) {
+            Write-Warn "Raspberry Pi Imager uninstaller exited with code $code."
         }
     } catch {
         # A cleanup problem must never turn a successful run into a failure or
@@ -211,47 +289,62 @@ function Get-ReleaseFiles {
 
 function Invoke-Download {
     param([string]$Url, [string]$OutFile)
-    Write-Info "Downloading $([System.IO.Path]::GetFileName($OutFile))"
-    & curl.exe -L --fail --silent --show-error --output $OutFile $Url
+    Write-Step "Downloading $([System.IO.Path]::GetFileName($OutFile))"
+    & curl.exe -L --fail --progress-bar --output $OutFile $Url
     if ($LASTEXITCODE -ne 0) { Fail "Download failed: $Url" }
+    Write-Step "Downloaded $([System.IO.Path]::GetFileName($OutFile))"
 }
 
 function Get-Image {
     param([string]$Dir)
     if (-not (Test-Path -LiteralPath $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }
 
+    Write-Step "Querying latest Raspberry Pi OS release..."
     $release = Get-LatestRelease
+    Write-Step "Latest release: $release"
+
+    Write-Step "Fetching release file listing..."
     $files   = Get-ReleaseFiles $release
 
     $imgPath = Join-Path $Dir $files.Image
     $shaPath = Join-Path $Dir $files.Sha
 
     if (-not (Test-Path -LiteralPath $imgPath)) {
+        Write-Step "Downloading OS image ($($files.Image))..."
         Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath
     } else {
-        Write-Info "Using cached image: $imgPath"
+        Write-Step "Using cached OS image: $imgPath"
     }
     if (-not (Test-Path -LiteralPath $shaPath)) {
+        Write-Step "Downloading checksum file ($($files.Sha))..."
         Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Sha)" -OutFile $shaPath
     }
 
     $expected = ((Get-Content -LiteralPath $shaPath -TotalCount 1) -split ' ')[0].Trim()
     if (-not $expected) { Fail "Could not read the expected checksum from $shaPath" }
 
-    Write-Step "Verifying SHA-256 of $($files.Image)"
+    Write-Step "Verifying SHA-256 of $($files.Image)..."
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $imgPath).Hash.ToLowerInvariant()
     if ($actual -ne $expected.ToLowerInvariant()) {
         Fail "SHA-256 mismatch for $imgPath`n  expected: $expected`n  actual:   $actual"
     }
+    Write-Step "SHA-256 verification passed"
     return @{ Path = $imgPath; Hash = $expected.ToLowerInvariant() }
+}
+
+function Test-FlashableDisk {
+    param($Disk, [bool]$AllowVirtual = $false)
+    # A disk is flashable when it is a removable SD/USB/eMMC card, or - with
+    # -AllowVirtualDisk (CI mode) - any non-system disk such as a mounted VHDX
+    # virtual SD card on an isolated test runner. The system disk is never
+    # flashable.
+    -not $Disk.IsSystem -and ($AllowVirtual -or $Disk.IsRemovable -or $Disk.BusType -in @('SD', 'eMMC'))
 }
 
 function Select-Disk {
     param([int]$Requested)
 
-    $disks = Get-Disk | Where-Object {
-        ($_.IsRemovable -or $_.BusType -in @('SD', 'eMMC')) -and -not $_.IsSystem
-    } | Sort-Object Number
+    $disks = Get-Disk | Where-Object { Test-FlashableDisk $_ ([bool]$AllowVirtualDisk) } | Sort-Object Number
 
     if ($disks.Count -eq 0) {
         Write-Warn 'No removable SD/USB disk detected. Make sure your card reader is plugged in and the card is inserted.'
@@ -286,13 +379,18 @@ function Select-Disk {
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
-    Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
-    if ($Hash) {
-        & $Imager --cli --sha256 $Hash --disable-telemetry $ImagePath $device
-    } else {
-        & $Imager --cli --disable-telemetry $ImagePath $device
+    Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes several minutes)..."
+    $cliArgs = @('--cli', '--disable-telemetry')
+    if ($AllowVirtualDisk) {
+        # CI mode: the target is a mounted VHDX, which Imager does not consider
+        # removable and would otherwise reject (or eject after writing). The disk
+        # must stay attached so the boot partition can be set up afterwards.
+        $cliArgs += @('--enable-writing-system-drives', '--disable-eject')
     }
+    if ($Hash) { $cliArgs += '--sha256', $Hash }
+    & $Imager @cliArgs $ImagePath $device
     if ($LASTEXITCODE -ne 0) { Fail "Raspberry Pi Imager failed with exit code $LASTEXITCODE." }
+    Write-Step "Flash completed successfully"
 }
 
 function Find-OpenSsl {
@@ -345,9 +443,29 @@ function Get-Credentials {
 
 function Get-BootRoot {
     param([int]$DiskNumber)
-    for ($i = 0; $i -lt 30; $i++) {
+    # Virtual disks (CI) need more retries because Windows doesn't auto-rescan
+    # the partition table after a raw write as reliably as physical media.
+    $maxRetries = if ($AllowVirtualDisk) { 90 } else { 30 }
+    for ($i = 0; $i -lt $maxRetries; $i++) {
         if ($i -gt 0) { Start-Sleep -Seconds 2 }
         try {
+            # Best-effort: re-read the partition table the flasher just wrote.
+            # Not strictly needed on real cards, but required for virtual SD
+            # disks (CI), which Windows does not auto-rescan after a raw write.
+            Update-HostStorageCache | Out-Null
+            # Extra nudge for virtual disks: force a disk rescan via diskpart
+            if ($AllowVirtualDisk) {
+                Get-Disk -Number $DiskNumber | Update-Disk | Out-Null
+                $diskpartScript = @"
+rescan
+select disk $DiskNumber
+list partition
+"@
+                $scriptPath = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($scriptPath, $diskpartScript)
+                & diskpart /s $scriptPath | Out-Null
+                Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+            }
             foreach ($v in (Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'FAT32' })) {
                 $p = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction SilentlyContinue
                 if ($p -and $p.DiskNumber -eq $DiskNumber -and $p.Size -lt 2GB) { return "$($v.DriveLetter):\" }
@@ -411,11 +529,14 @@ try {
         $img = Get-Image $DownloadDir
     }
 
+    Write-Step "Selecting target disk..."
     $targetDisk = Select-Disk $Disk
 
+    Write-Step "Starting flash operation..."
     Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 
     if (-not $SkipCustomize) {
+        Write-Step "Configuring first-boot files (SSH + user)..."
         $cred = Get-Credentials -UserName $UserName -Password $Password
         Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass
     }
