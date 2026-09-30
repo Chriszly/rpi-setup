@@ -201,6 +201,24 @@ verify_endpoints() {
     done
 }
 
+# The nspawn gate (x86 runner, arm64 guest under qemu-user) cannot set up the
+# mount namespaces that systemd sandboxing options need: units using them die
+# with "Failed at step NAMESPACE" (systemd-logind does too). Netdata's own
+# package, which "monitoring" installs on Trixie, is sandboxed that way, so in
+# containers only, replace its unit with a copy minus the sandboxing lines.
+# Real Pis and the QEMU VM keep the unit as shipped.
+unsandbox_in_container() {
+    in_container || return 0
+    local unit=netdata.service frag
+    frag="$(systemctl show -P FragmentPath "$unit" 2>/dev/null)" || return 0
+    [[ -n "$frag" && -f "$frag" && "$frag" != /etc/* ]] || return 0
+    grep -Ev '^[[:space:]]*(Protect[A-Za-z]*|Private[A-Za-z]*|ProcSubset|LogNamespace|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ReadWriteDirectories|ReadOnlyDirectories|InaccessibleDirectories|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountAPIVFS|RestrictFileSystems)=' \
+        "$frag" >"/etc/systemd/system/$unit"
+    echo "=== CI: using an unsandboxed copy of $frag ==="
+    systemctl daemon-reload
+    systemctl restart "$unit" || true
+}
+
 main() {
     local workdir="${1:-/workspace}"
     LOG_DIR="$workdir/ci-logs"
@@ -210,6 +228,7 @@ main() {
 
     echo "=== Provisioning ==="
     run_setup "$workdir"
+    unsandbox_in_container
     verify_services
     verify_containers
     verify_endpoints
