@@ -130,35 +130,30 @@ jobs:
           url: ${{ matrix.url }}
           sha256: ${{ matrix.sha256 }}
 
-      # TEMPORARY: record how the pristine image handles the ssh / userconf.txt
-      # files host/flash.* write; printed at the very end of the job.
-      - name: Inspect first-boot handling (temporary)
+      # host/flash.sh and host/flash.ps1 enable SSH and create the login user
+      # by writing "ssh" and "userconf.txt" to the boot partition. Fail if a new
+      # Raspberry Pi OS release stops shipping the services that read them.
+      - name: Check the image honours the flashers' first-boot files
         env:
           IMG: ${{ steps.image.outputs.image }}
         run: |
-          set +e
-          r=/tmp/fbroot; b=/tmp/fbboot
-          sudo mkdir -p "$r" "$b"
+          set -euo pipefail
+          r=/tmp/fbroot
+          sudo mkdir -p "$r"
           dev="$(sudo losetup -fP --show "$IMG")"
-          sudo mount -o ro "${dev}p2" "$r"; sudo mount -o ro "${dev}p1" "$b"
-          {
-            echo "### os"; grep PRETTY_NAME "$r/etc/os-release"
-            echo "### packages"
-            grep -E '^Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|rpi-cloud-init-mods|raspi-config)$' "$r/var/lib/dpkg/status"
-            echo "### units"
-            sudo find "$r/etc/systemd" "$r/usr/lib/systemd" "$r/lib/systemd" \( -iname '*userconf*' -o -iname '*sshswitch*' -o -iname '*firstboot*' -o -iname 'cloud-init*.service' \) 2>/dev/null | sed "s#$r##" | sort -u
-            echo "### files mentioning userconf.txt"
-            sudo grep -rlI 'userconf.txt' "$r/usr/lib" "$r/usr/bin" "$r/usr/sbin" "$r/lib/systemd" 2>/dev/null | sed "s#$r##" | head -n 20
-            echo "### files mentioning boot ssh flag"
-            sudo grep -rlIE '(/boot(/firmware)?/ssh(\.txt)?)' "$r/usr/lib" "$r/lib/systemd" "$r/usr/sbin" 2>/dev/null | sed "s#$r##" | head -n 20
-            echo "### cloud-init datasource config"
-            sudo grep -rhE 'datasource|NoCloud|seedfrom|fs_label' "$r/etc/cloud/cloud.cfg.d" 2>/dev/null | head -n 20
-            echo "### bootfs"
-            find "$b" -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' '; echo
-            echo "### cmdline.txt"; cat "$b/cmdline.txt"
-          } > "$RUNNER_TEMP/firstboot.txt" 2>&1
-          sudo umount "$r" "$b"; sudo losetup -d "$dev"
-          exit 0
+          sudo mount -o ro "${dev}p2" "$r"
+          rc=0
+          for unit in userconfig.service sshswitch.service; do
+            if [[ -e "$r/etc/systemd/system/multi-user.target.wants/$unit" ]]; then
+              echo "OK: $unit is enabled in the image"
+            else
+              echo "::error::$unit is not enabled in the image; the ssh/userconf.txt files written by host/flash.* would be ignored"
+              rc=1
+            fi
+          done
+          sudo umount "$r"
+          sudo losetup -d "$dev"
+          exit "$rc"
 
       - name: Install systemd-nspawn host packages
         uses: ./.github/actions/nspawn-deps
@@ -185,10 +180,6 @@ jobs:
           name: provision-gate-logs-${{ matrix.release }}
           path: ci-logs/
           retention-days: 7
-
-      - name: Print first-boot handling (temporary)
-        if: always()
-        run: cat "$RUNNER_TEMP/firstboot.txt" || true
 
   provision-qemu:
     name: Provision tasks in QEMU VM (manual)

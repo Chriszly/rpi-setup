@@ -175,9 +175,11 @@ The two layers then differ in how they get the repo into the OS:
 
 ## Known limitations
 
-- **No first-boot test.** No job writes the `ssh` / `userconf.txt` files that
-  `host/flash.sh` and `host/flash.ps1` put on the boot partition, so the
-  headless first boot they set up is only tested on real hardware.
+- **No first-boot test.** The gate only checks that the image still enables
+  `userconfig.service` and `sshswitch.service`, the services that read the
+  `userconf.txt` and `ssh` files `host/flash.sh` and `host/flash.ps1` write
+  (true for Bookworm and for Trixie, which also ships cloud-init). The first
+  boot itself is only tested on real hardware.
 - **Not a real Pi in the gate.** `is_pi()` is false inside the nspawn
   container, so `setup.sh` prints "This does not appear to be a Raspberry Pi"
   and hardware-only behavior (EEPROM update, `raspi-config`) is skipped by the
@@ -185,8 +187,9 @@ The two layers then differ in how they get the repo into the OS:
 - **No systemd sandboxing in the gate.** Units that use mount-namespace
   sandboxing (`ProtectSystem=`, `PrivateTmp=`, `LogNamespace=` ...) fail with
   "Failed at step NAMESPACE" in the nspawn container; `systemd-logind` does
-  too. `ci/provision.sh` adds a drop-in that relaxes this for `netdata` (whose
-  upstream package, used on Trixie, is sandboxed) inside containers only.
+  too. `ci/provision.sh` replaces the `netdata` unit (whose upstream package, used
+  on Trixie, is sandboxed) with a copy minus those lines, inside containers
+  only.
 - **No Docker in the gate.** Docker cannot run inside the nspawn container, so
   the `container` profile skips `docker`, `netalertx` and `teamspeak`. Those
   tasks get x86 coverage from `docker-smoke` and arm64 coverage only from the
