@@ -59,6 +59,10 @@ assert_eq "prompt_selection parses space-separated numbers" "2 4" "$(printf '2 4
 assert_eq "prompt_selection expands 'all'" "$(seq 1 "${#TASKS[@]}" | xargs)" "$(printf 'all\n' | prompt_selection 2>/dev/null | xargs)"
 assert_eq "prompt_selection returns nothing for empty input" "" "$(printf '\n' | prompt_selection 2>/dev/null)"
 assert_eq "prompt_selection ignores non-numeric tokens" "2" "$(printf 'abc 2 x\n' | prompt_selection 2>/dev/null | xargs)"
+# main() does nums=($(prompt_selection)) under 'set -e', so a non-zero return
+# here would silently kill setup.sh instead of printing "Cancelled.".
+assert_ok "prompt_selection exits 0 on non-numeric input"  eval "printf 'abc\n' | prompt_selection"
+assert_ok "prompt_selection exits 0 on a trailing non-numeric token" eval "printf '1 x\n' | prompt_selection"
 assert_eq "prompt_selection writes the prompt to stderr, not stdout" "> " "$(printf '\n' | prompt_selection 2>&1 >/dev/null)"
 
 # --- CLI: --list works without root -------------------------------------------
