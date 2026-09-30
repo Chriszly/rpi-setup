@@ -8,9 +8,8 @@
 # SC2154: Variable is referenced but not assigned (SUDO_USER from environment)
 # SC2164: Use 'cd ... || exit' or 'cd ... || return' in case cd fails
 # SC2207: Prefer mapfile or read -a (command substitution is intentional here)
-# SC2015: A && B || C is not if-then-else (die exits, so C cannot run when A is true)
 # SC2317: Command appears unreachable (intentional in error paths)
-disable=SC1090,SC1091,SC2034,SC2154,SC2164,SC2207,SC2015,SC2317
+disable=SC1090,SC1091,SC2034,SC2154,SC2164,SC2207,SC2317
 
 # Shell dialect
 shell=bash

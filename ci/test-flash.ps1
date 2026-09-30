@@ -116,6 +116,31 @@ try {
     Remove-Item -LiteralPath $mock2 -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# --- Resolve-ImagerExe: a .cmd wrapper must resolve to the sibling rpi-imager.exe
+$mock3 = Join-Path $env:TEMP "imager_cli_$([guid]::NewGuid().ToString('N'))"
+$exe3  = Join-Path $mock3 'rpi-imager.exe'
+$cmd3  = Join-Path $mock3 'rpi-imager-cli.cmd'
+New-Item -ItemType Directory -Path $mock3 -Force | Out-Null
+New-Item -ItemType File -Path $exe3 -Force | Out-Null
+New-Item -ItemType File -Path $cmd3 -Force | Out-Null
+try {
+    Assert-True ((Resolve-ImagerExe $cmd3) -eq $exe3) "Resolve-ImagerExe maps rpi-imager-cli.cmd to the sibling rpi-imager.exe"
+    Assert-True ((Resolve-ImagerExe $exe3) -eq $exe3) "Resolve-ImagerExe leaves rpi-imager.exe untouched"
+    Remove-Item -LiteralPath $exe3 -Force
+    Assert-True ((Resolve-ImagerExe $cmd3) -eq $cmd3) "Resolve-ImagerExe keeps the .cmd when no sibling exe exists"
+} finally {
+    Remove-Item -LiteralPath $mock3 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- ConvertTo-ArgumentString: quote only what needs it, escape embedded quotes
+Assert-True ((ConvertTo-ArgumentString @('--cli', 'C:\a b\img.xz', '\\.\PhysicalDrive2')) -eq '--cli "C:\a b\img.xz" \\.\PhysicalDrive2') 'ConvertTo-ArgumentString quotes arguments containing spaces'
+Assert-True ((ConvertTo-ArgumentString @('say "hi"')) -eq '"say \"hi\""') 'ConvertTo-ArgumentString escapes embedded double quotes'
+
+# --- Invoke-Flash must wait for the GUI-subsystem rpi-imager.exe to finish
+$flashBody = [regex]::Match($source, '(?s)function Invoke-Flash \{.*?\n\}').Value
+Assert-True ($flashBody -match 'Start-Process[^\n]*-Wait') "Invoke-Flash runs Imager via Start-Process -Wait (rpi-imager.exe is a GUI app; '&' returns immediately)"
+Assert-True ($flashBody -notmatch '&\s*\$(Imager|exe)\b') "Invoke-Flash never uses the call operator on the Imager binary"
+
 # --- main() must not assign the selected disk to $disk (collides with [int]$Disk)
 Assert-True ($source -match '\$targetDisk\s*=\s*Select-Disk\s*\$Disk') "main() assigns Select-Disk result to `$targetDisk (avoids [int]`$Disk collision)"
 

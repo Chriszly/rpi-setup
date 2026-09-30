@@ -142,9 +142,13 @@ pick_device() {
 confirm_device() {
   local dev="$1"
   [[ -b "$dev" ]] || die "Not a block device: $dev"
-  case "${dev##*/}" in
-    *[0-9]) die "$dev looks like a partition, not a whole disk." ;;
-  esac
+  # Whole disks such as mmcblk0 or nvme0n1 also end in a digit, so ask sysfs
+  # instead of looking at the name: only partitions have a "partition" file.
+  local node
+  node="$(readlink -f "$dev")"
+  if [[ -e "/sys/class/block/${node##*/}/partition" ]]; then
+    die "$dev looks like a partition, not a whole disk."
+  fi
   if mount | grep -q "$dev"; then die "$dev has mounted partitions; unmount them first."; fi
   info "Target: $dev ($(disk_size_gb "${dev##*/}") GB)"
   local conf
@@ -153,11 +157,10 @@ confirm_device() {
 }
 
 generate_hash() {
-  local pass="$1" salt h
+  local pass="$1"
   command -v openssl >/dev/null 2>&1 || die 'openssl not found. Install openssl or use -k to skip user setup.'
-  salt="$(head -c16 /dev/urandom | tr -dc './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' | head -c16)"
-  h="$(printf '%s' "$pass" | openssl passwd -6 -stdin -salt "$salt")"
-  echo "$h"
+  # Let openssl generate the salt: it always produces the full 16 characters.
+  printf '%s' "$pass" | openssl passwd -6 -stdin
 }
 
 ask_credentials() {
@@ -205,7 +208,9 @@ main() {
     img_path="$(fetch_image "$release")"
   fi
 
-  DEV="$(pick_device)"
+  if [[ -z "$DEV" ]]; then
+    DEV="$(pick_device)"
+  fi
   confirm_device "$DEV"
 
   info 'Zeroing the start of the disk so partprobe reliably sees the new table'
