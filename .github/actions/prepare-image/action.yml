@@ -1,0 +1,97 @@
+name: Prepare Raspberry Pi OS image
+description: >-
+  Download (or restore from cache) the pinned Raspberry Pi OS image, verify its
+  SHA-256, extract it and grow the root partition so the provisioning jobs have
+  room for apt upgrades and container images. Shared by provision-gate and
+  provision-qemu so the two jobs cannot drift apart.
+
+inputs:
+  version:
+    description: Image release date, used as the cache key (e.g. 2025-05-13)
+    required: true
+  url:
+    description: Download URL of the .img.xz
+    required: true
+  sha256:
+    description: Expected SHA-256 of the .img.xz
+    required: true
+  size:
+    description: Size to grow the raw image to (passed to truncate)
+    required: false
+    default: 8G
+
+outputs:
+  image:
+    description: Path of the extracted, grown raw .img
+    value: ${{ steps.paths.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve paths
+      id: paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "xz=$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz" >> "$GITHUB_OUTPUT"
+        echo "image=$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached image
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.paths.outputs.xz }}
+        key: raspios-bookworm-arm64-${{ inputs.version }}
+
+    - name: Download and verify image
+      shell: bash
+      env:
+        IMG_XZ: ${{ steps.paths.outputs.xz }}
+        IMG_URL: ${{ inputs.url }}
+        IMG_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ ! -f "$IMG_XZ" ]]; then
+          echo "Downloading Raspberry Pi OS image..."
+          curl -fL --retry 3 -o "$IMG_XZ" "$IMG_URL"
+        fi
+        echo "$IMG_SHA256  $IMG_XZ" | sha256sum -c -
+
+    # Save right after verification, so a later provisioning failure does not
+    # force the next run to download the image again. (actions/cache's
+    # save-always input is deprecated and a no-op.)
+    - name: Save image to cache
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.paths.outputs.xz }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    - name: Extract image
+      shell: bash
+      env:
+        IMG_XZ: ${{ steps.paths.outputs.xz }}
+        IMG: ${{ steps.paths.outputs.image }}
+      run: |
+        set -euo pipefail
+        if [[ ! -f "$IMG" ]]; then
+          echo "Extracting Raspberry Pi OS image..."
+          xz -d -k "$IMG_XZ"
+        fi
+
+    - name: Grow root partition
+      shell: bash
+      env:
+        IMG: ${{ steps.paths.outputs.image }}
+        IMG_SIZE: ${{ inputs.size }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq parted >/dev/null
+        echo "Growing root partition to $IMG_SIZE..."
+        sudo truncate -s "$IMG_SIZE" "$IMG"
+        sudo parted -s "$IMG" resizepart 2 100%
+        dev="$(sudo losetup -fP --show "$IMG")"
+        sudo e2fsck -fp "${dev}p2" || true
+        sudo resize2fs "${dev}p2"
+        sudo losetup -d "$dev"

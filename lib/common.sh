@@ -89,7 +89,8 @@ require_docker() {
 # True if a container with this exact name is currently running.
 compose_is_up() {
   local name="$1"
-  docker ps -q --filter "name=^${name}\$" >/dev/null 2>&1
+  # 'docker ps' exits 0 even when nothing matches, so test the output, not the status.
+  [[ -n "$(docker ps -q --filter "name=^${name}\$" --filter status=running 2>/dev/null)" ]]
 }
 
 # Create $dir and $dir/data, with data owned (numerically) by $uid.
@@ -101,9 +102,13 @@ ensure_container_dir() {
 }
 
 # Start the compose project at $dir/docker-compose.yml, always pulling images.
+# Dies if no service is running afterwards: 'up -d' can print a daemon error
+# for a container that failed to start and still exit 0.
 compose_up() {
-  local dir="$1"
-  docker compose -f "$dir/docker-compose.yml" up -d --pull always
+  local dir="$1" file="$1/docker-compose.yml"
+  docker compose -f "$file" up -d --pull always
+  [[ -n "$(docker compose -f "$file" ps -q --status running 2>/dev/null)" ]] ||
+    die "No container from $file is running. Inspect with: docker compose -f $file logs"
 }
 
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).

@@ -4,3 +4,6 @@ host/downloads/
 
 # JetBrains IDE project files
 .idea/
+
+# Failure logs written by ci/provision.sh
+ci-logs/

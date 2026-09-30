@@ -19,17 +19,18 @@
 - [ ] README updated if task list, options or behavior changed
 - [ ] Commit messages are clear and concise
 
----
-
-<!-- Optional -->
-
 ## Testing
 
 <!-- How was this verified? Include the exact commands/script you ran. -->
 
 - [ ] Ran `bash -n tasks/<file>.sh` (shell syntax check) / `PSScriptAnalyzer` on changed scripts
+- [ ] Ran `bash ci/test-lib.sh` and `bash ci/test-setup.sh` (unit tests)
 - [ ] Ran the affected task(s) on a Raspberry Pi: `sudo bash setup.sh <task>`
 - [ ] Re-ran an existing task to confirm idempotency (safe to re-run)
+
+---
+
+<!-- Optional -->
 
 ## Related issues / PRs
 

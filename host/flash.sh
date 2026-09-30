@@ -41,18 +41,6 @@ usage() {
   exit 0
 }
 
-while getopts "d:i:u:p:klh" opt; do
-  case "$opt" in
-    d) DEV="$OPTARG" ;;
-    i) IMAGE="$OPTARG" ;;
-    u) USER="$OPTARG" ;;
-    p) PASS="$OPTARG" ;;
-    k) SKIP_CUSTOMIZE=1 ;;
-    l) LIST_ONLY=1 ;;
-    *) usage ;;
-  esac
-done
-
 first_partition() {
   local dev="$1" name="${1##*/}"
   case "$name" in
@@ -189,68 +177,90 @@ ask_credentials() {
   if [[ ${#PASS} -lt 8 ]]; then warn 'Password is shorter than 8 characters - consider a stronger one.'; fi
 }
 
-if [[ "$LIST_ONLY" -eq 1 ]]; then list_candidates; exit 0; fi
+# --- main ---------------------------------------------------------------
+main() {
+  local opt
+  while getopts "d:i:u:p:klh" opt; do
+    case "$opt" in
+      d) DEV="$OPTARG" ;;
+      i) IMAGE="$OPTARG" ;;
+      u) USER="$OPTARG" ;;
+      p) PASS="$OPTARG" ;;
+      k) SKIP_CUSTOMIZE=1 ;;
+      l) LIST_ONLY=1 ;;
+      *) usage ;;
+    esac
+  done
 
-need_root
+  if [[ "$LIST_ONLY" -eq 1 ]]; then list_candidates; exit 0; fi
 
-if [[ -n "$IMAGE" ]]; then
-  [[ -f "$IMAGE" ]] || die "Image not found: $IMAGE"
-  say "Using image: $IMAGE"
-  img_path="$IMAGE"
-else
-  release="$(latest_release)"
-  img_path="$(fetch_image "$release")"
-fi
+  need_root
 
-DEV="$(pick_device)"
-confirm_device "$DEV"
+  if [[ -n "$IMAGE" ]]; then
+    [[ -f "$IMAGE" ]] || die "Image not found: $IMAGE"
+    say "Using image: $IMAGE"
+    img_path="$IMAGE"
+  else
+    release="$(latest_release)"
+    img_path="$(fetch_image "$release")"
+  fi
 
-info 'Zeroing the start of the disk so partprobe reliably sees the new table'
-dd if=/dev/zero of="$DEV" bs=1M count=8 status=none || true
+  DEV="$(pick_device)"
+  confirm_device "$DEV"
 
-say "Writing $img_path to $DEV (this takes a few minutes)"
-if [[ "$img_path" == *.xz ]]; then
-  xz -dc "$img_path" | dd of="$DEV" bs=4M status=progress conv=fsync
-else
-  dd if="$img_path" of="$DEV" bs=4M status=progress conv=fsync
-fi
-sync
+  info 'Zeroing the start of the disk so partprobe reliably sees the new table'
+  dd if=/dev/zero of="$DEV" bs=1M count=8 status=none || true
 
-info 'Rescanning the partition table'
-if command -v partprobe >/dev/null 2>&1; then
-  partprobe "$DEV" || true
-else
-  warn 'partprobe not found. If the next step fails, unplug/replug the card and continue from mount below.'
-fi
-
-PART="$(first_partition "$DEV")"
-for i in $(seq 1 10); do
-  [[ -b "$PART" ]] && break
-  sleep 1
-done
-
-if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
-  [[ -b "$PART" ]] || die "Could not detect boot partition $PART. Run: sudo partprobe $DEV"
-  ask_credentials
-  say 'Enabling SSH and creating the login user for headless first boot'
-  mkdir -p "$MOUNT_DIR"
-  mountpoint -q "$MOUNT_DIR" || mount -o umask=022 "$PART" "$MOUNT_DIR" 2>/dev/null \
-      || mount "$PART" "$MOUNT_DIR" || die "Mounting $PART failed."
-
-  : > "$MOUNT_DIR/ssh"
-  printf '%s:%s\n' "$USER" "$(generate_hash "$PASS")" > "$MOUNT_DIR/userconf.txt"
+  say "Writing $img_path to $DEV (this takes a few minutes)"
+  if [[ "$img_path" == *.xz ]]; then
+    xz -dc "$img_path" | dd of="$DEV" bs=4M status=progress conv=fsync
+  else
+    dd if="$img_path" of="$DEV" bs=4M status=progress conv=fsync
+  fi
   sync
-  umount "$MOUNT_DIR"
-  say "Wrote to bootfs: 'ssh' (empty) and 'userconf.txt' (user '$USER')"
-  info 'On first boot the Pi creates the account and deletes both files.'
-fi
 
-sync
-say 'Done. Eject the SD card, insert it into the Pi, and power on.'
-if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
-  say 'After the Pi boots (1-2 minutes), connect over SSH:'
-  echo "    ssh $USER@raspberrypi.local"
-  echo 'Then on the Pi:'
-  echo '    git clone https://github.com/Chriszly/rpi-setup.git'
-  echo '    cd rpi-setup && sudo bash setup.sh'
+  info 'Rescanning the partition table'
+  if command -v partprobe >/dev/null 2>&1; then
+    partprobe "$DEV" || true
+  else
+    warn 'partprobe not found. If the next step fails, unplug/replug the card and continue from mount below.'
+  fi
+
+  PART="$(first_partition "$DEV")"
+  for i in $(seq 1 10); do
+    [[ -b "$PART" ]] && break
+    sleep 1
+  done
+
+  if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
+    [[ -b "$PART" ]] || die "Could not detect boot partition $PART. Run: sudo partprobe $DEV"
+    ask_credentials
+    say 'Enabling SSH and creating the login user for headless first boot'
+    mkdir -p "$MOUNT_DIR"
+    mountpoint -q "$MOUNT_DIR" || mount -o umask=022 "$PART" "$MOUNT_DIR" 2>/dev/null \
+        || mount "$PART" "$MOUNT_DIR" || die "Mounting $PART failed."
+
+    : > "$MOUNT_DIR/ssh"
+    printf '%s:%s\n' "$USER" "$(generate_hash "$PASS")" > "$MOUNT_DIR/userconf.txt"
+    sync
+    umount "$MOUNT_DIR"
+    say "Wrote to bootfs: 'ssh' (empty) and 'userconf.txt' (user '$USER')"
+    info 'On first boot the Pi creates the account and deletes both files.'
+  fi
+
+  sync
+  say 'Done. Eject the SD card, insert it into the Pi, and power on.'
+  if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
+    say 'After the Pi boots (1-2 minutes), connect over SSH:'
+    echo "    ssh $USER@raspberrypi.local"
+    echo 'Then on the Pi:'
+    echo '    git clone https://github.com/Chriszly/rpi-setup.git'
+    echo '    cd rpi-setup && sudo bash setup.sh'
+  fi
+}
+
+# Only run when executed directly; ci/test-lib.sh sources this file to test
+# the helper functions without touching any disk.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
