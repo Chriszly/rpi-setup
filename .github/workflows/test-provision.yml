@@ -179,10 +179,14 @@ jobs:
           sudo mount -o ro "${dev}p2" "$r"
           rc=0
           for unit in userconfig.service sshswitch.service; do
-            if [[ -e "$r/etc/systemd/system/multi-user.target.wants/$unit" ]]; then
-              echo "OK: $unit is enabled in the image"
+            # Bookworm and Trixie enable these from different places.
+            found="$(sudo find "$r/etc/systemd" "$r/lib/systemd" "$r/usr/lib/systemd" \
+              -path '*.wants/*' -name "$unit" 2>/dev/null | head -n1)"
+            if [[ -n "$found" ]]; then
+              echo "OK: $unit is enabled in the image (${found#"$r"})"
             else
               echo "::error::$unit is not enabled in the image; the ssh/userconf.txt files written by host/flash.* would be ignored"
+              sudo grep -rls "$unit" "$r/etc/systemd" "$r/lib/systemd" "$r/usr/lib/systemd" 2>/dev/null | sed "s|^$r||" || true
               rc=1
             fi
           done
