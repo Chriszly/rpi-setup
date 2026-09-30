@@ -147,8 +147,13 @@ apply after a reboot; switching them back to `no` removes the block again.
   On first start the ServerAdmin privilege key is printed to the console - save
   it, it is only shown once and is needed to log in from the TS6 client at
   `<pi-ip>:9987` (later: `docker logs teamspeak`).
-- Check the `[+] Complete: <task>` lines at the end of a run; a task that
-  could not finish prints `[!]` or `[x]` lines explaining why.
+- A run ends with a summary: each task with `ok`, `failed` or `skipped`, and a
+  reboot hint when one is needed. A failed task does not stop the others, but
+  tasks that need it are skipped and `setup.sh` exits non-zero. `base` always
+  runs first, and `docker` is added automatically (before the tasks that need
+  it) when you pick `netalertx` or `teamspeak` without Docker installed. The
+  whole output is appended to `/var/log/rpi-setup.log` (readable by root only,
+  as it holds generated passwords).
 
 ## Acknowledgements
 
