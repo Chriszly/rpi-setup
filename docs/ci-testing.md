@@ -17,7 +17,7 @@ quirks). The workflow uses several increasingly faithful layers:
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
 | `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
-| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container                | high     | minutes |
+| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container, Bookworm and Trixie | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
 - **`syntax`** and **`unit`** are fast pre-checks; the three provisioning jobs
@@ -53,7 +53,7 @@ is the single source of truth for the task list and the checks. It selects a
 
 | Profile     | Used by          | Tasks                                                              | Verified                                                         |
 |-------------|------------------|--------------------------------------------------------------------|------------------------------------------------------------------|
-| `container` | `provision-gate` | `base samba web monitoring pihole`                                 | `smbd nginx netdata fail2ban` active; Netdata on :19999          |
+| `container` | `provision-gate` | `base samba web monitoring pihole`                                 | `smbd nginx netdata fail2ban` active, `ssh` enabled; Netdata :19999 and nginx :80 |
 | `full`      | `provision-qemu` | `base docker samba web monitoring pihole netalertx teamspeak`      | above plus `docker` active, both containers running, :20211      |
 | `docker`    | `docker-smoke`   | `docker netalertx teamspeak`                                       | `docker` active, both containers running, NetAlertX on :20211    |
 
@@ -65,10 +65,14 @@ After provisioning, every profile does:
 1. `systemctl is-active` for each service in the profile.
 2. `docker ps` and a running-state check for each expected container.
 3. `curl` against each web endpoint with a retry loop (Netdata and NetAlertX
-   take a while to listen).
+   take a while to listen). Endpoints are requested on the machine's LAN
+   address (`hostname -I`), not `localhost`, so a service that only listens on
+   loopback fails here the way it would for a user on another PC.
 4. An **idempotency re-run** of the same `setup.sh` invocation - every task must
    exit 0 on a second pass (this is what the README promises: "re-running is
-   safe").
+   safe"). The re-run has no `SAMBA_PASSWORD` and no terminal, so `samba` must
+   keep the existing password rather than prompt. Services and endpoints are
+   verified again afterwards.
 
 Any failing check makes the whole run fail, so a red job is a regression to
 fix, not a flake to retry.
@@ -98,34 +102,33 @@ Because the container/VM runs as `root`, `real_user()` resolves to `root`, so
 `samba` configures `/home/root/nas-share` and warns. That is expected and
 acceptable for CI.
 
-## The pinned image
+## The pinned images
 
-Both image-based jobs use the same pinned Raspberry Pi OS Lite (64-bit) image so
-the two layers agree with each other and with the README's "Bookworm or later"
-promise:
+The gate runs as a matrix over two pinned Raspberry Pi OS Lite (64-bit)
+images, matching the README's "Trixie or Bookworm" promise:
 
 ```
-2025-05-13-raspios-bookworm-arm64-lite.img.xz
+2026-06-18-raspios-trixie-arm64-lite.img.xz     (what host/flash.* write today)
+sha256 acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
+2025-05-13-raspios-bookworm-arm64-lite.img.xz   (existing Pis)
 sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
 ```
 
-It is pinned to **Bookworm**, not the latest release, because `piqemu-action`
-builds a Bookworm-specific patched DTB (it merges the `disable-bt` overlay to
-make the emulated Pi boot); newer images (e.g. Trixie) are not yet compatible.
-The version, URL and SHA-256 live in the `env:` block at the top of the
-workflow and are passed to the shared
+`provision-qemu` stays on **Bookworm** only, because `piqemu-action` builds a
+Bookworm-specific patched DTB (it merges the `disable-bt` overlay to make the
+emulated Pi boot); Trixie images are not yet compatible with it. The gate's
+images live in the `provision-gate` job's `matrix.include`; the QEMU image in
+the `env:` block at the top of the workflow. Both are passed to the shared
 [`prepare-image`](../.github/actions/prepare-image/action.yml) composite action.
 
 ### Bumping the image
 
 1. Pick a new image and note its `.sha256` from the
    [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/).
-   Example (latest at the time of writing):
-   `2026-06-18-raspios-trixie-arm64-lite.img.xz`,
-   sha256 `acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3`.
-2. Update `RPI_IMAGE_VERSION`, `RPI_IMAGE_URL` and `RPI_IMAGE_SHA256` in
-   `.github/workflows/test-provision.yml`. The cache key is derived from
-   `RPI_IMAGE_VERSION`, so a fresh image is downloaded automatically.
+2. Update the `trixie` entry (`version`, `url`, `sha256`) in the
+   `provision-gate` matrix of `.github/workflows/test-provision.yml`. The cache
+   key is derived from the version, so a fresh image is downloaded
+   automatically.
 3. If moving off Bookworm, first confirm `piqemu-action` supports the new
    image (its DTB build script is Bookworm-specific) and that the image's
    partition layout/boot behavior still matches nspawn/QEMU.
@@ -154,6 +157,9 @@ The two layers then differ in how they get the repo into the OS:
 
 ## Known limitations
 
+- **No first-boot test.** No job writes the `ssh` / `userconf.txt` files that
+  `host/flash.sh` and `host/flash.ps1` put on the boot partition, so the
+  headless first boot they set up is only tested on real hardware.
 - **Not a real Pi in the gate.** `is_pi()` is false inside the nspawn
   container, so `setup.sh` prints "This does not appear to be a Raspberry Pi"
   and hardware-only behavior (EEPROM update, `raspi-config`) is skipped by the

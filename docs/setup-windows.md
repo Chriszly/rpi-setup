@@ -111,6 +111,7 @@ router's DHCP client list and use `ssh <username>@<ip>` instead.
 On the Pi:
 
 ```bash
+sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
 sudo bash setup.sh
@@ -152,8 +153,8 @@ sudo bash setup.sh docker netalertx teamspeak
 
 `pihole` and `tailscale` run their official installers. `pihole` prints a
 security warning and prompts for confirmation when run interactively; in
-non-interactive runs it installs directly. `tailscale` stays interactive -
-follow the on-screen prompts.
+non-interactive runs it installs directly. `tailscale` prints a login URL to
+open, unless you pass an auth key: `sudo TAILSCALE_AUTHKEY=tskey-... bash setup.sh tailscale`.
 
 ## Task rundown
 
@@ -161,11 +162,11 @@ follow the on-screen prompts.
 |--------------|---------------------------------------------------------------------|----------------------------------------------------------|
 | `base`       | OS update, EEPROM firmware, SSH enable, essential tools, fail2ban   | Run this first. The EEPROM update needs a reboot to apply.|
 | `docker`     | Docker Engine, buildx and Compose (via apt)                         | Adds your user to the `docker` group - re-login to use it|
-| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | Interactive: run `tailscale up` and open the auth URL   |
-| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing (skips prompt in non-interactive runs). Admin UI at `http://<hostname>/admin` |
-| `samba`      | Simple read-write NAS share for the current user                    | Prompts for an SMB password. Share at `\\<hostname>\nas-share` |
-| `web`        | nginx serving a "Raspberry Pi" index page                           | Open `http://<hostname>`                                |
-| `monitoring` | Netdata real-time dashboard                                         | Dashboard at `http://<hostname>:19999`                  |
+| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | Open the printed login URL, or set `TAILSCALE_AUTHKEY`  |
+| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing (skips prompt in non-interactive runs). Admin UI at `http://<hostname>/admin` (`:8080` if `web` already holds port 80); set its password with `sudo pihole setpassword` |
+| `samba`      | Simple read-write NAS share for the current user                    | Prompts for an SMB password on the first run (or set `SAMBA_PASSWORD`). Share at `\\<hostname>\nas-share` |
+| `web`        | nginx serving a "Raspberry Pi" index page                           | Open `http://<hostname>` (`:8080` if Pi-hole already holds port 80) |
+| `monitoring` | Netdata real-time dashboard                                         | Dashboard at `http://<hostname>:19999`, reachable from your LAN |
 | `netalertx`  | NetAlertX LAN device presence tracker (Docker)                      | Needs `docker`. Dashboard at `http://<ip>:20211`        |
 | `teamspeak`  | TeamSpeak 6 voice server (Docker)                                   | Needs `docker`. Voice `:9987`, file `:30033`, web `:10080` |
 
