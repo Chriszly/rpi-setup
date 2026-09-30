@@ -12,26 +12,48 @@ permissions:
 
 concurrency:
   group: flash-test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   flash:
     name: Validate host/flash.ps1
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
-          $tokens = $null; $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            'host/flash.ps1', [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Host "[error] $($_.Message)" }
+          $failed = $false
+          foreach ($file in @('host/flash.ps1', 'ci/test-flash.ps1')) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Host "[error] ${file}: $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "$file parses without syntax errors"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      # Rule exclusions live in PSScriptAnalyzerSettings.psd1 at the repo root.
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          }
+          $results = foreach ($file in @('host/flash.ps1', 'ci/test-flash.ps1')) {
+            Invoke-ScriptAnalyzer -Path $file -Settings PSScriptAnalyzerSettings.psd1 -Severity Error, Warning
+          }
+          if ($results) {
+            $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+            Write-Host "PSScriptAnalyzer reported $($results.Count) finding(s)."
             exit 1
           }
-          Write-Host "flash.ps1 parses without syntax errors"
+          Write-Host 'PSScriptAnalyzer found no issues.'
 
       - name: Run flash.ps1 unit tests
         shell: pwsh

@@ -51,6 +51,7 @@ When adding a new task:
 
 Before submitting changes:
 - Run `bash -n <file>.sh` on all modified shell scripts
+- Run the unit tests: `bash ci/test-lib.sh` and `bash ci/test-setup.sh` (with `sudo` on Linux to include the root-only cases); add cases for new helpers
 - Run affected task(s) on actual Raspberry Pi: `sudo bash setup.sh <task>`
 - Verify idempotency: re-run the same task
 - Check `shellcheck` passes with `.shellcheckrc` config

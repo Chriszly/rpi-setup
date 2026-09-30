@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep the actions in .github/workflows and .github/actions current,
+  # including the SHA-pinned pinspawn/piqemu actions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

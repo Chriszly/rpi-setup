@@ -116,4 +116,8 @@ main() {
   [[ ${#nums[@]} -gt 0 ]] && run_tasks "${nums[@]}" || echo 'Nothing to do.'
 }
 
-main "$@"
+# Only run when executed directly; ci/test-setup.sh sources this file to test
+# the functions above without running any task.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
