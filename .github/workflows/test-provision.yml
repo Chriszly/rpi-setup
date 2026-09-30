@@ -51,7 +51,7 @@ jobs:
           echo "All shell scripts pass 'bash -n'"
 
       - name: Run shellcheck
-        run: shellcheck --color=never setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh
+        run: shellcheck --color=never setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh config/*.sh
 
       - name: Lint GitHub Actions workflows
         run: |

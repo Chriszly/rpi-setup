@@ -72,11 +72,15 @@ After provisioning, every profile does:
    take a while to listen). Endpoints are requested on the machine's LAN
    address (`hostname -I`), not `localhost`, so a service that only listens on
    loopback fails here the way it would for a user on another PC.
-4. An **idempotency re-run** of the same `setup.sh` invocation - every task must
+4. A **settings check**: the run takes its settings from a central
+   `rpi-setup.env` (in a temp folder, via `RPI_SETUP_CONFIG_DIR`), exactly as a
+   user would, and verifies that `WEB_TITLE`, `BASE_TIMEZONE` and
+   `BASE_FAIL2BAN_MAXRETRY` reached the Pi and that a Samba user exists.
+5. An **idempotency re-run** of the same `setup.sh` invocation - every task must
    exit 0 on a second pass (this is what the README promises: "re-running is
-   safe"). The re-run has no `SAMBA_PASSWORD` and no terminal, so `samba` must
-   keep the existing password rather than prompt. Services and endpoints are
-   verified again afterwards.
+   safe"). The re-run's settings file has no `SAMBA_PASSWORD` and there is no
+   terminal, so `samba` must keep the existing password rather than prompt or
+   generate one. Services, endpoints and settings are verified again afterwards.
 
 Any failing check makes the whole run fail, so a red job is a regression to
 fix, not a flake to retry.
@@ -98,8 +102,8 @@ expected service and `docker logs` for every expected container into
 
 | Task        | CI handling                                                                 |
 |-------------|-----------------------------------------------------------------------------|
-| `samba`     | Non-interactive via the `SAMBA_PASSWORD` env override (`SAMBA_PASSWORD=testpw`); stdin is not used because the long `apt-get install samba` in the task consumes a piped stdin before the prompt runs. |
-| `pihole`    | `PIHOLE_CONFIRM=yes` skips the interactive confirmation; the installer then runs with defaults. |
+| `samba`     | `SAMBA_PASSWORD=testpw` in the settings file on the first run; without it the task would generate a password, never prompt. |
+| `pihole`    | `PIHOLE_CONFIRM=yes` in the settings file; the task then skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
 | `tailscale` | **Excluded** - `tailscale up` blocks waiting for interactive login.         |
 
 Because the container/VM runs as `root`, `real_user()` resolves to `root`, so
@@ -199,9 +203,8 @@ The two layers then differ in how they get the repo into the OS:
   deliberately runs both provision jobs on `ubuntu-latest` (x86_64). Re-checked on
   `ubuntu-24.04-arm` on 2026-09-30: the image boots in about a second, then
   systemd shuts the container down right after the login prompt.
-- **`pihole` installer is headless.** With `PIHOLE_CONFIRM=yes` and no TTY the
-  official installer proceeds with defaults; if a future installer version
-  starts requiring dialogs, `pihole` may need to be excluded like `tailscale`.
+- **`pihole` is skipped in containers.** Its unattended install (pre-seeded
+  `/etc/pihole/pihole.toml`, `--unattended`) needs a real Pi or the QEMU job.
 
 ## Local reproduction
 
@@ -210,7 +213,7 @@ The unit tests and linters run anywhere with bash:
 ```bash
 bash ci/test-lib.sh          # sudo for the UID-assignment tests
 bash ci/test-setup.sh        # sudo for the menu/CLI tests
-shellcheck setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh
+shellcheck setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh config/*.sh
 docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12
 ```
 
