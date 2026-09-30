@@ -1,10 +1,13 @@
 name: Virtual Testing Environment
 
+# Docs-only changes cannot affect provisioning, so they skip this workflow.
 on:
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
   push:
     branches:
       - main
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
   workflow_dispatch:
 
 permissions:
@@ -30,10 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # shellcheck ships with the hosted runner image; only install it if missing.
       - name: Install shellcheck
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck --version
 
       - name: Validate bash syntax
         run: |
@@ -141,6 +148,9 @@ jobs:
           cat probe.txt
           body="$(tr '\n' '|' < probe.txt)"
           echo "::notice title=image probe ${{ matrix.release }}::${body}"
+
+      - name: Install systemd-nspawn host packages
+        uses: ./.github/actions/nspawn-deps
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285

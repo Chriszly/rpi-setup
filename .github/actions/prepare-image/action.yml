@@ -112,8 +112,11 @@ runs:
         IMG_SIZE: ${{ inputs.size }}
       run: |
         set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq parted >/dev/null
+        # parted ships with the hosted runner image; only install it if missing.
+        if ! command -v parted >/dev/null; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq parted >/dev/null
+        fi
         echo "Growing root partition to $IMG_SIZE..."
         sudo truncate -s "$IMG_SIZE" "$IMG"
         sudo parted -s "$IMG" resizepart 2 100%

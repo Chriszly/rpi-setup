@@ -39,11 +39,15 @@ quirks). The workflow uses several increasingly faithful layers:
   whenever a task change touches hardware-dependent behavior. It is the only
   job that runs the Docker tasks on arm64.
 
+Changes that touch only Markdown, `docs/` or `LICENSE` skip this workflow
+(`paths-ignore`); they cannot change what provisioning does.
+
 The two flash-script workflows are separate:
 [`test-flash.yml`](../.github/workflows/test-flash.yml) parses and lints
 `host/flash.ps1` with PSScriptAnalyzer (rule exclusions live in
 [`PSScriptAnalyzerSettings.psd1`](../PSScriptAnalyzerSettings.psd1)) and runs
-`ci/test-flash.ps1`; `pr-template-validation.yml` checks the PR description.
+`ci/test-flash.ps1`, and only runs when one of those files (or the workflow
+itself) changes; `pr-template-validation.yml` checks the PR description.
 
 ## What runs
 
@@ -154,6 +158,13 @@ The `prepare-image` composite action does the same thing for both jobs:
    `resize2fs` on a loop device). The stock image has only ~1-2 GB free, which
    is too small for `apt upgrade` plus the `netalertx`/`teamspeak` images.
 
+Before booting, the gate installs the host packages `pinspawn-action` needs
+(`systemd-container`, `qemu-user-static`, `binfmt-support`) through the
+[`nspawn-deps`](../.github/actions/nspawn-deps/action.yml) action, which caches
+their `.deb` files keyed on the runner image. The runner's Ubuntu mirror serves
+them at under 120 kB/s, so letting `pinspawn-action` download them cost 2-4
+minutes per run.
+
 The two layers then differ in how they get the repo into the OS:
 
 - **gate**: `--bind ${{ github.workspace }}:/workspace` is passed to
@@ -185,7 +196,9 @@ The two layers then differ in how they get the repo into the OS:
   (QEMU's `raspi4b` has no working networking yet).
 - **arm64 hosted runners are avoided.** GitHub's hosted arm64 runners have a
   spontaneous-shutdown bug with *booted* nspawn containers, so the workflow
-  deliberately runs both provision jobs on `ubuntu-latest` (x86_64).
+  deliberately runs both provision jobs on `ubuntu-latest` (x86_64). Re-checked on
+  `ubuntu-24.04-arm` on 2026-09-30: the image boots in about a second, then
+  systemd shuts the container down right after the login prompt.
 - **`pihole` installer is headless.** With `PIHOLE_CONFIRM=yes` and no TTY the
   official installer proceeds with defaults; if a future installer version
   starts requiring dialogs, `pihole` may need to be excluded like `tailscale`.
