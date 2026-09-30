@@ -133,24 +133,31 @@ jobs:
           url: ${{ matrix.url }}
           sha256: ${{ matrix.sha256 }}
 
-      - name: Probe first-boot handlers (temporary)
+      # host/flash.sh and host/flash.ps1 enable SSH and create the login user
+      # by writing "ssh" and "userconf.txt" to the boot partition. Fail if a new
+      # Raspberry Pi OS release stops shipping the services that read them.
+      - name: Check the image honours the flashers' first-boot files
         env:
           IMG: ${{ steps.image.outputs.image }}
         run: |
-          set -uo pipefail
-          sudo mkdir -p /tmp/probe
+          set -euo pipefail
+          r=/tmp/fbroot
+          sudo mkdir -p "$r"
           dev="$(sudo losetup -fP --show "$IMG")"
-          sudo mount -o ro "${dev}p2" /tmp/probe
-          {
-            grep -hE '^PRETTY_NAME' /tmp/probe/etc/os-release
-            grep -E '^Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|rpi-cloud-init-mods|netdata)$' /tmp/probe/var/lib/dpkg/status
-            find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd /tmp/probe/lib/systemd \( -name '*sshswitch*' -o -name '*userconf*' \) 2>/dev/null | sed 's#/tmp/probe##'
-          } > probe.txt 2>&1
-          sudo umount /tmp/probe
+          sudo mount -o ro "${dev}p2" "$r"
+          rc=0
+          for unit in userconfig.service sshswitch.service; do
+            # The wants/ entries are absolute symlinks, so test the link itself.
+          if [[ -L "$r/etc/systemd/system/multi-user.target.wants/$unit" ]]; then
+              echo "OK: $unit is enabled in the image"
+            else
+              echo "::error::$unit is not enabled in the image; the ssh/userconf.txt files written by host/flash.* would be ignored"
+              rc=1
+            fi
+          done
+          sudo umount "$r"
           sudo losetup -d "$dev"
-          cat probe.txt
-          body="$(tr '\n' '|' < probe.txt)"
-          echo "::notice title=image probe ${{ matrix.release }}::${body}"
+          exit "$rc"
 
       - name: Install systemd-nspawn host packages
         uses: ./.github/actions/nspawn-deps
