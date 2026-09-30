@@ -293,16 +293,46 @@ function Confirm-Destroy {
     if ($confirm -ne 'yes') { Fail 'Aborted.' }
 }
 
+# rpi-imager.exe is built as a GUI application, so "& rpi-imager.exe ..."
+# returns the moment it has launched: $LASTEXITCODE is left stale (0) while the
+# write is still running, and the boot partition is not there yet when we look
+# for it. The bundled rpi-imager-cli.cmd exists only to "start /WAIT" the exe
+# (and does so relative to the caller's directory), so resolve any .cmd to the
+# sibling exe and do the waiting here.
+function Resolve-ImagerExe {
+    param([string]$Path)
+    if ($Path -match '\.cmd$') {
+        $exe = Join-Path (Split-Path -Parent $Path) 'rpi-imager.exe'
+        if (Test-Path -LiteralPath $exe) { return $exe }
+    }
+    return $Path
+}
+
+# Start-Process joins -ArgumentList with spaces and does not quote, so quote
+# anything that needs it (image paths under "C:\Users\First Last\...").
+function ConvertTo-ArgumentString {
+    param([string[]]$Arguments)
+    ($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
+}
+
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
+    $exe = Resolve-ImagerExe $Imager
+    $cliArgs = @('--cli', '--disable-telemetry')
+    if ($Hash) { $cliArgs += @('--sha256', $Hash) }
+    $cliArgs += @($ImagePath, $device)
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
-    if ($Hash) {
-        & $Imager --cli --sha256 $Hash --disable-telemetry $ImagePath $device
+    # -Wait blocks until the process and its children have exited, whichever
+    # subsystem the binary was built for; -PassThru gives us the real exit code.
+    if ($exe -match '\.cmd$') {
+        $p = Start-Process -FilePath $env:ComSpec -ArgumentList ('/c ' + (ConvertTo-ArgumentString (@($exe) + $cliArgs))) -Wait -PassThru
     } else {
-        & $Imager --cli --disable-telemetry $ImagePath $device
+        $p = Start-Process -FilePath $exe -ArgumentList (ConvertTo-ArgumentString $cliArgs) -Wait -PassThru
     }
-    if ($LASTEXITCODE -ne 0) { Fail "Raspberry Pi Imager failed with exit code $LASTEXITCODE." }
+    if ($p.ExitCode -ne 0) { Fail "Raspberry Pi Imager failed with exit code $($p.ExitCode)." }
 }
 
 function Find-OpenSsl {
