@@ -119,6 +119,8 @@ apply after a reboot; switching them back to `no` removes the block again.
 
 ## Documentation
 
+- [Raspberry Pi 5 test checklist](docs/pi5-test-checklist.md) - one full test
+  run on real hardware, checked with `sudo bash check.sh`, and what to report.
 - [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
   `host/flash.ps1` and provision the Pi, step by step.
 - [Setup guide - Linux host](docs/setup-linux.md) - flash an SD card with
