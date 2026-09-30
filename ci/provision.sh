@@ -207,6 +207,9 @@ ProtectProc=default
 ReadWritePaths=
 ReadOnlyPaths=
 InaccessiblePaths=
+BindPaths=
+BindReadOnlyPaths=
+TemporaryFileSystem=
 UNIT
     systemctl daemon-reload || true
 }
