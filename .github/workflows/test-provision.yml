@@ -130,25 +130,6 @@ jobs:
           url: ${{ matrix.url }}
           sha256: ${{ matrix.sha256 }}
 
-      - name: Probe first-boot handlers (temporary)
-        env:
-          IMG: ${{ steps.image.outputs.image }}
-        run: |
-          set -uo pipefail
-          sudo mkdir -p /tmp/probe
-          dev="$(sudo losetup -fP --show "$IMG")"
-          sudo mount -o ro "${dev}p2" /tmp/probe
-          {
-            grep -hE '^PRETTY_NAME' /tmp/probe/etc/os-release
-            grep -E '^Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|rpi-cloud-init-mods|netdata)$' /tmp/probe/var/lib/dpkg/status
-            find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd /tmp/probe/lib/systemd \( -name '*sshswitch*' -o -name '*userconf*' \) 2>/dev/null | sed 's#/tmp/probe##'
-          } > probe.txt 2>&1
-          sudo umount /tmp/probe
-          sudo losetup -d "$dev"
-          cat probe.txt
-          body="$(tr '\n' '|' < probe.txt)"
-          echo "::notice title=image probe ${{ matrix.release }}::${body}"
-
       - name: Install systemd-nspawn host packages
         uses: ./.github/actions/nspawn-deps
 

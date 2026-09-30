@@ -182,6 +182,11 @@ The two layers then differ in how they get the repo into the OS:
   container, so `setup.sh` prints "This does not appear to be a Raspberry Pi"
   and hardware-only behavior (EEPROM update, `raspi-config`) is skipped by the
   tasks themselves. The QEMU job also lacks real Pi hardware, but is closer.
+- **No systemd sandboxing in the gate.** Units that use mount-namespace
+  sandboxing (`ProtectSystem=`, `PrivateTmp=`, `LogNamespace=` ...) fail with
+  "Failed at step NAMESPACE" in the nspawn container; `systemd-logind` does
+  too. `ci/provision.sh` adds a drop-in that relaxes this for `netdata` (whose
+  upstream package, used on Trixie, is sandboxed) inside containers only.
 - **No Docker in the gate.** Docker cannot run inside the nspawn container, so
   the `container` profile skips `docker`, `netalertx` and `teamspeak`. Those
   tasks get x86 coverage from `docker-smoke` and arm64 coverage only from the
