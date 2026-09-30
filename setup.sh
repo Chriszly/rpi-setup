@@ -59,9 +59,13 @@ prompt_selection() {
     seq 1 ${#TASKS[@]}
     return
   fi
+  # Use if/then rather than '[[ ]] && echo': a trailing non-numeric token would
+  # otherwise make the function return 1, and 'nums=($(prompt_selection))' in
+  # main() would then abort the script under 'set -e' instead of cancelling.
   for p in $line; do
-    [[ "$p" =~ ^[0-9]+$ ]] && echo "$p"
+    if [[ "$p" =~ ^[0-9]+$ ]]; then echo "$p"; fi
   done
+  return 0
 }
 
 run_tasks() {
@@ -122,4 +126,8 @@ main() {
   run_tasks "${nums[@]}"
 }
 
-main "$@"
+# Only run when executed directly; ci/test-setup.sh sources this file to test
+# the functions above without running any task.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

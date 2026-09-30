@@ -31,6 +31,17 @@ run_netalertx() {
     warn "Could not auto-detect LAN subnet; set SCAN_SUBNETS in the UI (Settings > Subnets & Rules)"
   fi
 
+  # NetAlertX recommends arp_ignore=1 / arp_announce=2 to avoid ARP flux while
+  # it scans. With network_mode: host the container shares the host's network
+  # namespace, and runc refuses any net.* sysctl there ("not allowed in host
+  # network namespace"), so they must be applied on the host instead.
+  cat >/etc/sysctl.d/90-netalertx.conf <<'EOF'
+# Managed by rpi-setup (tasks/netalertx.sh): ARP flux mitigation for NetAlertX.
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2
+EOF
+  sysctl -q -p /etc/sysctl.d/90-netalertx.conf || warn 'Could not apply /etc/sysctl.d/90-netalertx.conf (applied on next boot)'
+
   cat >"$dir/docker-compose.yml" <<EOF
 services:
   netalertx:
@@ -54,9 +65,6 @@ services:
       - CHOWN
       - SETUID
       - SETGID
-    sysctls:
-      net.ipv4.conf.all.arp_ignore: 1
-      net.ipv4.conf.all.arp_announce: 2
     tmpfs:
       - "/tmp:mode=1700,uid=$uid,gid=$uid,rw,noexec,nosuid,nodev,async,noatime,nodiratime"
     environment:
