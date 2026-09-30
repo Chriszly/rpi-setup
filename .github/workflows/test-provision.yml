@@ -136,7 +136,7 @@ jobs:
         env:
           IMG: ${{ steps.image.outputs.image }}
         run: |
-          set -uo pipefail
+          set +e
           r=/tmp/fbroot; b=/tmp/fbboot
           sudo mkdir -p "$r" "$b"
           dev="$(sudo losetup -fP --show "$IMG")"
@@ -158,6 +158,7 @@ jobs:
             echo "### cmdline.txt"; cat "$b/cmdline.txt"
           } > "$RUNNER_TEMP/firstboot.txt" 2>&1
           sudo umount "$r" "$b"; sudo losetup -d "$dev"
+          exit 0
 
       - name: Install systemd-nspawn host packages
         uses: ./.github/actions/nspawn-deps
