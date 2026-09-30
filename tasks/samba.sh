@@ -38,7 +38,7 @@ EOF
   else
     read -rsp "Samba password for ${u}: " pw; echo
     read -rsp 'Repeat password: ' pw2; echo
-    [[ -n "$pw" ]] && [[ "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
+    [[ -n "$pw" && "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
   fi
   (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
 

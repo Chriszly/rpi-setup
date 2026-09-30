@@ -16,7 +16,8 @@
 #
 # Examples:
 #   .\host\flash.ps1                              # interactive
-#   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'
+#   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'   # still asks "yes"
+#   .\host\flash.ps1 -Disk 2 -Force ...                          # unattended
 #   .\host\flash.ps1 -Image C:\dl\raspios.img.xz # use an image you already have
 #Requires -Version 5.1
 
@@ -39,7 +40,10 @@ param(
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
     [string]$ImagerExe,
     # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
-    [switch]$SkipImagerInstall
+    [switch]$SkipImagerInstall,
+    # Skip the "type 'yes' to DESTROY" confirmation. Only for unattended runs
+    # together with -Disk; the wrong number wipes the wrong disk without asking.
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -262,6 +266,8 @@ function Select-Disk {
     if ($Requested -ge 0) {
         $disk = $disks | Where-Object Number -eq $Requested
         if (-not $disk) { Fail "Disk $Requested not found among removable disks." }
+        Write-Info ("Target: PhysicalDrive{0}  {1}  {2} GB  ({3})" -f $disk.Number, $disk.FriendlyName, [math]::Round($disk.Size / 1GB, 1), $disk.BusType)
+        if (-not $Force) { Confirm-Destroy $disk }
         return $disk
     }
 
@@ -277,22 +283,56 @@ function Select-Disk {
     $idx = [int]$sel - 1
     if ($idx -lt 0 -or $idx -ge $disks.Count) { Fail 'Invalid selection.' }
     $disk = $disks[$idx]
-
-    $confirm = Read-Host "Type 'yes' to DESTROY all data on PhysicalDrive$($disk.Number) ($($disk.FriendlyName))"
-    if ($confirm -ne 'yes') { Fail 'Aborted.' }
+    Confirm-Destroy $disk
     return $disk
+}
+
+function Confirm-Destroy {
+    param([object]$Disk)
+    $confirm = Read-Host "Type 'yes' to DESTROY all data on PhysicalDrive$($Disk.Number) ($($Disk.FriendlyName))"
+    if ($confirm -ne 'yes') { Fail 'Aborted.' }
+}
+
+# rpi-imager.exe is built as a GUI application, so "& rpi-imager.exe ..."
+# returns the moment it has launched: $LASTEXITCODE is left stale (0) while the
+# write is still running, and the boot partition is not there yet when we look
+# for it. The bundled rpi-imager-cli.cmd exists only to "start /WAIT" the exe
+# (and does so relative to the caller's directory), so resolve any .cmd to the
+# sibling exe and do the waiting here.
+function Resolve-ImagerExe {
+    param([string]$Path)
+    if ($Path -match '\.cmd$') {
+        $exe = Join-Path (Split-Path -Parent $Path) 'rpi-imager.exe'
+        if (Test-Path -LiteralPath $exe) { return $exe }
+    }
+    return $Path
+}
+
+# Start-Process joins -ArgumentList with spaces and does not quote, so quote
+# anything that needs it (image paths under "C:\Users\First Last\...").
+function ConvertTo-ArgumentString {
+    param([string[]]$Arguments)
+    ($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
 }
 
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
+    $exe = Resolve-ImagerExe $Imager
+    $cliArgs = @('--cli', '--disable-telemetry')
+    if ($Hash) { $cliArgs += @('--sha256', $Hash) }
+    $cliArgs += @($ImagePath, $device)
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
-    if ($Hash) {
-        & $Imager --cli --sha256 $Hash --disable-telemetry $ImagePath $device
+    # -Wait blocks until the process and its children have exited, whichever
+    # subsystem the binary was built for; -PassThru gives us the real exit code.
+    if ($exe -match '\.cmd$') {
+        $p = Start-Process -FilePath $env:ComSpec -ArgumentList ('/c ' + (ConvertTo-ArgumentString (@($exe) + $cliArgs))) -Wait -PassThru
     } else {
-        & $Imager --cli --disable-telemetry $ImagePath $device
+        $p = Start-Process -FilePath $exe -ArgumentList (ConvertTo-ArgumentString $cliArgs) -Wait -PassThru
     }
-    if ($LASTEXITCODE -ne 0) { Fail "Raspberry Pi Imager failed with exit code $LASTEXITCODE." }
+    if ($p.ExitCode -ne 0) { Fail "Raspberry Pi Imager failed with exit code $($p.ExitCode)." }
 }
 
 function Find-OpenSsl {
@@ -313,9 +353,8 @@ function New-CryptHash {
     if (-not $ssl) {
         Fail 'openssl not found. Install Git for Windows (ships openssl), or re-run with -SkipCustomize.'
     }
-    $saltChars = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-    $salt = -join (1..16 | ForEach-Object { $saltChars[(Get-Random -Maximum $saltChars.Length)] })
-    $hash = ($Password | & $ssl passwd -6 -stdin -salt $salt | Out-String).Trim()
+    # Let openssl generate the salt (full 16 characters, crypto-grade randomness).
+    $hash = ($Password | & $ssl passwd -6 -stdin | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $hash -notmatch '^\$6\$') { Fail 'openssl passwd failed to create the password hash.' }
     return $hash
 }
