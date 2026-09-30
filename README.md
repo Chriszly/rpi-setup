@@ -55,7 +55,7 @@ firmware updates take effect.
 | `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
 | `web`        | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
 | `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
-| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | none needed (needs `docker`) |
+| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | `NETALERTX_PASSWORD` (empty = generated), `NETALERTX_LOGIN` (needs `docker`) |
 | `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` (needs `docker`, 64-bit OS) |
 
 Each task prints the address to open when it finishes. Tasks are plain bash
