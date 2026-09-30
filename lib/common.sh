@@ -89,7 +89,8 @@ require_docker() {
 # True if a container with this exact name is currently running.
 compose_is_up() {
   local name="$1"
-  docker ps -q --filter "name=^${name}\$" >/dev/null 2>&1
+  # 'docker ps' exits 0 even when nothing matches, so test the output, not the status.
+  [[ -n "$(docker ps -q --filter "name=^${name}\$" --filter status=running 2>/dev/null)" ]]
 }
 
 # Create $dir and $dir/data, with data owned (numerically) by $uid.

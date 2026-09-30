@@ -73,6 +73,15 @@ else
     skip "assign_uid / find_free_uid tests need root and getent"
 fi
 
+# --- lib/common.sh: compose_is_up (needs a working docker) --------------------
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    # 'docker ps' exits 0 even with no match, so this must inspect the output.
+    assert_fails "compose_is_up is false for a container that does not exist" \
+        compose_is_up "rpi-setup-no-such-container-$$"
+else
+    skip "compose_is_up test needs a running docker daemon"
+fi
+
 # --- host/flash.sh: first_partition -------------------------------------------
 assert_eq "first_partition sda"     "/dev/sda1"       "$(first_partition /dev/sda)"
 assert_eq "first_partition vda"     "/dev/vda1"       "$(first_partition /dev/vda)"
