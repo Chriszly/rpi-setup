@@ -50,6 +50,7 @@ firmware updates take effect.
 |--------------|---------------------------------------------------------------------|-----------------------------------|
 | `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban  | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
 | `docker`     | Docker Engine, buildx and Compose (apt), log rotation               | none needed |
+| `network`    | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
 | `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended     | `PIHOLE_PASSWORD`, `PIHOLE_CONFIRM=yes`, `PIHOLE_DNS` |
 | `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
