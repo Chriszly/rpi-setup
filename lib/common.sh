@@ -102,9 +102,13 @@ ensure_container_dir() {
 }
 
 # Start the compose project at $dir/docker-compose.yml, always pulling images.
+# Dies if no service is running afterwards: 'up -d' can print a daemon error
+# for a container that failed to start and still exit 0.
 compose_up() {
-  local dir="$1"
-  docker compose -f "$dir/docker-compose.yml" up -d --pull always
+  local dir="$1" file="$1/docker-compose.yml"
+  docker compose -f "$file" up -d --pull always
+  [[ -n "$(docker compose -f "$file" ps -q --status running 2>/dev/null)" ]] ||
+    die "No container from $file is running. Inspect with: docker compose -f $file logs"
 }
 
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).
