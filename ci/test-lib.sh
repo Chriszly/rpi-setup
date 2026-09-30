@@ -82,6 +82,39 @@ else
     skip "compose_is_up test needs a running docker daemon"
 fi
 
+# --- lib/common.sh: port_owner (ss mocked) ------------------------------------
+ss() {
+    case "$*" in
+        *':80') printf '%s\n' 'LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("pihole-FTL",pid=812,fd=24))' ;;
+        *':81') printf '%s\n' 'LISTEN 0 511 0.0.0.0:81 0.0.0.0:*' ;;
+        *) : ;;
+    esac
+}
+assert_eq "port_owner names the listening process" "pihole-FTL" "$(port_owner 80)"
+assert_eq "port_owner says 'unknown' without process info" "unknown" "$(port_owner 81)"
+assert_fails "port_owner fails when nothing listens" port_owner 82
+unset -f ss
+
+# --- lib/common.sh: apt_install / apt_update_now (apt-get mocked, root only) --
+if [[ $EUID -eq 0 ]]; then
+    apt_log="$(mktemp)"
+    stamp=/var/lib/rpi-setup/apt-updated
+    had_stamp=0; [[ -f "$stamp" ]] && had_stamp=1
+    apt-get() { printf '%s\n' "$*" >>"$apt_log"; }
+    install -m 0755 -d /var/lib/rpi-setup
+    touch "$stamp"
+    apt_install foo
+    assert_eq "apt_install skips 'apt-get update' within the hour" "0" "$(grep -c '^update' "$apt_log" || true)"
+    assert_contains "apt_install never stops at dpkg conffile prompts" "--force-confold" "$(cat "$apt_log")"
+    apt_update_now
+    assert_eq "apt_update_now refreshes even within the hour" "1" "$(grep -c '^update' "$apt_log" || true)"
+    unset -f apt-get
+    rm -f "$apt_log"
+    [[ $had_stamp -eq 1 ]] || rm -f "$stamp"
+else
+    skip "apt_install / apt_update_now tests need root"
+fi
+
 # --- host/flash.sh: first_partition -------------------------------------------
 assert_eq "first_partition sda"     "/dev/sda1"       "$(first_partition /dev/sda)"
 assert_eq "first_partition vda"     "/dev/vda1"       "$(first_partition /dev/vda)"

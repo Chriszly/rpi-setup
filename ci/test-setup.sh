@@ -65,6 +65,34 @@ assert_ok "prompt_selection exits 0 on non-numeric input"  eval "printf 'abc\n' 
 assert_ok "prompt_selection exits 0 on a trailing non-numeric token" eval "printf '1 x\n' | prompt_selection"
 assert_eq "prompt_selection writes the prompt to stderr, not stdout" "> " "$(printf '\n' | prompt_selection 2>&1 >/dev/null)"
 
+# --- Task helpers -------------------------------------------------------------
+tmp="$(mktemp -d)"
+# Debian's netdata.conf ships localhost-only; the dashboard must reach the LAN.
+printf '[global]\n\tbind socket to IP = 127.0.0.1\n[web]\n\tbind to = localhost\n' >"$tmp/netdata.conf"
+assert_ok "netdata_listen_on_lan rewrites a localhost bind" netdata_listen_on_lan "$tmp/netdata.conf"
+assert_eq "netdata_listen_on_lan leaves no localhost bind behind" "0" \
+    "$(grep -Ec '127\.0\.0\.1|localhost' "$tmp/netdata.conf" || true)"
+assert_contains "netdata_listen_on_lan binds 0.0.0.0" "bind socket to IP = 0.0.0.0" "$(cat "$tmp/netdata.conf")"
+assert_fails "netdata_listen_on_lan reports nothing to change on a re-run" netdata_listen_on_lan "$tmp/netdata.conf"
+assert_fails "netdata_listen_on_lan tolerates a missing file" netdata_listen_on_lan "$tmp/missing.conf"
+
+printf 'server {\n\tlisten 80 default_server;\n\tlisten [::]:80 default_server;\n\t# listen 443 ssl default_server;\n}\n' >"$tmp/site"
+nginx_move_port "$tmp/site" 80 8080
+assert_contains "nginx_move_port moves the IPv4 listen" "listen 8080 default_server;" "$(cat "$tmp/site")"
+assert_contains "nginx_move_port moves the IPv6 listen" "listen [::]:8080 default_server;" "$(cat "$tmp/site")"
+assert_contains "nginx_move_port leaves other ports alone" "# listen 443 ssl" "$(cat "$tmp/site")"
+rm -rf "$tmp"
+
+# raspi-config's nonint mode reads 0 as "enable": "do_ssh 1" switches SSH off
+# and locks out a headless Pi after its next reboot.
+assert_contains "base enables SSH (do_ssh 0)" "do_ssh 0" "$(declare -f run_base)"
+if [[ "$(declare -f run_base)" == *"do_ssh 1"* ]]; then
+    fail "base must never call 'raspi-config nonint do_ssh 1' (that disables SSH)"
+else
+    pass "base never disables SSH"
+fi
+assert_contains "docker refreshes apt after adding its repository" "apt_update_now" "$(declare -f run_docker)"
+
 # --- CLI: --list works without root -------------------------------------------
 listing="$(bash "$ROOT/setup.sh" --list)"
 for n in "${names[@]}"; do

@@ -20,6 +20,9 @@ real_user() { printf '%s' "${SUDO_USER:-${USER:-root}}"; }
 # Loose Raspberry Pi detection (also true when an OS image boots on similar arm boards).
 is_pi() { [[ -r /proc/device-tree/model ]] && grep -qi 'raspberry' /proc/device-tree/model; }
 
+# True inside a container (systemd-nspawn, Docker, ...) rather than on real hardware.
+in_container() { [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; }
+
 need_root() { [[ $EUID -eq 0 ]] || die 'Please run as root: sudo bash setup.sh [task ...]'; }
 
 # Refresh apt lists at most once an hour per run.
@@ -32,9 +35,20 @@ apt_update() {
   fi
 }
 
+# Refresh apt lists now, ignoring the hourly cache. Needed right after adding
+# an apt source: lists fetched a minute ago (e.g. by "base") don't know it yet.
+apt_update_now() {
+  rm -f /var/lib/rpi-setup/apt-updated
+  apt_update
+}
+
+# Never stop at a dpkg "configuration file modified" prompt: keep the local
+# version when one exists, take the package default otherwise.
+APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
 apt_install() {
   apt_update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" "$@"
 }
 
 apt_installed() { dpkg -s "$1" >/dev/null 2>&1; }
@@ -47,6 +61,19 @@ pi_ip() {
   ip="$(hostname -I 2>/dev/null || true)"
   [[ -n "$ip" ]] || return 1
   printf '%s\n' "$ip" | awk '{print $1}'
+}
+
+# Name of the process listening on TCP $1 (e.g. "nginx", "pihole-FTL"), or
+# non-zero exit if nothing listens there.
+port_owner() {
+  local port="$1" line
+  line="$(ss -H -ltnp "sport = :$port" 2>/dev/null | head -n1)" || true
+  [[ -n "$line" ]] || return 1
+  if [[ "$line" =~ users:\(\(\"([^\"]+)\" ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf 'unknown\n'
+  fi
 }
 
 # Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
