@@ -16,7 +16,8 @@
 #
 # Examples:
 #   .\host\flash.ps1                              # interactive
-#   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'
+#   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'   # still asks "yes"
+#   .\host\flash.ps1 -Disk 2 -Force ...                          # unattended
 #   .\host\flash.ps1 -Image C:\dl\raspios.img.xz # use an image you already have
 #Requires -Version 5.1
 
@@ -39,7 +40,10 @@ param(
     # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
     [string]$ImagerExe,
     # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
-    [switch]$SkipImagerInstall
+    [switch]$SkipImagerInstall,
+    # Skip the "type 'yes' to DESTROY" confirmation. Only for unattended runs
+    # together with -Disk; the wrong number wipes the wrong disk without asking.
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -262,6 +266,8 @@ function Select-Disk {
     if ($Requested -ge 0) {
         $disk = $disks | Where-Object Number -eq $Requested
         if (-not $disk) { Fail "Disk $Requested not found among removable disks." }
+        Write-Info ("Target: PhysicalDrive{0}  {1}  {2} GB  ({3})" -f $disk.Number, $disk.FriendlyName, [math]::Round($disk.Size / 1GB, 1), $disk.BusType)
+        if (-not $Force) { Confirm-Destroy $disk }
         return $disk
     }
 
@@ -277,10 +283,14 @@ function Select-Disk {
     $idx = [int]$sel - 1
     if ($idx -lt 0 -or $idx -ge $disks.Count) { Fail 'Invalid selection.' }
     $disk = $disks[$idx]
-
-    $confirm = Read-Host "Type 'yes' to DESTROY all data on PhysicalDrive$($disk.Number) ($($disk.FriendlyName))"
-    if ($confirm -ne 'yes') { Fail 'Aborted.' }
+    Confirm-Destroy $disk
     return $disk
+}
+
+function Confirm-Destroy {
+    param([object]$Disk)
+    $confirm = Read-Host "Type 'yes' to DESTROY all data on PhysicalDrive$($Disk.Number) ($($Disk.FriendlyName))"
+    if ($confirm -ne 'yes') { Fail 'Aborted.' }
 }
 
 function Invoke-Flash {
@@ -313,9 +323,8 @@ function New-CryptHash {
     if (-not $ssl) {
         Fail 'openssl not found. Install Git for Windows (ships openssl), or re-run with -SkipCustomize.'
     }
-    $saltChars = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-    $salt = -join (1..16 | ForEach-Object { $saltChars[(Get-Random -Maximum $saltChars.Length)] })
-    $hash = ($Password | & $ssl passwd -6 -stdin -salt $salt | Out-String).Trim()
+    # Let openssl generate the salt (full 16 characters, crypto-grade randomness).
+    $hash = ($Password | & $ssl passwd -6 -stdin | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $hash -notmatch '^\$6\$') { Fail 'openssl passwd failed to create the password hash.' }
     return $hash
 }

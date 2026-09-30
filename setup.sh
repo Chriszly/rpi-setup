@@ -113,7 +113,13 @@ main() {
   fi
 
   nums=($(dedupe "${nums[@]}"))
-  [[ ${#nums[@]} -gt 0 ]] && run_tasks "${nums[@]}" || echo 'Nothing to do.'
+  if [[ ${#nums[@]} -eq 0 ]]; then
+    echo 'Nothing to do.'
+    return 0
+  fi
+  # Plain call, not "A && B || C": bash disables errexit inside a && / ||
+  # list, which would let failing commands in tasks go unnoticed.
+  run_tasks "${nums[@]}"
 }
 
 main "$@"
