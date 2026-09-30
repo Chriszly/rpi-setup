@@ -133,7 +133,7 @@ jobs:
           find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd -name '*ssh*' -o -name '*userconf*' -o -name '*cloud*' -o -name '*firstboot*' 2>/dev/null | head -n 60
           grep -E '^(Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|netdata|rpi-cloud-init-mods))' /tmp/probe/var/lib/dpkg/status || true
           sudo mount -o ro "${dev}p1" /tmp/probe/boot/firmware 2>/dev/null || sudo mount -o ro "${dev}p1" /mnt
-          ls /tmp/probe/boot/firmware /mnt 2>/dev/null | head -n 80
+          find /tmp/probe/boot/firmware /mnt -maxdepth 1 2>/dev/null | head -n 80
           cat /tmp/probe/boot/firmware/cmdline.txt /mnt/cmdline.txt 2>/dev/null || true
           sudo umount -R /tmp/probe /mnt 2>/dev/null || true
           sudo losetup -d "$dev"
