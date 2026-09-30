@@ -17,7 +17,7 @@ quirks). The workflow uses several increasingly faithful layers:
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
 | `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
-| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container, Bookworm and Trixie | high | minutes |
+| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container, latest release and Bookworm | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
 - **`syntax`** and **`unit`** are fast pre-checks; the three provisioning jobs
@@ -102,33 +102,40 @@ Because the container/VM runs as `root`, `real_user()` resolves to `root`, so
 `samba` configures `/home/root/nas-share` and warns. That is expected and
 acceptable for CI.
 
-## The pinned images
+## The images
 
-The gate runs as a matrix over two pinned Raspberry Pi OS Lite (64-bit)
-images, matching the README's "Trixie or Bookworm" promise:
+The gate runs as a matrix over two Raspberry Pi OS Lite (64-bit) images,
+matching the README's "Trixie or Bookworm" promise:
 
-```
-2026-06-18-raspios-trixie-arm64-lite.img.xz     (what host/flash.* write today)
-sha256 acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
-2025-05-13-raspios-bookworm-arm64-lite.img.xz   (existing Pis)
-sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-```
+- **`latest`**: resolved at run time from the
+  [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/),
+  exactly as `host/flash.sh` does, and verified against that release's own
+  `.sha256`. This is the image a user flashes today (currently Trixie), so a
+  new Raspberry Pi OS release that breaks a task shows up on the next PR.
+- **`bookworm`**: pinned, for Pis that are still on Bookworm:
 
-`provision-qemu` stays on **Bookworm** only, because `piqemu-action` builds a
-Bookworm-specific patched DTB (it merges the `disable-bt` overlay to make the
-emulated Pi boot); Trixie images are not yet compatible with it. The gate's
-images live in the `provision-gate` job's `matrix.include`; the QEMU image in
-the `env:` block at the top of the workflow. Both are passed to the shared
-[`prepare-image`](../.github/actions/prepare-image/action.yml) composite action.
+  ```
+  2025-05-13-raspios-bookworm-arm64-lite.img.xz
+  sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
+  ```
 
-### Bumping the image
+`provision-qemu` uses the pinned Bookworm image only, because `piqemu-action`
+builds a Bookworm-specific patched DTB (it merges the `disable-bt` overlay to
+make the emulated Pi boot); Trixie images are not yet compatible with it. The
+gate's images live in the `provision-gate` job's `matrix.include`; the QEMU
+image in the `env:` block at the top of the workflow. Both go through the
+shared [`prepare-image`](../.github/actions/prepare-image/action.yml)
+composite action, which accepts `version: latest` or a pinned
+`version`/`url`/`sha256`.
+
+### Bumping the pinned image
 
 1. Pick a new image and note its `.sha256` from the
    [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/).
-2. Update the `trixie` entry (`version`, `url`, `sha256`) in the
-   `provision-gate` matrix of `.github/workflows/test-provision.yml`. The cache
-   key is derived from the version, so a fresh image is downloaded
-   automatically.
+2. Update the `bookworm` entry of the `provision-gate` matrix and
+   `RPI_IMAGE_VERSION`, `RPI_IMAGE_URL`, `RPI_IMAGE_SHA256` in
+   `.github/workflows/test-provision.yml`. The cache key is derived from the
+   version, so a fresh image is downloaded automatically.
 3. If moving off Bookworm, first confirm `piqemu-action` supports the new
    image (its DTB build script is Bookworm-specific) and that the image's
    partition layout/boot behavior still matches nspawn/QEMU.

@@ -7,14 +7,19 @@ description: >-
 
 inputs:
   version:
-    description: Image release date, used as the cache key (e.g. 2025-05-13)
+    description: >-
+      Image release date, used as the cache key (e.g. 2025-05-13), or "latest"
+      to resolve the newest Raspberry Pi OS Lite arm64 release at run time -
+      the same image host/flash.sh and host/flash.ps1 download.
     required: true
   url:
-    description: Download URL of the .img.xz
-    required: true
+    description: Download URL of the .img.xz (ignored when version is "latest")
+    required: false
+    default: ''
   sha256:
-    description: Expected SHA-256 of the .img.xz
-    required: true
+    description: Expected SHA-256 of the .img.xz (ignored when version is "latest")
+    required: false
+    default: 
   size:
     description: Size to grow the raw image to (passed to truncate)
     required: false
@@ -28,29 +33,48 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve paths
+    - name: Resolve image and paths
       id: paths
       shell: bash
       env:
         IMG_VERSION: ${{ inputs.version }}
+        IMG_URL: ${{ inputs.url }}
+        IMG_SHA256: ${{ inputs.sha256 }}
       run: |
         set -euo pipefail
-        echo "xz=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img.xz" >> "$GITHUB_OUTPUT"
-        echo "image=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img" >> "$GITHUB_OUTPUT"
+        base=https://downloads.raspberrypi.com/raspios_lite_arm64/images
+        if [[ "$IMG_VERSION" == latest ]]; then
+          # Same lookup as latest_release/fetch_image in host/flash.sh.
+          release="$(curl -fsSL --retry 3 "$base/" | grep -oE 'raspios_lite_arm64-[0-9]{4}-[0-9]{2}-[0-9]{2}' | sort -u | tail -n1)"
+          img="$(curl -fsSL --retry 3 "$base/$release/" | grep -oE 'href="[^"]+\.img\.xz"' | head -n1 | sed 's/href="//; s/"$//')"
+          [[ -n "$release" && -n "$img" ]] || { echo "Could not resolve the latest image" >&2; exit 1; }
+          IMG_VERSION="${release#raspios_lite_arm64-}"
+          IMG_URL="$base/$release/$img"
+          IMG_SHA256="$(curl -fsSL --retry 3 "$IMG_URL.sha256" | awk '{print $1}')"
+          echo "Latest image: $IMG_URL"
+        fi
+        [[ -n "$IMG_URL" && -n "$IMG_SHA256" ]] || { echo "url and sha256 are required for a pinned version" >&2; exit 1; }
+        {
+          echo "version=$IMG_VERSION"
+          echo "url=$IMG_URL"
+          echo "sha256=$IMG_SHA256"
+          echo "xz=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img.xz"
+          echo "image=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Restore cached image
       id: restore
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.paths.outputs.xz }}
-        key: raspios-arm64-lite-${{ inputs.version }}
+        key: raspios-arm64-lite-${{ steps.paths.outputs.version }}
 
     - name: Download and verify image
       shell: bash
       env:
         IMG_XZ: ${{ steps.paths.outputs.xz }}
-        IMG_URL: ${{ inputs.url }}
-        IMG_SHA256: ${{ inputs.sha256 }}
+        IMG_URL: ${{ steps.paths.outputs.url }}
+        IMG_SHA256: ${{ steps.paths.outputs.sha256 }}
       run: |
         set -euo pipefail
         if [[ ! -f "$IMG_XZ" ]]; then

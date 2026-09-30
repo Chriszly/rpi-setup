@@ -90,8 +90,8 @@ jobs:
           path: ci-logs/
           retention-days: 7
 
-  # Runs on both OS releases the README supports: Trixie is what host/flash.sh
-  # and host/flash.ps1 write today, Bookworm is what existing Pis still run.
+  # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
+  # today, resolved at run time) and on Bookworm (what existing Pis still run).
   provision-gate:
     name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }})
     runs-on: ubuntu-latest
@@ -106,10 +106,12 @@ jobs:
             version: 2025-05-13
             url: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
             sha256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-          - release: trixie
-            version: 2026-06-18
-            url: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-18/2026-06-18-raspios-trixie-arm64-lite.img.xz
-            sha256: acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
+          # Whatever the flash scripts would write today (checksum from the
+          # release's own .sha256, as in host/flash.sh).
+          - release: latest
+            version: latest
+            url: ''
+            sha256: ''
     steps:
       - uses: actions/checkout@v7
 
