@@ -144,7 +144,8 @@ jobs:
           sudo mount -o ro "${dev}p2" "$r"
           rc=0
           for unit in userconfig.service sshswitch.service; do
-            if [[ -e "$r/etc/systemd/system/multi-user.target.wants/$unit" ]]; then
+            # The wants/ entries are absolute symlinks, so test the link itself.
+          if [[ -L "$r/etc/systemd/system/multi-user.target.wants/$unit" ]]; then
               echo "OK: $unit is enabled in the image"
             else
               echo "::error::$unit is not enabled in the image; the ssh/userconf.txt files written by host/flash.* would be ignored"
