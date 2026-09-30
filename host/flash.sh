@@ -517,7 +517,7 @@ main() {
   need_root
 
   # Check the first-boot settings before the card is touched.
-  load_flash_config
+  load_flash_config "$(central_config)"
   if [[ "$SKIP_CUSTOMIZE" -eq 1 ]] && want_firstboot; then
     die '-k (skip customization) cannot be combined with a hostname, Wi-Fi or SSH key setting.'
   fi
