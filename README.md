@@ -10,6 +10,11 @@ which the flash scripts write, or Bookworm).
    Lite, verifies it, writes it, and pre-creates your login user with SSH on:
    - Linux: `sudo ./host/flash.sh` ([guide](docs/setup-linux.md))
    - Windows, elevated PowerShell: `.\host\flash.ps1` ([guide](docs/setup-windows.md))
+
+   Optionally it also sets the host name, Wi-Fi and your SSH public key, so the
+   Pi comes up on your network without a screen or cable, e.g.
+   `sudo ./host/flash.sh -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub`
+   (Windows: `-Hostname`, `-WifiSsid`, `-SshPublicKeyFile`); see the guides.
 2. **Boot the Pi** with the card, wait 1-2 minutes, then
    `ssh <user>@raspberrypi.local` (or the Pi's IP from your router).
 3. **Fill in your settings** on the Pi (passwords, ports, host name, ...):

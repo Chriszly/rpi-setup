@@ -83,6 +83,46 @@ All options:
 | `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
 | `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
 | `-l`              | List candidate disks and exit                                  |
+| `-n HOSTNAME`     | Host name, e.g. `homepi` (reachable as `homepi.local`)         |
+| `-s SSID`         | Wi-Fi network to join on first boot                            |
+| `-w PASSWORD`     | Its password (prompted, hidden, if omitted; empty = open network) |
+| `-c COUNTRY`      | Wi-Fi country code (regulatory domain); default `DE`           |
+| `-a KEYFILE`      | SSH public key to authorize for the user, e.g. `~/.ssh/id_ed25519.pub` |
+
+### Optional: host name, Wi-Fi and SSH key
+
+With `-n`, `-s` and `-a` the Pi comes up on your Wi-Fi under its own name and
+accepts your SSH key on the very first boot, with no screen or network cable:
+
+```bash
+sudo ./host/flash.sh -d /dev/sda -u pi -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub
+ssh pi@homepi.local        # a few minutes later
+```
+
+Instead of flags you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` in the
+environment (`sudo FLASH_HOSTNAME=homepi ./host/flash.sh`, since `sudo` drops
+other variables) or in `config/rpi-setup.env` next to the scripts (see the
+`flash` section at the end of `config/rpi-setup.env.example`; only the
+`FLASH_*` lines are read). Flags win over the environment, which wins over the
+file. The Wi-Fi password is never printed; prefer the hidden prompt or the
+private (`chmod 600`) settings file over `-w`, which ends up in your shell
+history.
+
+Everything is checked before the card is written: the host name (letters,
+digits and `-`), the country (two letters), the Wi-Fi password (8-63
+characters) and the key file (must be an OpenSSH public key, not the private
+key). How it reaches the Pi depends on the image:
+
+- **Trixie** (the current release): `user-data` and `network-config` for
+  cloud-init on the boot partition.
+- **Bookworm** (no cloud-init): a one-time `firstrun.sh`, started from
+  `cmdline.txt` as Raspberry Pi Imager does it. The Pi reboots once on first
+  boot, then removes the script.
+
+The login user and SSH are still set up by `userconf.txt` and `ssh`, exactly as
+without these options. The key is stored in `/etc/ssh/authorized_keys/<user>`
+(and read by sshd in addition to `~/.ssh/authorized_keys`).
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).
@@ -94,7 +134,7 @@ When finished it prints the SSH address and the commands to run on the Pi
 3. Connect over SSH:
 
 ```bash
-ssh <username>@raspberrypi.local
+ssh <username>@raspberrypi.local     # or <hostname>.local if you set -n
 ```
 
 If `raspberrypi.local` does not resolve, find the Pi's IP address from your
