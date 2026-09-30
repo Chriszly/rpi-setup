@@ -117,6 +117,17 @@ on an older one. Use the **64-bit** Lite image: `teamspeak`'s Docker image is
 Both go into a marked block at the end of `/boot/firmware/config.txt` and
 apply after a reboot; switching them back to `no` removes the block again.
 
+## Updating
+
+Re-running a task does not update a container that is already running. To
+bring an installed Pi up to date, run `sudo bash update.sh`: it upgrades the
+OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`) and
+recreates the ones that changed, runs `pihole -up` if Pi-hole is installed and
+`rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
+skipped, a failed step does not stop the others, and it tells you when a reboot
+is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
+`--no-containers`.
+
 ## Documentation
 
 - [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
