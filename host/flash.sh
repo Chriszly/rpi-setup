@@ -202,7 +202,7 @@ else
   img_path="$(fetch_image "$release")"
 fi
 
-DEV="$(pick_device)"
+[[ -n "$DEV" ]] || DEV="$(pick_device)"
 confirm_device "$DEV"
 
 info 'Zeroing the start of the disk so partprobe reliably sees the new table'
