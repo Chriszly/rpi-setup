@@ -31,17 +31,19 @@ runs:
     - name: Resolve paths
       id: paths
       shell: bash
+      env:
+        IMG_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        echo "xz=$RUNNER_TEMP/raspios-bookworm-arm64-lite.img.xz" >> "$GITHUB_OUTPUT"
-        echo "image=$RUNNER_TEMP/raspios-bookworm-arm64-lite.img" >> "$GITHUB_OUTPUT"
+        echo "xz=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img.xz" >> "$GITHUB_OUTPUT"
+        echo "image=$RUNNER_TEMP/raspios-arm64-lite-$IMG_VERSION.img" >> "$GITHUB_OUTPUT"
 
     - name: Restore cached image
       id: restore
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.paths.outputs.xz }}
-        key: raspios-bookworm-arm64-${{ inputs.version }}
+        key: raspios-arm64-lite-${{ inputs.version }}
 
     - name: Download and verify image
       shell: bash

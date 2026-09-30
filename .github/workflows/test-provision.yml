@@ -16,8 +16,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Pinned Raspberry Pi OS Lite (64-bit) image. See docs/ci-testing.md for the
-  # bump procedure and why this exact image/version is pinned.
+  # Pinned Raspberry Pi OS Lite (64-bit) images. See docs/ci-testing.md for the
+  # bump procedure and why these exact images are pinned. The Bookworm image is
+  # also the only one piqemu-action can boot (provision-qemu).
   RPI_IMAGE_VERSION: 2025-05-13
   RPI_IMAGE_SHA256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
   RPI_IMAGE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
@@ -89,12 +90,26 @@ jobs:
           path: ci-logs/
           retention-days: 7
 
+  # Runs on both OS releases the README supports: Trixie is what host/flash.sh
+  # and host/flash.ps1 write today, Bookworm is what existing Pis still run.
   provision-gate:
-    name: Provision tasks in booted nspawn (PR gate)
+    name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }})
     runs-on: ubuntu-latest
     needs: [syntax, unit]
     if: github.event_name == 'pull_request'
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: bookworm
+            version: 2025-05-13
+            url: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+            sha256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
+          - release: trixie
+            version: 2026-06-18
+            url: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-18/2026-06-18-raspios-trixie-arm64-lite.img.xz
+            sha256: acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
     steps:
       - uses: actions/checkout@v7
 
@@ -102,9 +117,26 @@ jobs:
         id: image
         uses: ./.github/actions/prepare-image
         with:
-          version: ${{ env.RPI_IMAGE_VERSION }}
-          url: ${{ env.RPI_IMAGE_URL }}
-          sha256: ${{ env.RPI_IMAGE_SHA256 }}
+          version: ${{ matrix.version }}
+          url: ${{ matrix.url }}
+          sha256: ${{ matrix.sha256 }}
+
+      - name: Probe first-boot handlers (temporary)
+        env:
+          IMG: ${{ steps.image.outputs.image }}
+        run: |
+          set -uo pipefail
+          sudo mkdir -p /tmp/probe
+          dev="$(sudo losetup -fP --show "$IMG")"
+          sudo mount -o ro "${dev}p2" /tmp/probe
+          ls /tmp/probe/usr/lib/userconf-pi /tmp/probe/usr/lib/raspberrypi-sys-mods 2>&1 || true
+          find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd -name '*ssh*' -o -name '*userconf*' -o -name '*cloud*' -o -name '*firstboot*' 2>/dev/null | head -n 60
+          grep -E '^(Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|netdata|rpi-cloud-init-mods))' /tmp/probe/var/lib/dpkg/status || true
+          sudo mount -o ro "${dev}p1" /tmp/probe/boot/firmware 2>/dev/null || sudo mount -o ro "${dev}p1" /mnt
+          ls /tmp/probe/boot/firmware /mnt 2>/dev/null | head -n 80
+          cat /tmp/probe/boot/firmware/cmdline.txt /mnt/cmdline.txt 2>/dev/null || true
+          sudo umount -R /tmp/probe /mnt 2>/dev/null || true
+          sudo losetup -d "$dev"
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
@@ -125,7 +157,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: provision-gate-logs
+          name: provision-gate-logs-${{ matrix.release }}
           path: ci-logs/
           retention-days: 7
 
