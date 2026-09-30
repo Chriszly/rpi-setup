@@ -1,10 +1,13 @@
 name: Virtual Testing Environment
 
+# Docs-only changes cannot affect provisioning, so they skip this workflow.
 on:
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
   push:
     branches:
       - main
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
   workflow_dispatch:
 
 permissions:
@@ -29,10 +32,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # shellcheck ships with the hosted runner image; only install it if missing.
       - name: Install shellcheck
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck --version
 
       - name: Validate bash syntax
         run: |
@@ -105,6 +112,9 @@ jobs:
           version: ${{ env.RPI_IMAGE_VERSION }}
           url: ${{ env.RPI_IMAGE_URL }}
           sha256: ${{ env.RPI_IMAGE_SHA256 }}
+
+      - name: Install systemd-nspawn host packages
+        uses: ./.github/actions/nspawn-deps
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
@@ -199,3 +209,41 @@ jobs:
           name: provision-qemu-logs
           path: ${{ runner.temp }}/ci-logs/
           retention-days: 7
+
+  # TEMPORARY trial, to be removed before this PR leaves draft: the same gate on
+  # a native arm64 runner (no QEMU user emulation). pinspawn-action documents
+  # that booted containers shut down spontaneously on arm64 runners; this
+  # measures whether that still holds and how much faster it is.
+  provision-gate-arm64-trial:
+    name: Provision tasks in booted nspawn (arm64 runner trial)
+    runs-on: ubuntu-24.04-arm
+    needs: [syntax, unit]
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepare Raspberry Pi OS image
+        id: image
+        uses: ./.github/actions/prepare-image
+        with:
+          version: ${{ env.RPI_IMAGE_VERSION }}
+          url: ${{ env.RPI_IMAGE_URL }}
+          sha256: ${{ env.RPI_IMAGE_SHA256 }}
+
+      - name: Install systemd-nspawn host packages
+        uses: ./.github/actions/nspawn-deps
+
+      - name: Provision tasks in booted container
+        uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
+        with:
+          image: ${{ steps.image.outputs.image }}
+          shell: bash
+          boot: true
+          user: root
+          args: --bind ${{ github.workspace }}:/workspace
+          run: |
+            set -euo pipefail
+            cd /workspace
+            bash ci/provision.sh /workspace

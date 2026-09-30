@@ -1,10 +1,21 @@
 name: Flash Script Tests
 
+# Only the PowerShell flasher and its tests are checked here.
 on:
   pull_request:
+    paths:
+      - 'host/flash.ps1'
+      - 'ci/test-flash.ps1'
+      - 'PSScriptAnalyzerSettings.psd1'
+      - '.github/workflows/test-flash.yml'
   push:
     branches:
       - main
+    paths:
+      - 'host/flash.ps1'
+      - 'ci/test-flash.ps1'
+      - 'PSScriptAnalyzerSettings.psd1'
+      - '.github/workflows/test-flash.yml'
   workflow_dispatch:
 
 permissions:
