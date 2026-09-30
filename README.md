@@ -115,7 +115,8 @@ Docker images when a task needs them:
   (`tasks/tailscale.sh`)
 - [Docker Engine](https://www.docker.com/) - installed from Docker's apt
   repository (`tasks/docker.sh`)
-- [Netdata](https://www.netdata.cloud/) - apt package (`tasks/monitoring.sh`)
+- [Netdata](https://www.netdata.cloud/) - apt package, or Netdata's own apt
+  repository on releases that no longer ship it (`tasks/monitoring.sh`)
 - [nginx](https://nginx.org/) - apt package (`tasks/web.sh`)
 - [Samba](https://www.samba.org/) - apt package (`tasks/samba.sh`)
 - [fail2ban](https://www.fail2ban.org/) - apt package (`tasks/base.sh`)

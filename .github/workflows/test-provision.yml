@@ -131,14 +131,16 @@ jobs:
           sudo mkdir -p /tmp/probe
           dev="$(sudo losetup -fP --show "$IMG")"
           sudo mount -o ro "${dev}p2" /tmp/probe
-          ls /tmp/probe/usr/lib/userconf-pi /tmp/probe/usr/lib/raspberrypi-sys-mods 2>&1 || true
-          find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd -name '*ssh*' -o -name '*userconf*' -o -name '*cloud*' -o -name '*firstboot*' 2>/dev/null | head -n 60
-          grep -E '^(Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|netdata|rpi-cloud-init-mods))' /tmp/probe/var/lib/dpkg/status || true
-          sudo mount -o ro "${dev}p1" /tmp/probe/boot/firmware 2>/dev/null || sudo mount -o ro "${dev}p1" /mnt
-          find /tmp/probe/boot/firmware /mnt -maxdepth 1 2>/dev/null | head -n 80
-          cat /tmp/probe/boot/firmware/cmdline.txt /mnt/cmdline.txt 2>/dev/null || true
-          sudo umount -R /tmp/probe /mnt 2>/dev/null || true
+          {
+            grep -hE '^PRETTY_NAME' /tmp/probe/etc/os-release
+            grep -E '^Package: (userconf-pi|raspberrypi-sys-mods|cloud-init|rpi-cloud-init-mods|netdata)$' /tmp/probe/var/lib/dpkg/status
+            find /tmp/probe/etc/systemd /tmp/probe/usr/lib/systemd /tmp/probe/lib/systemd \( -name '*sshswitch*' -o -name '*userconf*' \) 2>/dev/null | sed 's#/tmp/probe##'
+          } > probe.txt 2>&1
+          sudo umount /tmp/probe
           sudo losetup -d "$dev"
+          cat probe.txt
+          body="$(tr '\n' '|' < probe.txt)"
+          echo "::notice title=image probe ${{ matrix.release }}::${body}"
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
