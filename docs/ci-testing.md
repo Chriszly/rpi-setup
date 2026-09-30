@@ -183,7 +183,9 @@ The two layers then differ in how they get the repo into the OS:
   (QEMU's `raspi4b` has no working networking yet).
 - **arm64 hosted runners are avoided.** GitHub's hosted arm64 runners have a
   spontaneous-shutdown bug with *booted* nspawn containers, so the workflow
-  deliberately runs both provision jobs on `ubuntu-latest` (x86_64).
+  deliberately runs both provision jobs on `ubuntu-latest` (x86_64). Re-checked on
+  `ubuntu-24.04-arm` on 2026-09-30: the image boots in about a second, then
+  systemd shuts the container down right after the login prompt.
 - **`pihole` installer is headless.** With `PIHOLE_CONFIRM=yes` and no TTY the
   official installer proceeds with defaults; if a future installer version
   starts requiring dialogs, `pihole` may need to be excluded like `tailscale`.
