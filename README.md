@@ -57,6 +57,7 @@ firmware updates take effect.
 | `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
 | `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | none needed (needs `docker`) |
 | `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` (needs `docker`, 64-bit OS) |
+| `firewall`   | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
 
 Each task prints the address to open when it finishes. Tasks are plain bash
 scripts inside `tasks/` - add your own by dropping in a file that appends to
