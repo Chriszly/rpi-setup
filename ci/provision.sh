@@ -173,7 +173,7 @@ unsandbox_in_container() {
     local unit=netdata.service frag
     frag="$(systemctl show -P FragmentPath "$unit" 2>/dev/null)" || return 0
     [[ -n "$frag" && -f "$frag" && "$frag" != /etc/* ]] || return 0
-    grep -Ev '^[[:space:]]*(Protect[A-Za-z]*|Private[A-Za-z]*|ProcSubset|LogNamespace|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountAPIVFS|RestrictFileSystems)=' \
+    grep -Ev '^[[:space:]]*(Protect[A-Za-z]*|Private[A-Za-z]*|ProcSubset|LogNamespace|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ReadWriteDirectories|ReadOnlyDirectories|InaccessibleDirectories|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountAPIVFS|RestrictFileSystems)=' \
         "$frag" >"/etc/systemd/system/$unit"
     echo "=== CI: using an unsandboxed copy of $frag ==="
     systemctl daemon-reload
