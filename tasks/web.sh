@@ -108,8 +108,9 @@ run_web_container() {
   # Port: WEB_PORT, else the one used so far (container or native nginx),
   # else 80, or 8080 when something other than nginx (Pi-hole) holds 80.
   if [[ -z "$port" ]]; then
-    port="$(nginx_site_port "$dir/conf/default.conf")"
-    [[ -n "$port" ]] || port="$(nginx_site_port "$native")"
+    # nginx_site_port fails (sed: no such file) when the file is missing.
+    port="$(nginx_site_port "$dir/conf/default.conf" || true)"
+    [[ -n "$port" ]] || port="$(nginx_site_port "$native" || true)"
     if [[ -z "$port" ]]; then
       port=80
       owner="$(port_owner 80)" || owner=""
@@ -151,7 +152,8 @@ run_web_container() {
 # host has it; nginx will not start on a missing address family).
 web_container_site() {
   local v6=""
-  [[ ! -s /proc/net/if_inet6 ]] || v6="    listen [::]:$1;"
+  # /proc files report size 0, so test the content, not -s.
+  [[ -z "$(cat /proc/net/if_inet6 2>/dev/null)" ]] || v6="    listen [::]:$1;"
   cat <<EOF
 # Managed by rpi-setup (tasks/web.sh, WEB_* settings).
 server {
