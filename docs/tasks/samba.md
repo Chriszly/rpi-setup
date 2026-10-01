@@ -16,6 +16,8 @@ sudo bash setup.sh samba
 | `SAMBA_SHARE_NAME` | `nas-share` | Share name, as in `\\<pi>\nas-share`. Letters, digits, `.`, `_`, `-`; not `global`, `homes` or `printers`. |
 | `SAMBA_SHARE_PATH` | `<home of SAMBA_USER>/<SAMBA_SHARE_NAME>` | Folder to share (absolute path). Created if missing. |
 | `SAMBA_READ_ONLY` | `no` | `yes` makes the share read-only. |
+| `SAMBA_DOCKER` | `no` | `yes` runs Samba in its own Docker container instead of the apt package ([below](#run-it-in-docker)). |
+| `SAMBA_IMAGE` | `crazymax/samba:latest` | Docker image for `SAMBA_DOCKER=yes`. |
 
 ## What it installs and changes
 
@@ -31,6 +33,21 @@ sudo bash setup.sh samba
   Linux: `smb://<pi>/nas-share` in the file manager.
 - Log in as `SAMBA_USER` with the SMB password. A generated one is in
   `/var/lib/rpi-setup/secrets/samba.env` (root only).
+
+## Run it in Docker
+
+With `SAMBA_DOCKER=yes` the task runs Samba from `SAMBA_IMAGE` in a container
+named `samba` on the host network (port 445). Docker is installed first if it
+is missing.
+
+- The share folder stays where it is; the container's settings live in
+  `/opt/samba`. Files keep the owner `SAMBA_USER`, which cannot be `root` here.
+- A native smbd is stopped (its package stays). Its password hash cannot be
+  copied, so the first switch needs `SAMBA_PASSWORD` set once (it can be the
+  same password); the task says so.
+- If the container does not stay up, the native smbd is started again.
+  `SAMBA_DOCKER=no` switches back.
+- The `firewall` task does not detect the container yet (it looks for the native samba package), so it does not open the Samba ports for it; add `445/tcp` to `FIREWALL_EXTRA_PORTS` until it does.
 
 ## Good to know
 

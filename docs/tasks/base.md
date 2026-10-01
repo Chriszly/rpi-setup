@@ -30,7 +30,7 @@ Every setting is optional; an empty value means the default.
 | `BASE_AUTO_UPDATES` | `yes` | Install security updates every day (unattended-upgrades, Debian security archive only). |
 | `BASE_AUTO_REBOOT` | `no` | Reboot on its own when an automatic update needs it. |
 | `BASE_AUTO_REBOOT_TIME` | `03:30` | Time of that reboot, `HH:MM`. |
-| `BASE_SSH_PASSWORD_AUTH` | `yes` | `no` allows SSH key login only. The task refuses unless your user already has a key in `~/.ssh/authorized_keys`, so you cannot lock yourself out. |
+| `BASE_SSH_PASSWORD_AUTH` | `yes` | `no` allows SSH key login only. The task refuses unless your user already has an SSH key set up (`~/.ssh/authorized_keys`, or the key from the flash scripts), so you cannot lock yourself out. |
 | `BASE_JOURNAL_MAX_SIZE` | `100M` | Disk space the system journal may use (`50M`, `1G`, ...); `no` keeps the journald default. |
 | `BASE_PCIE_GEN3` | `no` | Pi 5 only: run the PCIe slot at Gen 3 for an NVMe HAT (about twice the speed, not officially certified). |
 | `BASE_PI5_4K_KERNEL` | `no` | Pi 5 only: boot the 4K-page kernel instead of the default 16K-page one. Only needed when a program or container crashes with page-size or jemalloc errors. |
@@ -69,8 +69,8 @@ and re-run.
   security updates find nothing; the task warns about it.
 - Kernel and firmware come from Raspberry Pi's own archive, not the security
   archive. Keep them current with `sudo bash update.sh` or a `base` re-run.
-- `BASE_SSH_PASSWORD_AUTH=no` looks for your key in `~/.ssh/authorized_keys`
-  only. A key the flash scripts put on the card (`-a`) lives in
-  `/etc/ssh/authorized_keys/<user>`, so run `ssh-copy-id <user>@<pi>` from
-  your PC first.
+- `BASE_SSH_PASSWORD_AUTH=no` accepts a key in any file sshd reads for your
+  user: `~/.ssh/authorized_keys`, or `/etc/ssh/authorized_keys/<user>` where
+  the flash scripts put the key from `-a`. Without one, add it from your PC
+  with `ssh-copy-id <user>@<pi>`.
 - Check fail2ban with `sudo fail2ban-client status sshd`.

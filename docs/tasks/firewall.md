@@ -57,4 +57,7 @@ sudo systemctl disable --now rpi-setup-firewall     # turn it off
 - Ports published by Docker containers (TeamSpeak's) are forwarded by Docker
   before these rules see them, so the firewall does not limit them. The task
   lists them when it runs.
+- Services switched to Docker with `<TASK>_DOCKER=yes` (web, monitoring,
+  pihole, samba) are not detected yet; open their ports with
+  `FIREWALL_EXTRA_PORTS`. NetAlertX and TeamSpeak are detected.
 - Inside a container or CI the rules are generated and checked but not loaded.

@@ -141,6 +141,15 @@ instead of installing it with apt. Set it to `yes` and run the task again:
   does not stay up, the native service is started again.
 - Setting it back to `no` stops the container and starts the native service.
 
+Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
+[`monitoring`](docs/tasks/monitoring.md#run-it-in-docker),
+[`pihole`](docs/tasks/pihole.md#run-it-in-docker),
+[`samba`](docs/tasks/samba.md#run-it-in-docker) and
+[`tailscale`](docs/tasks/tailscale.md#run-it-in-docker) (native recommended).
+`netalertx` and `teamspeak` always run in Docker; `base`, `docker`, `network`,
+`backup` and `firewall` always run natively. The `firewall` task does not
+detect these containers yet: open their ports with `FIREWALL_EXTRA_PORTS`.
+
 ## Raspberry Pi 5
 
 The Pi 5 (and Pi 500 / CM5) needs Raspberry Pi OS **Bookworm or newer**; the

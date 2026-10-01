@@ -36,6 +36,6 @@ flags only; see the guides.
   your shell history.
 - On Trixie images the settings are written as cloud-init files, on Bookworm
   as a one-time `firstrun.sh` (the Pi reboots once on first boot).
-- The SSH key is stored in `/etc/ssh/authorized_keys/<user>`. The `base`
-  task's `BASE_SSH_PASSWORD_AUTH=no` only looks in `~/.ssh/authorized_keys`,
-  so copy the key there too first (`ssh-copy-id <user>@<pi>` from your PC).
+- The SSH key is stored in `/etc/ssh/authorized_keys/<user>` (read by sshd
+  in addition to `~/.ssh/authorized_keys`). It is enough for the `base`
+  task's `BASE_SSH_PASSWORD_AUTH=no`.
