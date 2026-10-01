@@ -7,12 +7,13 @@ TASKS+=("samba|Samba NAS share (read-write, per-user password)")
 run_samba() {
   apt_install samba
 
-  local u dir
+  local u dir home
   u="$(real_user)"
-  [[ "$u" == "root" ]] && { warn 'Recommend running via sudo as normal user'; u="root"; }
-  dir="/home/${u}/nas-share"
-  mkdir -p "$dir"
-  chown "$u:$u" "$dir"
+  if [[ "$u" == "root" ]]; then warn 'Recommend running via sudo as normal user'; fi
+  home="$(getent passwd "$u" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || die "Could not find the home directory of '$u'"
+  dir="${home}/nas-share"
+  install -d -m 0755 -o "$u" -g "$(id -gn "$u")" "$dir"
 
   local conf=/etc/samba/smb.conf
   local added=0
@@ -33,14 +34,19 @@ EOF
   fi
 
   local pw pw2
-  if [[ -n "${SAMBA_PASSWORD:-}" ]]; then
-    pw="${SAMBA_PASSWORD}"
+  if [[ -z "${SAMBA_PASSWORD:-}" ]] && pdbedit -L -u "$u" >/dev/null 2>&1; then
+    say "Samba user '${u}' already exists; keeping its password (set SAMBA_PASSWORD to change it)"
   else
-    read -rsp "Samba password for ${u}: " pw; echo
-    read -rsp 'Repeat password: ' pw2; echo
-    [[ -n "$pw" && "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
+    if [[ -n "${SAMBA_PASSWORD:-}" ]]; then
+      pw="${SAMBA_PASSWORD}"
+    else
+      [[ -t 0 ]] || die 'No terminal to ask for the Samba password; set SAMBA_PASSWORD=... and re-run'
+      read -rsp "Samba password for ${u}: " pw; echo
+      read -rsp 'Repeat password: ' pw2; echo
+      [[ -n "$pw" && "$pw" == "$pw2" ]] || die 'Passwords empty or do not match'
+    fi
+    (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
   fi
-  (echo "$pw"; echo "$pw" ) | smbpasswd -s -a "$u"
 
   systemctl enable --now smbd
   if [[ $added -eq 1 ]]; then

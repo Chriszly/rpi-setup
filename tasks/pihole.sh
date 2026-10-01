@@ -6,7 +6,7 @@ TASKS+=("pihole|Pi-hole ad blocker (official installer - interactive)")
 
 run_pihole() {
   if command -v pihole >/dev/null 2>&1; then
-    say "Pi-hole is already installed (run 'pihole -d' to debug)"
+    say "Pi-hole is already installed - web admin: $(pihole_admin_url) (run 'pihole -d' to debug)"
     return
   fi
   warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
@@ -17,7 +17,7 @@ run_pihole() {
     [[ "$ans" == "yes" ]] || { warn 'Skipped Pi-hole install.'; return; }
   fi
 
-  if [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; then
+  if in_container; then
     warn 'Pi-hole installer is interactive and not supported in container environments; skipping'
     return
   else
@@ -26,8 +26,21 @@ run_pihole() {
   fi
 
   if command -v pihole >/dev/null 2>&1; then
-    say "Pi-hole installed - web admin: http://$(hostname)/admin"
+    say "Pi-hole installed - web admin: $(pihole_admin_url)"
+    info 'Set the admin password with: sudo pihole setpassword'
   else
     warn 'Pi-hole installer did not complete'
+  fi
+}
+
+# Pi-hole v6 serves its admin UI from pihole-FTL, on port 80 unless another
+# web server (e.g. the "web" task's nginx) holds it, then on 8080.
+pihole_admin_url() {
+  local port=""
+  port="$(pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || true
+  if [[ -z "$port" || "$port" == 80 ]]; then
+    printf 'http://%s/admin\n' "$(hostname)"
+  else
+    printf 'http://%s:%s/admin\n' "$(hostname)" "$port"
   fi
 }

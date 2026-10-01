@@ -6,6 +6,14 @@ TASKS+=("docker|Docker Engine and Docker Compose")
 
 run_docker() {
   if command -v docker >/dev/null 2>&1; then
+    if ! docker compose version >/dev/null 2>&1; then
+      # Docker from another source (e.g. Debian's docker.io) without Compose v2.
+      info 'Docker is installed but the Compose plugin is missing; installing it'
+      apt_install docker-compose-plugin 2>/dev/null || apt_install docker-compose ||
+        die 'Could not install Docker Compose. Remove the existing Docker packages and re-run: sudo bash setup.sh docker'
+      docker compose version >/dev/null 2>&1 || die 'Docker Compose is still unavailable after installing it.'
+    fi
+    systemctl enable --now docker 2>/dev/null || true
     say "Docker is already installed ($(docker --version 2>/dev/null || true))"
     return
   fi
@@ -24,8 +32,8 @@ run_docker() {
   chmod a+r /etc/apt/keyrings/docker.gpg
   echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${os_id} ${vcode} stable" >/etc/apt/sources.list.d/docker.list
 
-  apt_update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  apt_update_now
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl daemon-reload || true
   systemctl enable --now docker || warn 'Docker installed but service not started; run "systemctl enable --now docker" after reboot or re-login.'
 

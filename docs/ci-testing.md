@@ -17,7 +17,7 @@ quirks). The workflow uses several increasingly faithful layers:
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
 | `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
-| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container                | high     | minutes |
+| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container, latest release and Bookworm | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
 - **`syntax`** and **`unit`** are fast pre-checks; the three provisioning jobs
@@ -39,11 +39,15 @@ quirks). The workflow uses several increasingly faithful layers:
   whenever a task change touches hardware-dependent behavior. It is the only
   job that runs the Docker tasks on arm64.
 
+Changes that touch only Markdown, `docs/` or `LICENSE` skip this workflow
+(`paths-ignore`); they cannot change what provisioning does.
+
 The two flash-script workflows are separate:
 [`test-flash.yml`](../.github/workflows/test-flash.yml) parses and lints
 `host/flash.ps1` with PSScriptAnalyzer (rule exclusions live in
 [`PSScriptAnalyzerSettings.psd1`](../PSScriptAnalyzerSettings.psd1)) and runs
-`ci/test-flash.ps1`; `pr-template-validation.yml` checks the PR description.
+`ci/test-flash.ps1`, and only runs when one of those files (or the workflow
+itself) changes; `pr-template-validation.yml` checks the PR description.
 
 ## What runs
 
@@ -53,7 +57,7 @@ is the single source of truth for the task list and the checks. It selects a
 
 | Profile     | Used by          | Tasks                                                              | Verified                                                         |
 |-------------|------------------|--------------------------------------------------------------------|------------------------------------------------------------------|
-| `container` | `provision-gate` | `base samba web monitoring pihole`                                 | `smbd nginx netdata fail2ban` active; Netdata on :19999          |
+| `container` | `provision-gate` | `base samba web monitoring pihole`                                 | `smbd nginx netdata fail2ban` active, `ssh` enabled; Netdata :19999 and nginx :80 |
 | `full`      | `provision-qemu` | `base docker samba web monitoring pihole netalertx teamspeak`      | above plus `docker` active, both containers running, :20211      |
 | `docker`    | `docker-smoke`   | `docker netalertx teamspeak`                                       | `docker` active, both containers running, NetAlertX on :20211    |
 
@@ -65,10 +69,14 @@ After provisioning, every profile does:
 1. `systemctl is-active` for each service in the profile.
 2. `docker ps` and a running-state check for each expected container.
 3. `curl` against each web endpoint with a retry loop (Netdata and NetAlertX
-   take a while to listen).
+   take a while to listen). Endpoints are requested on the machine's LAN
+   address (`hostname -I`), not `localhost`, so a service that only listens on
+   loopback fails here the way it would for a user on another PC.
 4. An **idempotency re-run** of the same `setup.sh` invocation - every task must
    exit 0 on a second pass (this is what the README promises: "re-running is
-   safe").
+   safe"). The re-run has no `SAMBA_PASSWORD` and no terminal, so `samba` must
+   keep the existing password rather than prompt. Services and endpoints are
+   verified again afterwards.
 
 Any failing check makes the whole run fail, so a red job is a regression to
 fix, not a flake to retry.
@@ -98,34 +106,40 @@ Because the container/VM runs as `root`, `real_user()` resolves to `root`, so
 `samba` configures `/home/root/nas-share` and warns. That is expected and
 acceptable for CI.
 
-## The pinned image
+## The images
 
-Both image-based jobs use the same pinned Raspberry Pi OS Lite (64-bit) image so
-the two layers agree with each other and with the README's "Bookworm or later"
-promise:
+The gate runs as a matrix over two Raspberry Pi OS Lite (64-bit) images,
+matching the README's "Trixie or Bookworm" promise:
 
-```
-2025-05-13-raspios-bookworm-arm64-lite.img.xz
-sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-```
+- **`latest`**: resolved at run time from the
+  [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/),
+  exactly as `host/flash.sh` does, and verified against that release's own
+  `.sha256`. This is the image a user flashes today (currently Trixie), so a
+  new Raspberry Pi OS release that breaks a task shows up on the next PR.
+- **`bookworm`**: pinned, for Pis that are still on Bookworm:
 
-It is pinned to **Bookworm**, not the latest release, because `piqemu-action`
+  ```
+  2025-05-13-raspios-bookworm-arm64-lite.img.xz
+  sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
+  ```
+
+`provision-qemu` uses the pinned Bookworm image only, because `piqemu-action`
 builds a Bookworm-specific patched DTB (it merges the `disable-bt` overlay to
-make the emulated Pi boot); newer images (e.g. Trixie) are not yet compatible.
-The version, URL and SHA-256 live in the `env:` block at the top of the
-workflow and are passed to the shared
-[`prepare-image`](../.github/actions/prepare-image/action.yml) composite action.
+make the emulated Pi boot); Trixie images are not yet compatible with it. The
+gate's images live in the `provision-gate` job's `matrix.include`; the QEMU
+image in the `env:` block at the top of the workflow. Both go through the
+shared [`prepare-image`](../.github/actions/prepare-image/action.yml)
+composite action, which accepts `version: latest` or a pinned
+`version`/`url`/`sha256`.
 
-### Bumping the image
+### Bumping the pinned image
 
 1. Pick a new image and note its `.sha256` from the
    [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/).
-   Example (latest at the time of writing):
-   `2026-06-18-raspios-trixie-arm64-lite.img.xz`,
-   sha256 `acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3`.
-2. Update `RPI_IMAGE_VERSION`, `RPI_IMAGE_URL` and `RPI_IMAGE_SHA256` in
-   `.github/workflows/test-provision.yml`. The cache key is derived from
-   `RPI_IMAGE_VERSION`, so a fresh image is downloaded automatically.
+2. Update the `bookworm` entry of the `provision-gate` matrix and
+   `RPI_IMAGE_VERSION`, `RPI_IMAGE_URL`, `RPI_IMAGE_SHA256` in
+   `.github/workflows/test-provision.yml`. The cache key is derived from the
+   version, so a fresh image is downloaded automatically.
 3. If moving off Bookworm, first confirm `piqemu-action` supports the new
    image (its DTB build script is Bookworm-specific) and that the image's
    partition layout/boot behavior still matches nspawn/QEMU.
@@ -144,6 +158,13 @@ The `prepare-image` composite action does the same thing for both jobs:
    `resize2fs` on a loop device). The stock image has only ~1-2 GB free, which
    is too small for `apt upgrade` plus the `netalertx`/`teamspeak` images.
 
+Before booting, the gate installs the host packages `pinspawn-action` needs
+(`systemd-container`, `qemu-user-static`, `binfmt-support`) through the
+[`nspawn-deps`](../.github/actions/nspawn-deps/action.yml) action, which caches
+their `.deb` files keyed on the runner image. The runner's Ubuntu mirror serves
+them at under 120 kB/s, so letting `pinspawn-action` download them cost 2-4
+minutes per run.
+
 The two layers then differ in how they get the repo into the OS:
 
 - **gate**: `--bind ${{ github.workspace }}:/workspace` is passed to
@@ -154,10 +175,21 @@ The two layers then differ in how they get the repo into the OS:
 
 ## Known limitations
 
+- **No first-boot test.** The gate only checks that the image still enables
+  `userconfig.service` and `sshswitch.service`, the services that read the
+  `userconf.txt` and `ssh` files `host/flash.sh` and `host/flash.ps1` write
+  (true for Bookworm and for Trixie, which also ships cloud-init). The first
+  boot itself is only tested on real hardware.
 - **Not a real Pi in the gate.** `is_pi()` is false inside the nspawn
   container, so `setup.sh` prints "This does not appear to be a Raspberry Pi"
   and hardware-only behavior (EEPROM update, `raspi-config`) is skipped by the
   tasks themselves. The QEMU job also lacks real Pi hardware, but is closer.
+- **No systemd sandboxing in the gate.** Units that use mount-namespace
+  sandboxing (`ProtectSystem=`, `PrivateTmp=`, `LogNamespace=` ...) fail with
+  "Failed at step NAMESPACE" in the nspawn container; `systemd-logind` does
+  too. `ci/provision.sh` replaces the `netdata` unit (whose upstream package, used
+  on Trixie, is sandboxed) with a copy minus those lines, inside containers
+  only.
 - **No Docker in the gate.** Docker cannot run inside the nspawn container, so
   the `container` profile skips `docker`, `netalertx` and `teamspeak`. Those
   tasks get x86 coverage from `docker-smoke` and arm64 coverage only from the
@@ -172,7 +204,9 @@ The two layers then differ in how they get the repo into the OS:
   (QEMU's `raspi4b` has no working networking yet).
 - **arm64 hosted runners are avoided.** GitHub's hosted arm64 runners have a
   spontaneous-shutdown bug with *booted* nspawn containers, so the workflow
-  deliberately runs both provision jobs on `ubuntu-latest` (x86_64).
+  deliberately runs both provision jobs on `ubuntu-latest` (x86_64). Re-checked on
+  `ubuntu-24.04-arm` on 2026-09-30: the image boots in about a second, then
+  systemd shuts the container down right after the login prompt.
 - **`pihole` installer is headless.** With `PIHOLE_CONFIRM=yes` and no TTY the
   official installer proceeds with defaults; if a future installer version
   starts requiring dialogs, `pihole` may need to be excluded like `tailscale`.

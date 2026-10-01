@@ -28,25 +28,30 @@ if [[ -z "$PROFILE" ]]; then
     if in_container; then PROFILE=container; else PROFILE=full; fi
 fi
 
-# Endpoints are "url:max_tries" (5 s between tries).
+# Endpoints are "url:max_tries" (5 s between tries). LANIP is replaced with
+# the machine's first LAN address, so a service that only listens on
+# localhost fails the check the way it would fail for a user on another PC.
 case "$PROFILE" in
     container)
         TASKS=(base samba web monitoring pihole)
         SERVICES=(smbd nginx netdata fail2ban)
+        ENABLED=(ssh)
         CONTAINERS=()
-        ENDPOINTS=("http://localhost:19999:60")
+        ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12")
         ;;
     full)
         TASKS=(base docker samba web monitoring pihole netalertx teamspeak)
         SERVICES=(docker smbd nginx netdata fail2ban)
+        ENABLED=(ssh)
         CONTAINERS=(netalertx teamspeak)
-        ENDPOINTS=("http://localhost:19999:60" "http://localhost:20211:120")
+        ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12" "http://LANIP:20211:120")
         ;;
     docker)
         TASKS=(docker netalertx teamspeak)
         SERVICES=(docker)
+        ENABLED=()
         CONTAINERS=(netalertx teamspeak)
-        ENDPOINTS=("http://localhost:20211:120")
+        ENDPOINTS=("http://LANIP:20211:120")
         ;;
     *)
         echo "Unknown PROVISION_PROFILE '$PROFILE' (expected container, full or docker)" >&2
@@ -83,19 +88,34 @@ collect_logs() {
 }
 trap collect_logs EXIT
 
+# run_setup WORKDIR [rerun]: the re-run leaves SAMBA_PASSWORD unset and has no
+# terminal, like a user re-running setup.sh from a script: samba must keep the
+# existing password instead of prompting.
 run_setup() {
-    local workdir="$1"
+    local workdir="$1" mode="${2:-}"
     cd "$workdir"
     export PIHOLE_CONFIRM=yes
-    export SAMBA_PASSWORD=testpw
-    bash setup.sh "${TASKS[@]}"
+    if [[ "$mode" == rerun ]]; then
+        env -u SAMBA_PASSWORD bash setup.sh "${TASKS[@]}" </dev/null
+    else
+        SAMBA_PASSWORD=testpw bash setup.sh "${TASKS[@]}" </dev/null
+    fi
 }
 
+# ENABLED units are only checked for "enabled", not "running": in the nspawn
+# gate the guest shares the runner's network, where port 22 is already taken.
 verify_services() {
     echo "=== Verifying services ==="
-    local svc
+    local svc state
     for svc in "${SERVICES[@]}"; do
         systemctl is-active "$svc"
+    done
+    for svc in "${ENABLED[@]}"; do
+        if ! state="$(systemctl is-enabled "$svc" 2>&1)"; then
+            echo "FAILED: $svc is not enabled ($state)" >&2
+            return 1
+        fi
+        echo "OK: $svc is $state"
     done
 }
 
@@ -131,12 +151,33 @@ wait_url() {
 
 verify_endpoints() {
     echo "=== Verifying web endpoints ==="
-    local endpoint url tries
+    local endpoint url tries lanip
+    lanip="$(hostname -I | awk '{print $1}')"
+    [[ -n "$lanip" ]] || { echo "FAILED: no LAN address found (hostname -I)" >&2; return 1; }
     for endpoint in "${ENDPOINTS[@]}"; do
         url="${endpoint%:*}"
+        url="${url/LANIP/$lanip}"
         tries="${endpoint##*:}"
         wait_url "$url" "$tries"
     done
+}
+
+# The nspawn gate (x86 runner, arm64 guest under qemu-user) cannot set up the
+# mount namespaces that systemd sandboxing options need: units using them die
+# with "Failed at step NAMESPACE" (systemd-logind does too). Netdata's own
+# package, which "monitoring" installs on Trixie, is sandboxed that way, so in
+# containers only, replace its unit with a copy minus the sandboxing lines.
+# Real Pis and the QEMU VM keep the unit as shipped.
+unsandbox_in_container() {
+    in_container || return 0
+    local unit=netdata.service frag
+    frag="$(systemctl show -P FragmentPath "$unit" 2>/dev/null)" || return 0
+    [[ -n "$frag" && -f "$frag" && "$frag" != /etc/* ]] || return 0
+    grep -Ev '^[[:space:]]*(Protect[A-Za-z]*|Private[A-Za-z]*|ProcSubset|LogNamespace|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ReadWriteDirectories|ReadOnlyDirectories|InaccessibleDirectories|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountAPIVFS|RestrictFileSystems)=' \
+        "$frag" >"/etc/systemd/system/$unit"
+    echo "=== CI: using an unsandboxed copy of $frag ==="
+    systemctl daemon-reload
+    systemctl restart "$unit" || true
 }
 
 main() {
@@ -148,12 +189,15 @@ main() {
 
     echo "=== Provisioning ==="
     run_setup "$workdir"
+    unsandbox_in_container
     verify_services
     verify_containers
     verify_endpoints
 
     echo "=== Idempotency re-run ==="
-    run_setup "$workdir"
+    run_setup "$workdir" rerun
+    verify_services
+    verify_endpoints
 
     echo "=== All checks passed ==="
 }

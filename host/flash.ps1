@@ -71,15 +71,15 @@ function Get-ImagerPath {
     if (Get-Command rpi-imager-cli -ErrorAction SilentlyContinue) { $candidates += (Get-Command rpi-imager-cli).Source }
     if (Get-Command rpi-imager -ErrorAction SilentlyContinue)     { $candidates += (Get-Command rpi-imager).Source }
     $candidates += @(
-        "$env:ProgramFiles(x86)\Raspberry Pi Imager\rpi-imager.exe",
+        "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager.exe",
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe",
-        "$env:ProgramFiles(x86)\Raspberry Pi Imager\rpi-imager-cli.cmd",
+        "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager-cli.cmd",
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager-cli.cmd",
-        "$env:ProgramFiles(x86)\Raspberry Pi Ltd\Imager\rpi-imager.exe",
+        "${env:ProgramFiles(x86)}\Raspberry Pi Ltd\Imager\rpi-imager.exe",
         "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager.exe",
-        "$env:ProgramFiles(x86)\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd",
+        "${env:ProgramFiles(x86)}\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd",
         "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd"
     )
     foreach ($p in $candidates) {
@@ -340,7 +340,7 @@ function Find-OpenSsl {
     if ($c) { return $c.Source }
     $paths = @(
         "$env:ProgramFiles\Git\usr\bin\openssl.exe",
-        "$env:ProgramFiles(x86)\Git\usr\bin\openssl.exe",
+        "${env:ProgramFiles(x86)}\Git\usr\bin\openssl.exe",
         "$env:LOCALAPPDATA\Programs\Git\usr\bin\openssl.exe"
     )
     foreach ($p in $paths) { if (Test-Path -LiteralPath $p) { return $p } }
