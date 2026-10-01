@@ -9,6 +9,8 @@ run_base() {
   : "${BASE_UPGRADE:=yes}" "${BASE_EEPROM_UPDATE:=yes}"
   : "${BASE_FAIL2BAN_MAXRETRY:=5}" "${BASE_FAIL2BAN_BANTIME:=1h}"
   : "${BASE_PCIE_GEN3:=no}" "${BASE_PI5_4K_KERNEL:=no}"
+  : "${BASE_AUTO_UPDATES:=yes}" "${BASE_AUTO_REBOOT:=no}" "${BASE_AUTO_REBOOT_TIME:=03:30}"
+  : "${BASE_SSH_PASSWORD_AUTH:=yes}" "${BASE_JOURNAL_MAX_SIZE:=100M}"
   local hostname="${BASE_HOSTNAME:-}" tz="${BASE_TIMEZONE:-}" extra="${BASE_EXTRA_PACKAGES:-}" p
   local -a extra_pkgs=()
 
@@ -27,6 +29,7 @@ run_base() {
   if [[ -n "$tz" && ! -f "/usr/share/zoneinfo/$tz" ]]; then
     die "BASE_TIMEZONE '$tz' is not a known time zone (e.g. Europe/Berlin; list them with: timedatectl list-timezones)"
   fi
+  base_validate_hardening
   if [[ -n "$extra" ]]; then
     read -r -a extra_pkgs <<<"${extra//,/ }"
     for p in "${extra_pkgs[@]}"; do
@@ -73,6 +76,10 @@ run_base() {
 
   base_fail2ban
   systemctl enable --now fail2ban || warn 'fail2ban could not be enabled/started; check its configuration.'
+
+  base_auto_updates
+  base_ssh_hardening
+  base_journal_limit
 
   if [[ -f /run/reboot-required ]] || is_pi; then
     info 'Reboot when convenient (sudo reboot) so kernel and firmware updates take effect.'
@@ -169,4 +176,187 @@ base_fail2ban() {
 # The unmarked jail.local that earlier versions of this task wrote.
 base_is_old_jail() {
   [[ "$(cat "$1")" == $'[sshd]\nenabled = true\nport = ssh\nbackend = systemd\nmaxretry = 5\nbantime = 1h\nfindtime = 10m' ]]
+}
+
+# --- Hardening: security updates, SSH, journal size ------------------------
+
+# Validate the BASE_AUTO_*, BASE_SSH_* and BASE_JOURNAL_* settings. With
+# BASE_SSH_PASSWORD_AUTH=no this also refuses to go on unless the invoking
+# user can log in with a key, so nobody locks themselves out.
+base_validate_hardening() {
+  setting_on BASE_AUTO_UPDATES || true
+  setting_on BASE_AUTO_REBOOT || true
+  setting_on BASE_SSH_PASSWORD_AUTH || true
+  base_valid_time "$BASE_AUTO_REBOOT_TIME" ||
+    die "BASE_AUTO_REBOOT_TIME must be a time of day as HH:MM, e.g. 03:30 (got '$BASE_AUTO_REBOOT_TIME')"
+  base_valid_journal_size "$BASE_JOURNAL_MAX_SIZE" ||
+    die "BASE_JOURNAL_MAX_SIZE must be a size such as 50M, 100M or 1G, or 'no' to keep the journald default (got '$BASE_JOURNAL_MAX_SIZE')"
+  if ! setting_on BASE_SSH_PASSWORD_AUTH; then base_ssh_key_guard "$(real_user)"; fi
+}
+
+# 24-hour HH:MM, e.g. 03:30.
+base_valid_time() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
+
+# A journald size (bytes, or with a K/M/G/T suffix) or "no".
+base_valid_journal_size() { [[ "${1,,}" == no || "$1" =~ ^[1-9][0-9]*[KMGT]?$ ]]; }
+
+# True if file $1 holds at least one public key line (options before the key
+# type are allowed; comments and blank lines do not count).
+base_has_authorized_key() {
+  [[ -s "$1" ]] && grep -Eq '^[^#]*(^|[[:space:]])(ssh-(rsa|ed25519|dss)|ecdsa-sha2-nistp[0-9]+|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)[[:space:]]+AAAA' "$1"
+}
+
+# Die unless user $1 is a regular account with a key in ~/.ssh/authorized_keys.
+# $2 overrides the home directory (for the unit tests).
+base_ssh_key_guard() {
+  local u="$1" home="${2:-}" keys
+  [[ "$u" != root ]] ||
+    die "BASE_SSH_PASSWORD_AUTH=no: run setup with sudo from the account you log in with (root SSH login gets switched off), so its SSH keys can be checked."
+  if [[ -z "$home" ]]; then
+    home="$(getent passwd "$u" | cut -d: -f6)" || true
+  fi
+  [[ -n "$home" ]] || die "BASE_SSH_PASSWORD_AUTH=no: cannot find the home directory of user '$u'."
+  keys="$home/.ssh/authorized_keys"
+  base_has_authorized_key "$keys" ||
+    die "BASE_SSH_PASSWORD_AUTH=no would lock you out: $keys holds no SSH public key. From your PC run 'ssh-copy-id $u@<pi>', check that 'ssh $u@<pi>' logs in without a password, then re-run. Or keep BASE_SSH_PASSWORD_AUTH=yes."
+}
+
+# /etc/apt/apt.conf.d/20auto-upgrades: $1 is 1 (on) or 0 (off).
+base_auto_upgrades_conf() {
+  printf '%s\n' \
+    '// Managed by rpi-setup (tasks/base.sh, BASE_AUTO_UPDATES).' \
+    "APT::Periodic::Update-Package-Lists \"$1\";" \
+    "APT::Periodic::Unattended-Upgrade \"$1\";"
+}
+
+# /etc/apt/apt.conf.d/52rpi-setup-unattended-upgrades. The package's own
+# 50unattended-upgrades also installs Debian point-release updates; this
+# narrows it to the Debian security archive. Raspberry Pi OS has no security
+# suite of its own (kernel and firmware come from archive.raspberrypi.com and
+# are updated by BASE_UPGRADE runs instead). Both origin lists are cleared, so
+# only the patterns below apply.
+base_unattended_conf() {
+  local reboot=false
+  if setting_on BASE_AUTO_REBOOT; then reboot=true; fi
+  # shellcheck disable=SC2016 # ${distro_codename} is expanded by unattended-upgrades
+  printf '%s\n' \
+    '// Managed by rpi-setup (tasks/base.sh, BASE_AUTO_* settings).' \
+    '#clear Unattended-Upgrade::Allowed-Origins;' \
+    '#clear Unattended-Upgrade::Origins-Pattern;' \
+    'Unattended-Upgrade::Origins-Pattern {' \
+    '  "origin=Debian,codename=${distro_codename},label=Debian-Security";' \
+    '  "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";' \
+    '};' \
+    "Unattended-Upgrade::Automatic-Reboot \"$reboot\";" \
+    "Unattended-Upgrade::Automatic-Reboot-Time \"$BASE_AUTO_REBOOT_TIME\";"
+}
+
+base_auto_updates() {
+  local periodic=/etc/apt/apt.conf.d/20auto-upgrades
+  local ours=/etc/apt/apt.conf.d/52rpi-setup-unattended-upgrades reboot=no
+  if ! setting_on BASE_AUTO_UPDATES; then
+    # Switch off only what this task switched on earlier.
+    if [[ -f "$periodic" ]] && grep -q 'Managed by rpi-setup' "$periodic"; then
+      if base_auto_upgrades_conf 0 | write_if_changed "$periodic" 0644; then
+        say 'Automatic security updates switched off (BASE_AUTO_UPDATES=no)'
+      fi
+      rm -f "$ours"
+    else
+      info 'Skipping automatic security updates (BASE_AUTO_UPDATES=no)'
+    fi
+    return 0
+  fi
+  info 'Setting up automatic security updates (unattended-upgrades)'
+  apt_install unattended-upgrades
+  base_auto_upgrades_conf 1 | write_if_changed "$periodic" 0644 || true
+  if setting_on BASE_AUTO_REBOOT; then reboot="yes, at $BASE_AUTO_REBOOT_TIME"; fi
+  if base_unattended_conf | write_if_changed "$ours" 0644; then
+    say "Wrote $ours (reboot after updates: $reboot)"
+  fi
+  if grep -rqs 'raspbian\.raspberrypi' /etc/apt/sources.list /etc/apt/sources.list.d; then
+    warn '32-bit Raspberry Pi OS (Raspbian) has no separate security archive, so automatic security updates find nothing there. Use the 64-bit OS, or re-run "setup.sh base" now and then.'
+  fi
+  if in_container; then
+    info 'Container detected: not starting the apt-daily timers'
+  else
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null ||
+      warn 'Could not enable the apt-daily timers; automatic updates may not run.'
+  fi
+}
+
+# /etc/ssh/sshd_config.d/10-rpi-setup.conf. Debian's sshd_config includes
+# sshd_config.d/*.conf first and sshd keeps the first value it reads, so this
+# file wins over settings further down.
+base_sshd_conf() {
+  printf '%s\n' \
+    '# Managed by rpi-setup (tasks/base.sh, BASE_SSH_PASSWORD_AUTH).' \
+    'PermitRootLogin no'
+  if ! setting_on BASE_SSH_PASSWORD_AUTH; then
+    printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no'
+  fi
+}
+
+base_ssh_hardening() {
+  local f=/etc/ssh/sshd_config.d/10-rpi-setup.conf old="" had=0 eff
+  if [[ -f "$f" ]]; then old="$(cat "$f")"; had=1; fi
+  install -m 0755 -d /etc/ssh/sshd_config.d
+  base_sshd_conf | write_if_changed "$f" 0644 || return 0
+  if ! command -v sshd >/dev/null 2>&1; then
+    info "Wrote $f; the OpenSSH server is not installed, so there is nothing to reload"
+    return 0
+  fi
+  install -m 0755 -d /run/sshd
+  if ! sshd -t; then
+    if (( had )); then printf '%s\n' "$old" >"$f"; else rm -f "$f"; fi
+    die "sshd rejected the new $f, so it was rolled back. Check the SSH configuration with: sudo sshd -t"
+  fi
+  if in_container; then
+    info "Wrote $f; container detected, not reloading ssh"
+  else
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null ||
+      warn 'Could not reload ssh; the new SSH settings apply after: sudo systemctl restart ssh'
+  fi
+  if setting_on BASE_SSH_PASSWORD_AUTH; then
+    say 'SSH: root login off, password login kept (BASE_SSH_PASSWORD_AUTH=yes)'
+    return 0
+  fi
+  eff="$(sshd -T 2>/dev/null | awk '$1 == "passwordauthentication" {print $2}')" || true
+  if [[ -n "$eff" && "$eff" != no ]]; then
+    warn "sshd still allows passwords: /etc/ssh/sshd_config probably lacks 'Include /etc/ssh/sshd_config.d/*.conf' near its top."
+  else
+    say 'SSH: root login off, key-only login (password login switched off)'
+  fi
+}
+
+# /etc/systemd/journald.conf.d/10-rpi-setup.conf; no output means "no file".
+base_journald_conf() {
+  [[ "${BASE_JOURNAL_MAX_SIZE,,}" != no ]] || return 0
+  printf '%s\n' \
+    '# Managed by rpi-setup (tasks/base.sh, BASE_JOURNAL_MAX_SIZE).' \
+    '[Journal]' \
+    "SystemMaxUse=$BASE_JOURNAL_MAX_SIZE"
+}
+
+base_journal_limit() {
+  local f=/etc/systemd/journald.conf.d/10-rpi-setup.conf body changed=no
+  body="$(base_journald_conf)"
+  if [[ -z "$body" ]]; then
+    if [[ -f "$f" ]]; then
+      rm -f "$f"
+      changed=yes
+      say 'Journal size limit removed (BASE_JOURNAL_MAX_SIZE=no)'
+    fi
+  else
+    install -m 0755 -d /etc/systemd/journald.conf.d
+    if printf '%s\n' "$body" | write_if_changed "$f" 0644; then
+      changed=yes
+      say "Journal limited to $BASE_JOURNAL_MAX_SIZE on disk ($f)"
+    fi
+  fi
+  [[ "$changed" == yes ]] || return 0
+  if in_container; then
+    info 'Container detected: not restarting systemd-journald'
+  else
+    systemctl restart systemd-journald || warn 'Could not restart systemd-journald; the journal limit applies after a reboot.'
+  fi
 }
