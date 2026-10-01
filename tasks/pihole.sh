@@ -180,7 +180,7 @@ run_pihole_container() {
   # Admin port: PIHOLE_WEB_PORT, else the one used so far, else 80, or 8080
   # when another web server (the web task's nginx) holds 80.
   if [[ -z "$port" ]]; then
-    port="$(sed -nE 's/^ *FTLCONF_webserver_port: "([0-9]+)o.*/\1/p' "$dir/docker-compose.yml" 2>/dev/null)"
+    port="$(sed -nE 's/^ *FTLCONF_webserver_port: "([0-9]+)o.*/\1/p' "$dir/docker-compose.yml" 2>/dev/null || true)"
     if [[ -z "$port" ]] && command -v pihole-FTL >/dev/null 2>&1; then port="$(pihole_web_port)"; fi
     if [[ -z "$port" ]]; then
       port=80
