@@ -73,6 +73,9 @@ jobs:
       - name: Test setup.sh CLI and menu
         run: sudo bash ci/test-setup.sh
 
+      - name: Test task helpers (ci/test-task-*.sh)
+        run: for t in ci/test-task-*.sh; do [ -e "$t" ] || continue; echo "== $t"; sudo bash "$t"; done
+
   # Exercises the Docker-based tasks on a plain x86 runner. The nspawn gate
   # cannot run Docker, so without this the compose/UID logic in netalertx and
   # teamspeak would only be tested by the manual QEMU job.
