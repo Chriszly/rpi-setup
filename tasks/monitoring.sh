@@ -12,6 +12,17 @@ run_monitoring() {
     die "MONITORING_BIND must be an IPv4 address such as 0.0.0.0 (all) or 127.0.0.1 (got '$MONITORING_BIND')"
   setting_on MONITORING_TELEMETRY || true
 
+  # Netdata's documented opt-out of anonymous usage statistics. Written
+  # before the install, so a fresh Netdata never reports and needs no restart.
+  local optout=/etc/netdata/.opt-out-from-anonymous-statistics changed=0
+  if setting_on MONITORING_TELEMETRY; then
+    if [[ -e "$optout" ]]; then rm -f "$optout"; changed=1; fi
+  elif [[ ! -e "$optout" ]]; then
+    install -m 0755 -d /etc/netdata
+    touch "$optout"
+    if apt_installed netdata; then changed=1; fi
+  fi
+
   if ! apt_installed netdata; then
     apt_update
     if ! apt_has_candidate netdata; then
@@ -25,7 +36,7 @@ run_monitoring() {
   # Debian's netdata package only listens on 127.0.0.1, so the dashboard would
   # be unreachable from other machines. Bind where MONITORING_BIND says
   # (default: all interfaces) and on MONITORING_PORT (idempotent).
-  local conf=/etc/netdata/netdata.conf changed=0
+  local conf=/etc/netdata/netdata.conf
   if netdata_set_bind "$conf" "$MONITORING_BIND"; then
     changed=1
     info "Netdata now listens on $MONITORING_BIND ($conf)"
@@ -33,16 +44,6 @@ run_monitoring() {
   if netdata_set_port "$conf" "$MONITORING_PORT"; then
     changed=1
     info "Netdata now listens on port $MONITORING_PORT ($conf)"
-  fi
-
-  # Netdata's documented opt-out of anonymous usage statistics.
-  local optout=/etc/netdata/.opt-out-from-anonymous-statistics
-  if setting_on MONITORING_TELEMETRY; then
-    [[ ! -e "$optout" ]] || { rm -f "$optout"; changed=1; }
-  elif [[ ! -e "$optout" ]]; then
-    install -m 0755 -d /etc/netdata
-    touch "$optout"
-    changed=1
   fi
 
   systemctl enable --now netdata
