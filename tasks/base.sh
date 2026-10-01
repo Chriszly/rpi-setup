@@ -206,19 +206,45 @@ base_has_authorized_key() {
   [[ -s "$1" ]] && grep -Eq '^[^#]*(^|[[:space:]])(ssh-(rsa|ed25519|dss)|ecdsa-sha2-nistp[0-9]+|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)[[:space:]]+AAAA' "$1"
 }
 
-# Die unless user $1 is a regular account with a key in ~/.ssh/authorized_keys.
-# $2 overrides the home directory (for the unit tests).
+# The AuthorizedKeysFile value sshd uses for user $1, from 'sshd -T' (which
+# also reads the flasher's drop-in that adds /etc/ssh/authorized_keys/%u).
+# Falls back to the OpenSSH default when sshd cannot report it.
+base_sshd_keys_setting() {
+  local line
+  line="$(sshd -T -C "user=$1,host=localhost,addr=127.0.0.1" 2>/dev/null | grep -i '^authorizedkeysfile ')" || true
+  if [[ -n "$line" ]]; then echo "${line#* }"; else echo '.ssh/authorized_keys .ssh/authorized_keys2'; fi
+}
+
+# Print the key files of AuthorizedKeysFile value $3 for user $1 with home
+# $2, one per line: %h, %u and %% expanded, relative paths taken from $2.
+base_authorized_keys_files() {
+  local u="$1" home="$2" f
+  for f in $3; do
+    [[ "$f" == none ]] && continue
+    f="${f//%%/$'\x01'}"; f="${f//%h/$home}"; f="${f//%u/$u}"; f="${f//$'\x01'/%}"
+    [[ "$f" == /* ]] || f="$home/$f"
+    echo "$f"
+  done
+}
+
+# Die unless user $1 is a regular account with a key in one of the files sshd
+# reads for it (~/.ssh/authorized_keys, or /etc/ssh/authorized_keys/<user>
+# on a card written by host/flash.sh with an SSH key). $2 overrides the home
+# directory and $3 the AuthorizedKeysFile value (for the unit tests).
 base_ssh_key_guard() {
-  local u="$1" home="${2:-}" keys
+  local u="$1" home="${2:-}" setting="${3:-}" f files=()
   [[ "$u" != root ]] ||
     die "BASE_SSH_PASSWORD_AUTH=no: run setup with sudo from the account you log in with (root SSH login gets switched off), so its SSH keys can be checked."
   if [[ -z "$home" ]]; then
     home="$(getent passwd "$u" | cut -d: -f6)" || true
   fi
   [[ -n "$home" ]] || die "BASE_SSH_PASSWORD_AUTH=no: cannot find the home directory of user '$u'."
-  keys="$home/.ssh/authorized_keys"
-  base_has_authorized_key "$keys" ||
-    die "BASE_SSH_PASSWORD_AUTH=no would lock you out: $keys holds no SSH public key. From your PC run 'ssh-copy-id $u@<pi>', check that 'ssh $u@<pi>' logs in without a password, then re-run. Or keep BASE_SSH_PASSWORD_AUTH=yes."
+  [[ -n "$setting" ]] || setting="$(base_sshd_keys_setting "$u")"
+  mapfile -t files < <(base_authorized_keys_files "$u" "$home" "$setting")
+  for f in "${files[@]}"; do
+    base_has_authorized_key "$f" && return 0
+  done
+  die "BASE_SSH_PASSWORD_AUTH=no would lock you out: none of ${files[*]:-the key files} holds an SSH public key. From your PC run 'ssh-copy-id $u@<pi>', check that 'ssh $u@<pi>' logs in without a password, then re-run. Or keep BASE_SSH_PASSWORD_AUTH=yes."
 }
 
 # /etc/apt/apt.conf.d/20auto-upgrades: $1 is 1 (on) or 0 (off).
