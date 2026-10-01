@@ -31,7 +31,8 @@ The private repository's layout, workflow and step-by-step setup are in
   GitHub publishes, running as a systemd service. It updates itself.
 - `/usr/local/sbin/rpi-setup-deploy`, the only command `rpi-runner` may run as
   root (`/etc/sudoers.d/rpi-setup-runner`). It accepts `--branch` (only from
-  `RUNNER_BRANCHES`), `--config` (a file the caller can read) and `--tasks`.
+  `RUNNER_BRANCHES`), `--config` (a file the caller can read) and `--tasks`
+  (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`).
 - `setup.sh` records every task that finished in
   `/var/lib/rpi-setup/tasks.done`; a deploy with no tasks reruns those.
 
@@ -41,7 +42,10 @@ The private repository's layout, workflow and step-by-step setup are in
 2. Installs `pis/<pi>/rpi-setup.env` from the private repository as
    `/etc/rpi-setup/rpi-setup.env` (root, 0600), if the workflow's *settings*
    box is ticked.
-3. Runs `setup.sh` with the chosen tasks. Only the run summary goes to the
+3. Runs `setup.sh` with the chosen tasks, as if the owner of the checkout
+   had started it with sudo (`SUDO_USER`), so tasks that set up "your" user
+   (docker group, SSH keys, Samba user) pick that person and never
+   `rpi-runner`. Only the run summary goes to the
    workflow log; the full output, which can contain generated passwords,
    stays on the Pi in `/var/log/rpi-setup-deploy/`.
 4. Deletes the private repository's checkout from the Pi.
@@ -57,5 +61,12 @@ You can run the same deploy by hand on the Pi:
   code on the Pi. Make sure `RUNNER_REPO` names a private repository.
 - A deploy stops if the checkout on the Pi has local commits or changes
   (`git -C <checkout> status`).
+- The checkout must belong to your own login user, not `root` or
+  `rpi-runner`; otherwise a deploy stops (`sudo chown -R <you>: <checkout>`).
+- A deploy reads `/etc/rpi-setup/rpi-setup.env`. If your settings are still
+  in the checkout's `config/rpi-setup.env` and the deploy brings none
+  (*settings* box not ticked, no `--config`), it stops instead of running
+  every task with defaults. Move them once:
+  `cd <checkout> && sudo bash setup.sh --move-config`.
 - Remove the runner: `cd /opt/rpi-runner && sudo ./svc.sh uninstall`, then
   delete it at *Settings > Actions > Runners* in the private repository.

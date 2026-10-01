@@ -144,7 +144,9 @@ runner_deploy_script() {
   printf 'DP_CONFIG_DIR=/etc/rpi-setup\n'
   printf 'DP_LOG_DIR=/var/log/rpi-setup-deploy\n'
   printf 'DP_LOCK=/run/rpi-setup-deploy.lock\n'
-  declare -f deploy_run_git deploy_run_args deploy_run_tasks deploy_run_config deploy_run
+  printf 'DP_RUNNER_USER=%q\n' "$RPI_RUNNER_USER"
+  declare -f deploy_run_git deploy_run_args deploy_run_owner deploy_run_check_config \
+    deploy_run_tasks deploy_run_config deploy_run
   printf 'deploy_run "$@"\n'
 }
 
@@ -184,6 +186,11 @@ deploy_run_args() {
     echo "rpi-setup-deploy: task names may only use a-z, 0-9, '-' and '_' (got '$DP_TASKS')" >&2
     return 2
   fi
+  # A word starting with '-' would reach setup.sh as an option (--move-config).
+  if [[ " $DP_TASKS" == *" -"* ]]; then
+    echo "rpi-setup-deploy: task names may not start with '-' (got '$DP_TASKS')" >&2
+    return 2
+  fi
   if [[ -n "$DP_CONFIG" && ! -f "$DP_CONFIG" ]]; then
     echo "rpi-setup-deploy: settings file '$DP_CONFIG' not found" >&2
     return 2
@@ -198,15 +205,44 @@ deploy_run_args() {
   return 0
 }
 
-# Tasks to run: DP_TASKS, else every task that finished on this Pi.
+# The person who owns the Pi: the owner of the checkout. setup.sh runs with
+# SUDO_USER set to them, so tasks that act on "the user" (docker group, SSH
+# keys, samba share user) never pick the runner account or root.
+# shellcheck disable=SC2153  # DP_RUNNER_USER is set at the top of the deploy command
+deploy_run_owner() {
+  local owner
+  owner="$(stat -c %U "$DP_DIR")"
+  if [[ "$owner" == root || "$owner" == "$DP_RUNNER_USER" ]]; then
+    echo "rpi-setup-deploy: $DP_DIR is owned by $owner; it must belong to your own login user (sudo chown -R <you>: $DP_DIR)" >&2
+    return 1
+  fi
+  printf '%s\n' "$owner"
+}
+
+# Without --config, refuse when the settings still live in the checkout:
+# setup.sh reads $DP_CONFIG_DIR and would silently use every default.
+deploy_run_check_config() {
+  [[ -z "$DP_CONFIG" && ! -f "$DP_CONFIG_DIR/rpi-setup.env" && -f "$DP_DIR/config/rpi-setup.env" ]] || return 0
+  echo "rpi-setup-deploy: your settings are in $DP_DIR/config/rpi-setup.env, but a deploy reads $DP_CONFIG_DIR/rpi-setup.env. Move them once on the Pi: cd $DP_DIR && sudo bash setup.sh --move-config (or tick the workflow's settings box / pass --config FILE)" >&2
+  return 1
+}
+
+# Tasks to run: DP_TASKS, else every task that finished on this Pi. Each
+# must exist as tasks/<name>.sh in the (updated) checkout.
 deploy_run_tasks() {
   local -a t
+  local n
   read -r -a t <<<"$DP_TASKS"
-  if [[ ${#t[@]} -gt 0 ]]; then
-    printf '%s\n' "${t[@]}"
-  elif [[ -f "$DP_DONE_FILE" ]]; then
-    grep -E '^[a-z0-9_-]+$' "$DP_DONE_FILE" || true
+  if [[ ${#t[@]} -eq 0 && -f "$DP_DONE_FILE" ]]; then
+    mapfile -t t < <(grep -E '^[a-z0-9_-]+$' "$DP_DONE_FILE" || true)
   fi
+  for n in "${t[@]}"; do
+    if [[ ! -f "$DP_DIR/tasks/$n.sh" ]]; then
+      echo "rpi-setup-deploy: unknown task '$n' (no $DP_DIR/tasks/$n.sh)" >&2
+      return 2
+    fi
+    printf '%s\n' "$n"
+  done
 }
 
 # Install settings file $1 as $DP_CONFIG_DIR/rpi-setup.env (root only).
@@ -220,10 +256,12 @@ deploy_run_config() {
 # to a root-only log on the Pi; only the summary reaches the workflow log.
 deploy_run() {
   deploy_run_args "$@" || return $?
+  local owner old new list log rc=0
+  local -a tasks=()
+  owner="$(deploy_run_owner)" || return 1
+  deploy_run_check_config || return 1
   exec 9>"$DP_LOCK"
   flock -n 9 || { echo 'rpi-setup-deploy: another deploy is running' >&2; return 1; }
-  local old new log rc=0
-  local -a tasks
   deploy_run_git fetch --quiet origin "$DP_BRANCH"
   old="$(deploy_run_git rev-parse HEAD)"
   if [[ "$(deploy_run_git rev-parse --abbrev-ref HEAD)" != "$DP_BRANCH" ]]; then
@@ -237,7 +275,8 @@ deploy_run() {
   new="$(deploy_run_git rev-parse HEAD)"
   echo "rpi-setup-deploy: $DP_DIR on $DP_BRANCH at ${new:0:7} (was ${old:0:7})"
   [[ -z "$DP_CONFIG" ]] || deploy_run_config "$DP_CONFIG"
-  mapfile -t tasks < <(deploy_run_tasks)
+  list="$(deploy_run_tasks)" || return $?
+  [[ -z "$list" ]] || mapfile -t tasks <<<"$list"
   if [[ ${#tasks[@]} -eq 0 ]]; then
     echo 'rpi-setup-deploy: no tasks given and none recorded on this Pi; pass --tasks'
     return 0
@@ -245,7 +284,9 @@ deploy_run() {
   install -m 0700 -d "$DP_LOG_DIR"
   log="$DP_LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
   echo "rpi-setup-deploy: running setup.sh ${tasks[*]} (full output on the Pi: $log)"
-  ( umask 077; RPI_SETUP_CONFIG_DIR="$DP_CONFIG_DIR" bash "$DP_DIR/setup.sh" "${tasks[@]}" </dev/null >"$log" 2>&1 ) || rc=$?
+  ( umask 077
+    SUDO_USER="$owner" SUDO_UID="$(id -u "$owner")" SUDO_GID="$(id -g "$owner")" \
+      RPI_SETUP_CONFIG_DIR="$DP_CONFIG_DIR" bash "$DP_DIR/setup.sh" "${tasks[@]}" </dev/null >"$log" 2>&1 ) || rc=$?
   sed -n '/^Summary:/,$p' "$log"
   [[ $rc -eq 0 ]] || echo "rpi-setup-deploy: setup.sh failed (exit $rc); details on the Pi: sudo less $log" >&2
   return "$rc"
