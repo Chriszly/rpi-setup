@@ -17,7 +17,7 @@ quirks). The workflow uses several increasingly faithful layers:
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
 | `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
-| `provision-gate` | every `pull_request`         | booted `systemd-nspawn` container, latest release and Bookworm | high | minutes |
+| `provision-gate` | `pull_request` touching provisioning | booted `systemd-nspawn` container, latest release and Bookworm, two parallel halves each | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
 - **`syntax`** and **`unit`** are fast pre-checks; the three provisioning jobs
@@ -33,6 +33,12 @@ quirks). The workflow uses several increasingly faithful layers:
   `systemd-nspawn` container on an `ubuntu-latest` runner. Systemd PID 1 is
   essential: several tasks rely on `systemctl` (`web`, `monitoring`, `samba`),
   which fails in a plain chroot-style container that never boots an init program.
+  Each release runs as two parallel jobs, `system` (`base samba`) and `web`
+  (`web monitoring pihole`): package installs under arm64 emulation dominate
+  the gate, so splitting them roughly halves its wall time. A small `changes`
+  job skips the gate for PRs that touch none of `setup.sh`, `lib/`, `tasks/`,
+  `ci/provision.sh`, this workflow or `.github/actions/` (a skipped job counts
+  as passed for required checks).
 - **`provision-qemu`** is the manual maximum-fidelity run. It boots the same
   image in `qemu-system-aarch64` emulating a Raspberry Pi 3B+
   (`ethanjli/piqemu-action`, `machine: rpi-3b+`). Use it before a release or
@@ -57,7 +63,9 @@ is the single source of truth for the task list and the checks. It selects a
 
 | Profile     | Used by          | Tasks                                                              | Verified                                                         |
 |-------------|------------------|--------------------------------------------------------------------|------------------------------------------------------------------|
-| `container` | `provision-gate` | `base samba web monitoring pihole`                                 | `smbd nginx netdata fail2ban` active, `ssh` enabled; Netdata :19999 and nginx :80 |
+| `container` | auto-detected in any container | `base samba web monitoring pihole`                   | `smbd nginx netdata fail2ban` active, `ssh` enabled; Netdata :19999 and nginx :80 |
+| `container-system` | `provision-gate` (`system`) | `base samba`                                           | `smbd fail2ban` active, `ssh` enabled                            |
+| `container-web` | `provision-gate` (`web`) | `web monitoring pihole`                                       | `nginx netdata` active; Netdata :19999 and nginx :80             |
 | `full`      | `provision-qemu` | `base docker samba web monitoring pihole netalertx teamspeak`      | above plus `docker` active, both containers running, :20211      |
 | `docker`    | `docker-smoke`   | `docker netalertx teamspeak`                                       | `docker` active, both containers running, NetAlertX on :20211    |
 
