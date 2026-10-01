@@ -87,7 +87,7 @@ samba_share_section() {
 # password comes from SAMBA_PASSWORD or the one saved on an earlier run; a
 # native smbd's password hash cannot be carried over, so then it must be set.
 run_samba_container() {
-  local u="$1" dir="$2" share="$3" ro="$4" name=samba cdir owner="" changed=0 pw="${SAMBA_PASSWORD:-}" fresh=0
+  local u="$1" dir="$2" share="$3" ro="$4" name=samba cdir owner="" changed=0 pw="${SAMBA_PASSWORD:-}"
   : "${SAMBA_IMAGE:=crazymax/samba:latest}"
   require_image_ref SAMBA_IMAGE
   container_require_64bit SAMBA_DOCKER
@@ -108,7 +108,11 @@ run_samba_container() {
       die "The native Samba password of '$u' cannot be moved into the container; set SAMBA_PASSWORD (it can be the same one) and run again"
     fi
     pw="$(gen_secret 16)"
-    fresh=1
+    # Print and save it now: once it is in $cdir/password a later run reads
+    # it from there, so a failed first start must not lose it.
+    save_secret samba SAMBA_PASSWORD "$pw"
+    say "Generated Samba password for ${u}: $pw"
+    info 'Saved in /var/lib/rpi-setup/secrets/samba.env; set SAMBA_PASSWORD to choose your own.'
   fi
 
   if [[ ! -d "$dir" ]]; then
@@ -126,12 +130,6 @@ run_samba_container() {
     docker compose -f "$cdir/docker-compose.yml" up -d --force-recreate >/dev/null
   fi
   container_up "$cdir" "$name"
-
-  if [[ $fresh -eq 1 ]]; then
-    save_secret samba SAMBA_PASSWORD "$pw"
-    say "Generated Samba password for ${u}: $pw"
-    info 'Saved in /var/lib/rpi-setup/secrets/samba.env; set SAMBA_PASSWORD to choose your own.'
-  fi
   say "Samba container running - share: \\\\$(hostname)\\${share} (user ${u}$([[ $ro == yes ]] && echo ', read-only'))"
 }
 

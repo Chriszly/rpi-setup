@@ -8,7 +8,8 @@ TASKS+=("pihole|Pi-hole ad blocker (official installer, unattended by default)")
 
 run_pihole() {
   : "${PIHOLE_UNATTENDED:=yes}" "${PIHOLE_DNS:=1.1.1.1,1.0.0.1}" "${PIHOLE_QUERY_LOGGING:=yes}"
-  : "${PIHOLE_DOCKER:=no}"
+  : "${PIHOLE_DOCKER:=no}" "${PIHOLE_CONFIRM:=yes}"
+  setting_on PIHOLE_CONFIRM || true
   setting_on PIHOLE_UNATTENDED || true
   setting_on PIHOLE_QUERY_LOGGING || true
   [[ -z "${PIHOLE_LISTEN_ALL:-}" ]] || setting_on PIHOLE_LISTEN_ALL || true
@@ -29,14 +30,7 @@ run_pihole() {
     say "Web admin: $(pihole_admin_url)"
     return
   fi
-  warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
-  warn 'Review the script at https://install.pi-hole.net before proceeding.'
-  if [[ "${PIHOLE_CONFIRM:-}" != "yes" ]] && [[ -t 0 ]]; then
-    local ans=""
-    read -r -p 'Type "yes" to continue, anything else to skip (PIHOLE_CONFIRM=yes skips this question): ' ans ||
-      { warn 'Skipped Pi-hole install.'; return; }
-    [[ "$ans" == "yes" ]] || { warn 'Skipped Pi-hole install.'; return; }
-  fi
+  pihole_confirm_installer
 
   if in_container; then
     warn 'Pi-hole needs port 53 and is not supported in container environments; skipping'
@@ -68,6 +62,16 @@ run_pihole() {
   fi
   pihole setpassword "$pw" >/dev/null
   say "Pi-hole installed - web admin: $(pihole_admin_url)"
+}
+
+# Warn about the "curl | bash" installer, then go on only with PIHOLE_CONFIRM
+# on (the default). No question is asked: PIHOLE_CONFIRM=no fails the task,
+# so the run's summary shows that Pi-hole was not installed.
+pihole_confirm_installer() {
+  warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
+  warn 'Review the script at https://install.pi-hole.net before proceeding.'
+  setting_on PIHOLE_CONFIRM ||
+    die 'PIHOLE_CONFIRM=no: not running the Pi-hole installer; set PIHOLE_CONFIRM=yes (or leave it empty) to install'
 }
 
 # Split PIHOLE_DNS ("1.1.1.1,1.0.0.1", commas or spaces) into array $1.
@@ -195,14 +199,18 @@ run_pihole_container() {
   done
 
   install -m 0755 -d "$dir"
-  local pw="${PIHOLE_PASSWORD:-}" fresh=0
+  local pw="${PIHOLE_PASSWORD:-}"
   container_copy_once "$dir" /etc/pihole "$dir/etc-pihole" || true
   install -m 0755 -d "$dir/etc-pihole"
   # No password set: keep the one Pi-hole already has (copied from the native
   # install or set by an earlier run), else generate one.
   if [[ -z "$pw" ]] && ! grep -Eq '^[[:space:]]*pwhash[[:space:]]*=[[:space:]]*"[^"]+' "$dir/etc-pihole/pihole.toml" 2>/dev/null; then
     pw="$(gen_secret 16)"
-    fresh=1
+    # Print and save it now: once the container has started, pihole.toml
+    # holds its hash and a later run would not show it again.
+    save_secret pihole PIHOLE_PASSWORD "$pw"
+    say "Generated web admin password: $pw"
+    info 'Saved in /var/lib/rpi-setup/secrets/pihole.env; set PIHOLE_PASSWORD to choose your own.'
   fi
   if [[ -n "$pw" ]]; then
     if container_write_secrets "$dir" "FTLCONF_webserver_api_password=$pw"; then changed=1; fi
@@ -217,12 +225,6 @@ run_pihole_container() {
     docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
   fi
   container_up "$dir" "$name"
-
-  if [[ $fresh -eq 1 ]]; then
-    save_secret pihole PIHOLE_PASSWORD "$pw"
-    say "Generated web admin password: $pw"
-    info 'Saved in /var/lib/rpi-setup/secrets/pihole.env; set PIHOLE_PASSWORD to choose your own.'
-  fi
   local url
   url="http://$(hostname)"
   [[ "$port" == 80 ]] || url="$url:$port"
