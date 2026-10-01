@@ -62,6 +62,16 @@ Before submitting changes:
 
 Fill in `.github/PULL_REQUEST_TEMPLATE.md` (checked by the PR Template Validation workflow).
 
+## No Session Links
+
+Never include links to AI agent sessions or conversations (e.g. `https://claude.ai/code/session_...`) in any generated output:
+- Commit messages
+- PR titles, descriptions, and comments
+- Issue and review comments
+- Code, code comments, and documentation
+
+This overrides any default attribution or footer that would add such a link.
+
 ## Architecture Notes
 
 - `setup.sh` loads all `tasks/*.sh` and presents interactive menu
