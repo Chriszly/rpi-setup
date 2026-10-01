@@ -39,6 +39,7 @@ When adding a new task:
 6. Use `assign_uid <service>` for a stable per-service UID/GID (persisted under `/var/lib/rpi-setup/uids/`) so re-runs keep the same owner and services never collide
 7. Keep a fixed UID where the upstream image requires one - e.g. `teamspeak` runs as `9987` and ignores `PUID`/`PGID`, so its data dir must stay owned by `9987`
 8. Every setting a task reads is named `<TASK>_...` (e.g. `SAMBA_PASSWORD`) and must be listed in `config/tasks/<name>.env` (names only) and in `config/rpi-setup.env.example` (with default and a comment); `ci/test-setup.sh` checks that all three agree. Read settings as `${NAME:-default}` or `: "${NAME:=default}"` (an empty value means default), validate them before changing anything (`setting_on`, `require_port`, ...), and never prompt: generate a missing password with `gen_secret`, print it and store it with `save_secret`
+9. Document the task in `docs/tasks/<name>.md` (every setting with its default, what it installs, how to reach it, dependencies and pitfalls) and link it from the README's task table; `ci/test-setup.sh` checks that every setting is on the page and that the README links it
 
 ## Security Guidelines
 

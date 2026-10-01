@@ -200,19 +200,10 @@ is set in `config/rpi-setup.env`.
 
 ## Task rundown
 
-| Task         | What it does                                                        | Notes                                                    |
-|--------------|---------------------------------------------------------------------|----------------------------------------------------------|
-| `base`       | OS update, EEPROM firmware, SSH enable, essential tools, fail2ban   | Run this first. The EEPROM update needs a reboot to apply.|
-| `docker`     | Docker Engine, buildx and Compose (via apt)                         | Adds your user to the `docker` group - re-login to use it|
-| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | Open the printed login URL, or set `TAILSCALE_AUTHKEY`  |
-| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing unless `PIHOLE_CONFIRM=yes`. Admin UI at `http://<hostname>/admin` (`:8080` if `web` already holds port 80); password from `PIHOLE_PASSWORD` or generated and printed |
-| `samba`      | Simple read-write NAS share for the current user                    | SMB password from `SAMBA_PASSWORD`, or generated and printed on the first run. Share at `\\<hostname>\nas-share` |
-| `web`        | nginx serving a start page (`WEB_TITLE`)                             | Open `http://<hostname>` (`:8080` if Pi-hole already holds port 80) |
-| `monitoring` | Netdata real-time dashboard                                         | Dashboard at `http://<hostname>:19999`, reachable from your LAN |
-| `netalertx`  | NetAlertX LAN device presence tracker (Docker)                      | Needs `docker`. Dashboard at `http://<ip>:20211`        |
-| `teamspeak`  | TeamSpeak 6 voice server (Docker)                                   | Needs `docker`. Voice `:9987`, file `:30033`, web `:10080` |
-
-After each task completes, check the `[+] Complete: <task>` lines.
+The [task table in the README](../README.md#tasks) lists every task, and each
+task has its own page under [docs/tasks/](tasks/) with all its settings, what
+it installs and how to reach it. After a run, check the `[+] Complete: <task>`
+lines and the summary at the end.
 
 ## Common pitfalls
 
@@ -220,6 +211,6 @@ After each task completes, check the `[+] Complete: <task>` lines.
   normal user through `SUDO_USER`; running as `root` directly breaks that.
 - After `setup.sh docker`, the `docker` group membership only applies after you
   log out and back in (reconnect your SSH session).
-- `netalertx` and `teamspeak` fail fast if Docker + the Compose plugin are
-  missing - run `sudo bash setup.sh docker` first.
+- `netalertx` and `teamspeak` need Docker; `setup.sh` adds the `docker` task
+  to the run by itself when Docker is not installed yet.
 - Re-running any task is safe. The scripts are idempotent.
