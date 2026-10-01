@@ -15,7 +15,8 @@ Run it first on a new Pi. When you pick several tasks, `setup.sh` always runs
 
 ## Settings
 
-Set them in `config/rpi-setup.env` ([how settings work](../../README.md#settings)).
+Set them in `config/rpi-setup.env`, or `/etc/rpi-setup/rpi-setup.env` after
+`setup.sh --move-config` ([how settings work](../../README.md#settings)).
 Every setting is optional; an empty value means the default.
 
 | Setting | Default | Meaning |

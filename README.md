@@ -108,7 +108,14 @@ TAILSCALE_AUTHKEY=tskey-auth-...
 - Each name starts with its task's name (`SAMBA_...` belongs to `samba`); an
   unknown name stops the run before anything changes, so typos are caught.
 - `config/rpi-setup.env` and everything generated from it are ignored by git:
-  your passwords never end up in a commit.
+  your passwords never end up in a commit. CI also fails when a filled
+  settings file, a private key or a password is committed by mistake.
+- To keep the settings outside the git checkout, run
+  `sudo bash setup.sh --move-config` once: it moves the file to
+  `/etc/rpi-setup/rpi-setup.env` (root only, mode 600). From then on
+  `setup.sh`, `update.sh` and `check.sh` read it from there; edit it with
+  `sudo nano /etc/rpi-setup/rpi-setup.env`. A leftover
+  `config/rpi-setup.env` is then ignored, with a warning.
 - Before running tasks, `setup.sh` splits the file into one file per task,
   `config/local/<task>.env`. [`config/tasks/<task>.env`](config/tasks) lists
   the names each task reads. Run the split on its own with
@@ -116,7 +123,7 @@ TAILSCALE_AUTHKEY=tskey-auth-...
 - A variable on the command line wins over the file:
   `sudo SAMBA_PASSWORD=other bash setup.sh samba`.
 - `RPI_SETUP_CONFIG_DIR=/some/folder` reads `rpi-setup.env` from another
-  folder, e.g. one kept outside the git checkout.
+  folder; it wins over `/etc/rpi-setup`.
 
 With the settings filled in, a whole setup runs unattended:
 `sudo bash setup.sh base docker samba pihole tailscale netalertx`. Passwords
