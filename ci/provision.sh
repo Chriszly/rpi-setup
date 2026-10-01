@@ -11,6 +11,9 @@ set -euo pipefail
 #
 # The task list, and what gets verified, is selected by a profile:
 #   PROVISION_PROFILE=container  tasks that work in systemd-nspawn (no Docker)
+#   PROVISION_PROFILE=container-system / container-web
+#                                the container profile split in two halves that
+#                                the PR gate runs as parallel jobs
 #   PROVISION_PROFILE=full       every task except tailscale (QEMU VM)
 #   PROVISION_PROFILE=docker     only the Docker-based tasks (plain runner)
 # When PROVISION_PROFILE is unset the profile is auto-detected: "container"
@@ -39,6 +42,22 @@ case "$PROFILE" in
         CONTAINERS=()
         ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12")
         ;;
+    # The two halves of "container". Package installs under arm64 emulation
+    # dominate the gate, so they are split into roughly equal parts.
+    container-system)
+        TASKS=(base samba)
+        SERVICES=(smbd fail2ban)
+        ENABLED=(ssh)
+        CONTAINERS=()
+        ENDPOINTS=()
+        ;;
+    container-web)
+        TASKS=(web monitoring pihole)
+        SERVICES=(nginx netdata)
+        ENABLED=()
+        CONTAINERS=()
+        ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12")
+        ;;
     full)
         TASKS=(base docker samba web monitoring pihole netalertx teamspeak)
         SERVICES=(docker smbd nginx netdata fail2ban)
@@ -54,7 +73,7 @@ case "$PROFILE" in
         ENDPOINTS=("http://LANIP:20211:120")
         ;;
     *)
-        echo "Unknown PROVISION_PROFILE '$PROFILE' (expected container, full or docker)" >&2
+        echo "Unknown PROVISION_PROFILE '$PROFILE' (expected container, container-system, container-web, full or docker)" >&2
         exit 2
         ;;
 esac
