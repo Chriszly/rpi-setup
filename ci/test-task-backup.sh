@@ -57,6 +57,13 @@ if [[ "$(paths no)" == *container-share* ]]; then
 else
     pass "backup_run_paths leaves the container share out unless asked"
 fi
+mv "$r/opt/samba/docker-compose.yml" "$r/opt/samba/docker-compose.yml.disabled"
+assert_contains "backup_run_paths keeps a task switched back to native" "opt/samba" "$(paths no)"
+if [[ "$(paths yes)" == *container-share* ]]; then
+    fail "backup_run_paths skips the share of a disabled Samba container"
+else
+    pass "backup_run_paths skips the share of a disabled Samba container"
+fi
 rm -rf "$r/opt/samba" "$r/srv/container-share"
 assert_eq "backup_run_shares tolerates a missing smb.conf" "" "$(backup_run_shares "$tmp/nope.conf")"
 assert_eq "backup_run_paths on an empty system prints nothing" "" \

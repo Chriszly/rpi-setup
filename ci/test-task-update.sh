@@ -44,8 +44,10 @@ make_shims "$TMP/nodocker" apt-get pihole rpi-eeprom-update
 
 # Fake /opt: two rpi-setup projects, one foreign project, one dir without compose.
 OPT="$TMP/opt"
-mkdir -p "$OPT/netalertx" "$OPT/teamspeak" "$OPT/other" "$OPT/samba"
-touch "$OPT/netalertx/docker-compose.yml" "$OPT/teamspeak/docker-compose.yml" "$OPT/other/docker-compose.yml"
+# pihole was switched back to native (container_leave disabled its compose file).
+mkdir -p "$OPT/netalertx" "$OPT/teamspeak" "$OPT/other" "$OPT/samba" "$OPT/pihole"
+touch "$OPT/netalertx/docker-compose.yml" "$OPT/teamspeak/docker-compose.yml" "$OPT/other/docker-compose.yml" \
+      "$OPT/pihole/docker-compose.yml.disabled"
 printf 'Raspberry Pi 5 Model B Rev 1.0\0' >"$TMP/model-pi"
 printf 'Generic x86 PC\0' >"$TMP/model-pc"
 
@@ -89,6 +91,7 @@ assert_contains "dry-run: image prune" "[dry-run] docker image prune -f" "$OUT"
 assert_contains "dry-run: pihole -up" "[dry-run] pihole -up" "$OUT"
 assert_contains "dry-run: eeprom" "[dry-run] rpi-eeprom-update -a" "$OUT"
 assert_lacks "a compose project not written by rpi-setup is left alone" "$OPT/other" "$OUT"
+assert_lacks "a task switched back to native is not updated" "$OPT/pihole" "$OUT"
 assert_lacks "no reboot hint without reboot-required" "Reboot recommended" "$OUT"
 
 # --- Step selection ----------------------------------------------------------

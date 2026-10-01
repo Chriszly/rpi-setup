@@ -136,7 +136,7 @@ backup_run_paths() {
   local root="${BK_ROOT%/}" p d
   {
     for d in "$root"/opt/*/; do
-      [[ -f "$d/docker-compose.yml" ]] && printf '%s\n' "${d#"$root"/}"
+      [[ -f "$d/docker-compose.yml" || -f "$d/docker-compose.yml.disabled" ]] && printf '%s\n' "${d#"$root"/}"
     done
     for p in etc/pihole etc/samba/smb.conf var/lib/samba/private var/lib/rpi-setup \
              etc/nginx/sites-available etc/netdata etc/ssh/sshd_config.d; do
