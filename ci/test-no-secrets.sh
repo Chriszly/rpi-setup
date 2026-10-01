@@ -35,7 +35,7 @@ assert_fails "an RSA private key is caught" check \
   "$(repo rsa keys/pi.pem '-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----\n')"
 assert_ok "a public key is fine" check "$(repo pub keys/id_ed25519.pub 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA me@pc\n')"
 assert_fails "a Tailscale auth key is caught" check \
-  "$(repo ts notes.md 'key: tskey-auth-kAbCdE1CNTRL-0123456789abcdefXYZ\n')"
+  "$(repo ts notes.md "key: tskey"'-auth-kAbCdE1CNTRL-0123456789abcdefXYZ\n')"
 assert_contains "the failure names the file" "config/rpi-setup.env" \
   "$(check "$TMP/filled" 2>&1 || true)"
 assert_contains "the failure names the line" "config/rpi-setup.env.example:1:" \
