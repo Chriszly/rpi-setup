@@ -96,13 +96,13 @@ runner_check_settings() {
   done
 }
 
-# The runner's release asset name for this machine's CPU, e.g. linux-arm64.
+# The runner release asset name for CPU $1 (uname -m), e.g. linux-arm64.
 runner_platform() {
-  case "${1:-$(uname -m)}" in
+  case "$1" in
     aarch64|arm64) echo linux-arm64 ;;
     x86_64|amd64) echo linux-x64 ;;
     armv7l|armv6l|armhf) echo linux-arm ;;
-    *) die "No GitHub runner build for CPU '$(uname -m)'" ;;
+    *) die "No GitHub runner build for CPU '$1'" ;;
   esac
 }
 
@@ -110,7 +110,7 @@ runner_platform() {
 # SHA-256 that GitHub publishes for the file.
 runner_download() {
   local dir="$1" plat json url digest file
-  plat="$(runner_platform)"
+  plat="$(runner_platform "$(uname -m)")"
   json="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)" ||
     die 'Could not ask GitHub for the newest runner release; check the network and try again.'
   url="$(jq -r --arg p "$plat" '.assets[] | select(.name | test("^actions-runner-" + $p + "-[0-9.]+\\.tar\\.gz$")) | .browser_download_url' <<<"$json" | head -n1)"
