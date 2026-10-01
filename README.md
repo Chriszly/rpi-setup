@@ -54,6 +54,7 @@ firmware updates take effect.
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
 | `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended     | `PIHOLE_PASSWORD`, `PIHOLE_CONFIRM=yes`, `PIHOLE_DNS` |
 | `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
+| `backup`     | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
 | `web`        | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
 | `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
 | `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | `NETALERTX_PASSWORD` (empty = generated), `NETALERTX_LOGIN` (needs `docker`) |
