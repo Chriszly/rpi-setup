@@ -4,6 +4,8 @@
 # that make setup.sh exit before run_tasks (unknown task, empty selection).
 #
 # Run: bash ci/test-setup.sh        (sudo bash ci/test-setup.sh for the root-only tests)
+# Many cases pass literal $ strings (settings values, eval bodies) on purpose.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,7 +83,34 @@ nginx_move_port "$tmp/site" 80 8080
 assert_contains "nginx_move_port moves the IPv4 listen" "listen 8080 default_server;" "$(cat "$tmp/site")"
 assert_contains "nginx_move_port moves the IPv6 listen" "listen [::]:8080 default_server;" "$(cat "$tmp/site")"
 assert_contains "nginx_move_port leaves other ports alone" "# listen 443 ssl" "$(cat "$tmp/site")"
+assert_eq "nginx_site_port reads the listen port" "8080" "$(nginx_site_port "$tmp/site")"
+
+printf '[global]\n\tbind socket to IP = 0.0.0.0\n' >"$tmp/nd.conf"
+assert_ok    "netdata_set_bind can keep the dashboard local" netdata_set_bind "$tmp/nd.conf" 127.0.0.1
+assert_fails "netdata_set_bind: nothing to change for the same address" netdata_set_bind "$tmp/nd.conf" 127.0.0.1
+assert_fails "netdata_set_port: 19999 needs no line" netdata_set_port "$tmp/nd.conf" 19999
+assert_ok    "netdata_set_port sets another port" netdata_set_port "$tmp/nd.conf" 20000
+assert_contains "netdata_set_port writes [web] default port" $'[web]\n\tdefault port = 20000' "$(cat "$tmp/nd.conf")"
+assert_fails "netdata_set_port is idempotent" netdata_set_port "$tmp/nd.conf" 20000
+
+# samba: an old unmarked [nas-share] section is replaced, other sections kept.
+printf '[global]\n   workgroup = W\n[nas-share]\n   path = /old\n[printers]\n   x = y\n' >"$tmp/smb.conf"
+assert_ok "samba_share_section replaces the share" samba_share_section "$tmp/smb.conf" nas-share /srv/share pi yes
+assert_eq "samba_share_section leaves one [nas-share]" "1" "$(grep -c '^\[nas-share\]' "$tmp/smb.conf")"
+assert_contains "samba_share_section writes the settings" "read only = yes" "$(cat "$tmp/smb.conf")"
+assert_contains "samba_share_section keeps other sections" $'[printers]\n   x = y' "$(cat "$tmp/smb.conf")"
+assert_fails "samba_share_section is idempotent" samba_share_section "$tmp/smb.conf" nas-share /srv/share pi yes
 rm -rf "$tmp"
+
+dns_out="$(PIHOLE_DNS='9.9.9.9, 149.112.112.112#53'; declare -a l=(); pihole_dns_list l; printf '%s|' "${l[@]}")"
+assert_eq "pihole_dns_list splits commas and spaces" "9.9.9.9|149.112.112.112#53|" "$dns_out"
+assert_fails "pihole_dns_list rejects a host name" eval "PIHOLE_DNS=dns.google; declare -a l=(); pihole_dns_list l"
+ts_out="$(TAILSCALE_HOSTNAME=pi5 TAILSCALE_SSH=no TAILSCALE_ADVERTISE_ROUTES='192.168.1.0/24, 10.0.0.0/8'; declare -a o=(); tailscale_options o; printf '%s ' "${o[@]}")"
+assert_eq "tailscale_options turns settings into flags" \
+    "--hostname=pi5 --ssh=false --advertise-routes=192.168.1.0/24,10.0.0.0/8 " "$ts_out"
+assert_eq "tailscale_options adds no flag for empty settings" "" \
+    "$(unset TAILSCALE_HOSTNAME TAILSCALE_SSH TAILSCALE_ADVERTISE_EXIT_NODE TAILSCALE_ADVERTISE_ROUTES; declare -a o=(); tailscale_options o; printf '%s' "${o[@]}")"
+assert_fails "tailscale_options rejects a bad route" eval "TAILSCALE_ADVERTISE_ROUTES=lan; declare -a o=(); tailscale_options o"
 
 # raspi-config's nonint mode reads 0 as "enable": "do_ssh 1" switches SSH off
 # and locks out a headless Pi after its next reboot.
@@ -91,13 +120,55 @@ if [[ "$(declare -f run_base)" == *"do_ssh 1"* ]]; then
 else
     pass "base never disables SSH"
 fi
-assert_contains "docker refreshes apt after adding its repository" "apt_update_now" "$(declare -f run_docker)"
+assert_contains "docker refreshes apt after adding its repository" "apt_update_now" "$(declare -f docker_install)"
+
+# --- Settings: config/tasks/<task>.env, the central example and the tasks agree
+example="$ROOT/config/rpi-setup.env.example"
+example_names="$(sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' "$example" | sort)"
+assert_eq "the central example sets each name once" "" "$(uniq -d <<<"$example_names")"
+all_names=""
+for n in "${names[@]}"; do
+    prefix="${n^^}_"
+    tpl="$ROOT/config/tasks/$n.env"
+    if [[ ! -f "$tpl" ]]; then
+        fail "task '$n' has no config/tasks/$n.env"
+        continue
+    fi
+    tpl_names="$(task_setting_names "$n" | sort)"
+    all_names+="$tpl_names"$'\n'
+    assert_eq "config/tasks/$n.env holds names only" "" \
+        "$(grep -vE '^[[:space:]]*(#|$)' "$tpl" | grep -vE '^[A-Z][A-Z0-9_]*=$' || true)"
+    assert_eq "config/tasks/$n.env names all start with $prefix" "" "$(grep -v "^$prefix" <<<"$tpl_names" || true)"
+    assert_eq "config/tasks/$n.env matches the $n section of the example" \
+        "$(grep "^$prefix" <<<"$example_names" || true)" "$tpl_names"
+    # Every setting the task file reads is listed, and every listed one is read.
+    used="$(grep -oE "\\$\\{?${prefix}[A-Z0-9_]*" "$ROOT/tasks/$n.sh" | tr -d '${' | sort -u)"
+    assert_eq "tasks/$n.sh reads exactly the settings in config/tasks/$n.env" "$tpl_names" "$used"
+done
+assert_eq "every name in the example belongs to a task" "$example_names" "$(grep -v '^$' <<<"$all_names" | sort)"
 
 # --- CLI: --list works without root -------------------------------------------
 listing="$(bash "$ROOT/setup.sh" --list)"
 for n in "${names[@]}"; do
     assert_contains "--list shows task '$n'" " $n " "$listing"
 done
+
+# --- CLI: settings files ---------------------------------------------------------
+cfg="$(mktemp -d)"
+out="$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --init-config 2>&1)"
+assert_contains "--init-config creates the central file" "Created $cfg/rpi-setup.env" "$out"
+assert_eq "--init-config copies the example" "$(cat "$ROOT/config/rpi-setup.env.example")" "$(cat "$cfg/rpi-setup.env")"
+assert_eq "--init-config makes it private" "600" "$(stat -c %a "$cfg/rpi-setup.env")"
+echo 'WEB_TITLE=Changed' >>"$cfg/rpi-setup.env"
+assert_contains "--init-config never overwrites your file" "Keeping existing" \
+    "$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --init-config 2>&1)"
+assert_contains "--init-config kept your change" "WEB_TITLE=Changed" "$(cat "$cfg/rpi-setup.env")"
+assert_ok "--split-config splits the central file" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config
+assert_contains "--split-config output carries the value" "WEB_TITLE='Changed'" "$(cat "$cfg/local/web.env")"
+assert_ok "config/split.sh does the same" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/config/split.sh"
+rm -rf "$cfg"
+assert_fails "setup.sh rejects an unknown option" bash "$ROOT/setup.sh" --bogus
+assert_contains "--help explains the settings file" "rpi-setup.env" "$(bash "$ROOT/setup.sh" --help)"
 
 # --- CLI: root handling -------------------------------------------------------
 if [[ $EUID -ne 0 ]]; then

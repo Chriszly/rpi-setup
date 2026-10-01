@@ -88,18 +88,57 @@ collect_logs() {
 }
 trap collect_logs EXIT
 
-# run_setup WORKDIR [rerun]: the re-run leaves SAMBA_PASSWORD unset and has no
-# terminal, like a user re-running setup.sh from a script: samba must keep the
-# existing password instead of prompting.
+# Settings go through the central file, as for a user: config/rpi-setup.env
+# (here in a temp folder via RPI_SETUP_CONFIG_DIR) is split per task by
+# setup.sh. The re-run uses the same file without SAMBA_PASSWORD and has no
+# terminal, like a user re-running setup.sh from a script: samba must keep
+# the existing password instead of prompting or generating a new one.
+CI_CONFIG_DIR=""
+CI_WEB_TITLE="rpi-setup CI $$"
+
+write_ci_config() {
+    local mode="$1"
+    {
+        echo "WEB_TITLE='$CI_WEB_TITLE'"
+        echo "BASE_TIMEZONE=Europe/Berlin"
+        echo "BASE_FAIL2BAN_MAXRETRY=4"
+        echo "PIHOLE_CONFIRM=yes"
+        echo "MONITORING_TELEMETRY=no"
+        [[ "$mode" == rerun ]] || echo "SAMBA_PASSWORD=testpw"
+    } >"$CI_CONFIG_DIR/rpi-setup.env"
+    chmod 0600 "$CI_CONFIG_DIR/rpi-setup.env"
+}
+
 run_setup() {
     local workdir="$1" mode="${2:-}"
     cd "$workdir"
-    export PIHOLE_CONFIRM=yes
-    if [[ "$mode" == rerun ]]; then
-        env -u SAMBA_PASSWORD bash setup.sh "${TASKS[@]}" </dev/null
-    else
-        SAMBA_PASSWORD=testpw bash setup.sh "${TASKS[@]}" </dev/null
-    fi
+    [[ -n "$CI_CONFIG_DIR" ]] || CI_CONFIG_DIR="$(mktemp -d)"
+    write_ci_config "$mode"
+    RPI_SETUP_CONFIG_DIR="$CI_CONFIG_DIR" bash setup.sh "${TASKS[@]}" </dev/null
+}
+
+# The settings from the central file reached the tasks.
+verify_settings() {
+    echo "=== Verifying settings from config/rpi-setup.env ==="
+    local t
+    for t in "${TASKS[@]}"; do
+        case "$t" in
+            web)
+                grep -qF "$CI_WEB_TITLE" /var/www/html/index.html ||
+                    { echo "FAILED: WEB_TITLE not on the start page" >&2; return 1; }
+                echo "OK: WEB_TITLE applied" ;;
+            base)
+                [[ "$(readlink -f /etc/localtime)" == */Europe/Berlin ]] ||
+                    { echo "FAILED: BASE_TIMEZONE not applied ($(readlink -f /etc/localtime))" >&2; return 1; }
+                grep -qx 'maxretry = 4' /etc/fail2ban/jail.local ||
+                    { echo "FAILED: BASE_FAIL2BAN_MAXRETRY not applied" >&2; return 1; }
+                echo "OK: BASE_TIMEZONE and BASE_FAIL2BAN_MAXRETRY applied" ;;
+            samba)
+                [[ -n "$(pdbedit -L 2>/dev/null)" ]] ||
+                    { echo "FAILED: no Samba user was created" >&2; return 1; }
+                echo "OK: Samba user exists" ;;
+        esac
+    done
 }
 
 # ENABLED units are only checked for "enabled", not "running": in the nspawn
@@ -193,11 +232,13 @@ main() {
     verify_services
     verify_containers
     verify_endpoints
+    verify_settings
 
     echo "=== Idempotency re-run ==="
     run_setup "$workdir" rerun
     verify_services
     verify_endpoints
+    verify_settings
 
     echo "=== All checks passed ==="
 }
