@@ -109,6 +109,20 @@ settings: ports, the share, fail2ban, the Netdata bind and the containers are
 rewritten; Pi-hole's DNS, interface and logging are only used at install
 (change them in its web UI afterwards).
 
+## Running a task in Docker
+
+Tasks with a `<TASK>_DOCKER` setting in `config/rpi-setup.env.example` (for
+example `WEB_DOCKER`) can run their service in its own Docker container
+instead of installing it with apt. Set it to `yes` and run the task again:
+
+- Docker is installed first if it is missing (the `docker` task's settings apply).
+- The container's compose file and data live in `/opt/<task>/`, which is what
+  you back up. `<TASK>_IMAGE` picks the image; pin a tag to control updates.
+- On a Pi that already runs the native service, its data is copied over once
+  and the native service is stopped (its packages stay). If the container
+  does not stay up, the native service is started again.
+- Setting it back to `no` stops the container and starts the native service.
+
 ## Raspberry Pi 5
 
 The Pi 5 (and Pi 500 / CM5) needs Raspberry Pi OS **Bookworm or newer**; the
