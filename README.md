@@ -12,12 +12,19 @@ which the flash scripts write, or Bookworm).
    - Windows, elevated PowerShell: `.\host\flash.ps1` ([guide](docs/setup-windows.md))
 2. **Boot the Pi** with the card, wait 1-2 minutes, then
    `ssh <user>@raspberrypi.local` (or the Pi's IP from your router).
-3. **Provision it** on the Pi:
+3. **Fill in your settings** on the Pi (passwords, ports, host name, ...):
 
    ```bash
    sudo apt-get update && sudo apt-get install -y git
    git clone https://github.com/Chriszly/rpi-setup.git
    cd rpi-setup
+   bash setup.sh --init-config      # creates config/rpi-setup.env
+   nano config/rpi-setup.env        # every setting is optional
+   ```
+
+4. **Provision it**:
+
+   ```bash
    sudo bash setup.sh
    ```
 
@@ -39,34 +46,76 @@ firmware updates take effect.
 
 ## Tasks
 
-| Task         | What you get                                                        | Asks you for                         |
-|--------------|---------------------------------------------------------------------|--------------------------------------|
-| `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban  | nothing                              |
-| `docker`     | Docker Engine, buildx and Compose (apt)                             | nothing                              |
-| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | a login URL to open, or `TAILSCALE_AUTHKEY` |
-| `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`                 | "yes" to the install, then Pi-hole's own dialogs |
-| `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | an SMB password (first run only), or `SAMBA_PASSWORD` |
-| `web`        | nginx with a "Raspberry Pi" page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | nothing |
-| `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | nothing                              |
-| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | nothing (needs `docker`)             |
-| `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | nothing (needs `docker`)             |
+| Task         | What you get                                                        | Settings you will most likely set |
+|--------------|---------------------------------------------------------------------|-----------------------------------|
+| `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban  | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
+| `docker`     | Docker Engine, buildx and Compose (apt), log rotation               | none needed |
+| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
+| `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended     | `PIHOLE_PASSWORD`, `PIHOLE_CONFIRM=yes`, `PIHOLE_DNS` |
+| `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
+| `web`        | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
+| `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
+| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | none needed (needs `docker`) |
+| `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` (needs `docker`, 64-bit OS) |
 
 Each task prints the address to open when it finishes. Tasks are plain bash
 scripts inside `tasks/` - add your own by dropping in a file that appends to
 `TASKS` and defines a `run_<name>` function. See `tasks/base.sh` for the pattern.
 
-### Unattended runs
+## Settings
 
-Every prompt has an environment variable, so a whole setup can run from a
-script (`sudo -E` keeps the variables):
+Everything a task can be told in advance lives in **one file**,
+`config/rpi-setup.env`. [`config/rpi-setup.env.example`](config/rpi-setup.env.example)
+lists every setting with its default and a one-line explanation, grouped by
+task; `bash setup.sh --init-config` copies it for you (private, mode 600).
+The format is one `NAME=value` per line:
 
 ```bash
-export SAMBA_PASSWORD='...' PIHOLE_CONFIRM=yes TAILSCALE_AUTHKEY='tskey-...'
-sudo -E bash setup.sh base docker samba tailscale netalertx
+BASE_HOSTNAME=homepi
+BASE_TIMEZONE=Europe/Berlin
+SAMBA_PASSWORD='my secret #1'   # quote values with " #" or spaces at the ends
+PIHOLE_CONFIRM=yes
+TAILSCALE_AUTHKEY=tskey-auth-...
 ```
 
-Pi-hole's own installer still shows its dialogs, so run `pihole` from a
-terminal.
+- Leave a value empty, or delete the line, to get the default.
+- Each name starts with its task's name (`SAMBA_...` belongs to `samba`); an
+  unknown name stops the run before anything changes, so typos are caught.
+- `config/rpi-setup.env` and everything generated from it are ignored by git:
+  your passwords never end up in a commit.
+- Before running tasks, `setup.sh` splits the file into one file per task,
+  `config/local/<task>.env`. [`config/tasks/<task>.env`](config/tasks) lists
+  the names each task reads. Run the split on its own with
+  `bash config/split.sh` (or `bash setup.sh --split-config`) to check it.
+- A variable on the command line wins over the file:
+  `sudo SAMBA_PASSWORD=other bash setup.sh samba`.
+- `RPI_SETUP_CONFIG_DIR=/some/folder` reads `rpi-setup.env` from another
+  folder, e.g. one kept outside the git checkout.
+
+With the settings filled in, a whole setup runs unattended:
+`sudo bash setup.sh base docker samba pihole tailscale netalertx`. Passwords
+you leave empty (`SAMBA_PASSWORD`, `PIHOLE_PASSWORD`) are generated on the
+first install, printed once and saved (root-only) in
+`/var/lib/rpi-setup/secrets/<task>.env`. Re-running a task applies changed
+settings: ports, the share, fail2ban, the Netdata bind and the containers are
+rewritten; Pi-hole's DNS, interface and logging are only used at install
+(change them in its web UI afterwards).
+
+## Raspberry Pi 5
+
+The Pi 5 (and Pi 500 / CM5) needs Raspberry Pi OS **Bookworm or newer**; the
+flash scripts write the current release, and `base` stops with an explanation
+on an older one. Use the **64-bit** Lite image: `teamspeak`'s Docker image is
+64-bit only and says so if the OS is 32-bit. Pi 5 only settings in `base`:
+
+- `BASE_PCIE_GEN3=yes` runs the PCIe slot at Gen 3 for an NVMe HAT
+  (roughly twice the speed; not officially certified).
+- `BASE_PI5_4K_KERNEL=yes` boots the 4K-page kernel instead of the Pi 5's
+  default 16K-page one, only if some program or container crashes with
+  page-size or jemalloc errors.
+
+Both go into a marked block at the end of `/boot/firmware/config.txt` and
+apply after a reboot; switching them back to `no` removes the block again.
 
 ## Documentation
 
@@ -80,18 +129,19 @@ terminal.
 ## Notes
 
 - Re-running any task is safe: finished work is detected and skipped, and
-  `samba` keeps the password you set the first time.
+  `samba` keeps its password unless you set a new `SAMBA_PASSWORD`.
 - Run with `sudo`, not as `root`. The `docker` and `samba` tasks pick up your
   normal user through `SUDO_USER`. After `docker`, log out and back in to use
   `docker` without `sudo`.
 - `pihole` and `tailscale` run their official installers (`curl | sh`); both
-  print a warning first, and `pihole` asks you to type `yes`. Set the Pi-hole
-  admin password afterwards with `sudo pihole setpassword`.
+  print a warning first, and `pihole` asks you to type `yes` unless
+  `PIHOLE_CONFIRM=yes`. Pi-hole installs without its dialogs using the
+  `PIHOLE_*` settings; set `PIHOLE_UNATTENDED=no` to get the dialogs.
 - `pihole` and `web` can run together: whichever comes second moves to port
   8080, and the task prints the address it ended up on.
 - `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
-  It auto-detects your LAN subnet and interface. The detected `SCAN_SUBNETS`
-  can be corrected in the UI under Settings > Subnets & Rules. First discovery
+  It auto-detects your LAN subnet and interface, or scans
+  `NETALERTX_SCAN_SUBNETS`. First discovery
   takes 5-10 minutes.
 - `teamspeak` requires Docker: run it via `sudo bash setup.sh docker teamspeak`.
   On first start the ServerAdmin privilege key is printed to the console - save

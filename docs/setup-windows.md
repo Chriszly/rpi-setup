@@ -115,8 +115,15 @@ On the Pi:
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/Chriszly/rpi-setup.git
 cd rpi-setup
+bash setup.sh --init-config     # creates config/rpi-setup.env
+nano config/rpi-setup.env       # passwords, ports, host name, ... (all optional)
 sudo bash setup.sh
 ```
+
+`config/rpi-setup.env` holds every setting of every task, with its default and
+a short explanation (see the [README](../README.md#settings)). It is ignored by
+git, so passwords stay on the Pi. Settings you leave empty get their default;
+empty passwords are generated and printed on the first install.
 
 If the repository is private, clone with your credentials as in Step 1, then
 drop the credentials from the remote right after:
@@ -153,9 +160,10 @@ sudo bash setup.sh docker netalertx teamspeak
 ```
 
 `pihole` and `tailscale` run their official installers. `pihole` prints a
-security warning and prompts for confirmation when run interactively; in
-non-interactive runs it installs directly. `tailscale` prints a login URL to
-open, unless you pass an auth key: `sudo TAILSCALE_AUTHKEY=tskey-... bash setup.sh tailscale`.
+security warning and asks for confirmation when run interactively, unless
+`PIHOLE_CONFIRM=yes`; it then installs without dialogs from the `PIHOLE_*`
+settings. `tailscale` prints a login URL to open, unless `TAILSCALE_AUTHKEY`
+is set in `config/rpi-setup.env`.
 
 ## Task rundown
 
@@ -164,9 +172,9 @@ open, unless you pass an auth key: `sudo TAILSCALE_AUTHKEY=tskey-... bash setup.
 | `base`       | OS update, EEPROM firmware, SSH enable, essential tools, fail2ban   | Run this first. The EEPROM update needs a reboot to apply.|
 | `docker`     | Docker Engine, buildx and Compose (via apt)                         | Adds your user to the `docker` group - re-login to use it|
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | Open the printed login URL, or set `TAILSCALE_AUTHKEY`  |
-| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing (skips prompt in non-interactive runs). Admin UI at `http://<hostname>/admin` (`:8080` if `web` already holds port 80); set its password with `sudo pihole setpassword` |
-| `samba`      | Simple read-write NAS share for the current user                    | Prompts for an SMB password on the first run (or set `SAMBA_PASSWORD`). Share at `\\<hostname>\nas-share` |
-| `web`        | nginx serving a "Raspberry Pi" index page                           | Open `http://<hostname>` (`:8080` if Pi-hole already holds port 80) |
+| `pihole`     | Pi-hole ad blocker (official installer)                             | Confirms before installing unless `PIHOLE_CONFIRM=yes`. Admin UI at `http://<hostname>/admin` (`:8080` if `web` already holds port 80); password from `PIHOLE_PASSWORD` or generated and printed |
+| `samba`      | Simple read-write NAS share for the current user                    | SMB password from `SAMBA_PASSWORD`, or generated and printed on the first run. Share at `\\<hostname>\nas-share` |
+| `web`        | nginx serving a start page (`WEB_TITLE`)                             | Open `http://<hostname>` (`:8080` if Pi-hole already holds port 80) |
 | `monitoring` | Netdata real-time dashboard                                         | Dashboard at `http://<hostname>:19999`, reachable from your LAN |
 | `netalertx`  | NetAlertX LAN device presence tracker (Docker)                      | Needs `docker`. Dashboard at `http://<ip>:20211`        |
 | `teamspeak`  | TeamSpeak 6 voice server (Docker)                                   | Needs `docker`. Voice `:9987`, file `:30033`, web `:10080` |

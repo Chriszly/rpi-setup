@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Task: docker - Docker Engine, buildx and compose as apt-packaged plugins.
+# Settings: DOCKER_* in config/rpi-setup.env (names in config/tasks/docker.env).
 set -euo pipefail
 
 TASKS+=("docker|Docker Engine and Docker Compose")
 
 run_docker() {
+  : "${DOCKER_ADD_USER:=yes}" "${DOCKER_LOG_MAX_SIZE:=10m}" "${DOCKER_LOG_MAX_FILE:=3}"
+  setting_on DOCKER_ADD_USER || true
+  [[ "$DOCKER_LOG_MAX_SIZE" =~ ^[1-9][0-9]*[kmg]$ ]] ||
+    die "DOCKER_LOG_MAX_SIZE must look like 10m, 500k or 1g (got '$DOCKER_LOG_MAX_SIZE')"
+  [[ "$DOCKER_LOG_MAX_FILE" =~ ^[1-9][0-9]*$ ]] ||
+    die "DOCKER_LOG_MAX_FILE must be a positive number (got '$DOCKER_LOG_MAX_FILE')"
+
   if command -v docker >/dev/null 2>&1; then
     if ! docker compose version >/dev/null 2>&1; then
       # Docker from another source (e.g. Debian's docker.io) without Compose v2.
@@ -13,11 +21,40 @@ run_docker() {
         die 'Could not install Docker Compose. Remove the existing Docker packages and re-run: sudo bash setup.sh docker'
       docker compose version >/dev/null 2>&1 || die 'Docker Compose is still unavailable after installing it.'
     fi
-    systemctl enable --now docker 2>/dev/null || true
     say "Docker is already installed ($(docker --version 2>/dev/null || true))"
-    return
+  else
+    docker_install
   fi
 
+  local restart=0
+  if docker_daemon_config; then restart=1; fi
+  systemctl daemon-reload || true
+  systemctl enable --now docker || warn 'Docker installed but service not started; run "systemctl enable --now docker" after reboot or re-login.'
+  if [[ $restart -eq 1 ]] && systemctl is-active --quiet docker; then
+    # Containers with a restart policy come back by themselves.
+    systemctl restart docker || warn 'Could not restart Docker to apply /etc/docker/daemon.json'
+  fi
+
+  local u
+  u="$(real_user)"
+  if setting_on DOCKER_ADD_USER && [[ -n "$u" && "$u" != root ]]; then
+    if id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+      say "'$u' is already in the docker group"
+    else
+      usermod -aG docker "$u"
+      say "Added '$u' to the docker group (re-login to use it)"
+    fi
+  fi
+
+  if systemctl is-active --quiet docker; then
+    docker --version
+    docker compose version
+  else
+    warn "Docker service not running; skipping version check"
+  fi
+}
+
+docker_install() {
   local os_id vcode arch
   os_id=$( . /etc/os-release && echo "$ID" ) || true
   vcode=$( . /etc/os-release && echo "$VERSION_CODENAME" ) || true
@@ -34,20 +71,24 @@ run_docker() {
 
   apt_update_now
   DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl daemon-reload || true
-  systemctl enable --now docker || warn 'Docker installed but service not started; run "systemctl enable --now docker" after reboot or re-login.'
+}
 
-  local u
-  u="$(real_user)"
-  if [[ -n "$u" ]] && [[ "$u" != "root" ]]; then
-    usermod -aG docker "$u"
-    say "Added '$u' to the docker group (re-login to use it)"
+# Log rotation for every container, so logs cannot fill the SD card. JSON has
+# no comments, so a copy of what we wrote marks /etc/docker/daemon.json as
+# ours; a daemon.json edited by hand is left alone. Returns 0 if it changed.
+docker_daemon_config() {
+  local f=/etc/docker/daemon.json copy=/var/lib/rpi-setup/docker-daemon.json content
+  content="$(printf '{\n  "log-driver": "json-file",\n  "log-opts": {\n    "max-size": "%s",\n    "max-file": "%s"\n  }\n}' \
+    "$DOCKER_LOG_MAX_SIZE" "$DOCKER_LOG_MAX_FILE")"
+  if [[ -f "$f" ]] && ! { [[ -f "$copy" ]] && cmp -s "$f" "$copy"; }; then
+    warn "$f was not written by rpi-setup; leaving it alone (DOCKER_LOG_* not applied)"
+    return 1
   fi
-
-  if systemctl is-active --quiet docker; then
-    docker --version
-    docker compose version
-  else
-    warn "Docker service not running; skipping version check"
+  install -m 0755 -d /etc/docker /var/lib/rpi-setup
+  if printf '%s\n' "$content" | write_if_changed "$f" 0644; then
+    cp -f "$f" "$copy"
+    say "Container logs rotate at $DOCKER_LOG_MAX_SIZE x $DOCKER_LOG_MAX_FILE ($f)"
+    return 0
   fi
+  return 1
 }

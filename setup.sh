@@ -68,6 +68,17 @@ prompt_selection() {
   return 0
 }
 
+# Parse the settings file of every selected task before running any, so a typo
+# in the last task's file stops the run before the first task changes anything.
+check_task_configs() {
+  local n entry
+  for n in "$@"; do
+    entry="${TASKS[$((n - 1))]:-}"
+    [[ -n "$entry" ]] || continue
+    ( load_task_config "$(task_name "$entry")" ) >/dev/null
+  done
+}
+
 run_tasks() {
   local n entry name
   for n in "$@"; do
@@ -80,6 +91,7 @@ run_tasks() {
     fi
     hr
     echo "Task $name: $(task_desc "$entry")"
+    load_task_config "$name"
     "run_${name}"
     say "Complete: $name"
   done
@@ -87,11 +99,40 @@ run_tasks() {
   say "All selected tasks finished."
 }
 
+usage() {
+  cat <<EOF
+Usage: sudo bash setup.sh [task ...]   run tasks (no task: interactive menu)
+       bash setup.sh --list            list the tasks
+       bash setup.sh --init-config     create config/rpi-setup.env from the example
+       bash setup.sh --split-config    split config/rpi-setup.env into config/local/<task>.env
+Put your settings in $(central_config); setup.sh splits it into one
+file per task before it runs any task.
+EOF
+}
+
 main() {
-  if [[ "${1:-}" == "--list" ]]; then
-    print_tasks
-    return 0
-  fi
+  case "${1:-}" in
+    --list)
+      print_tasks
+      return 0
+      ;;
+    --init-config)
+      init_config
+      return 0
+      ;;
+    --split-config)
+      split_config "$(central_config)"
+      return 0
+      ;;
+    -h|--help)
+      usage
+      return 0
+      ;;
+    -*)
+      usage >&2
+      die "unknown option: $1"
+      ;;
+  esac
 
   need_root
 
@@ -121,6 +162,10 @@ main() {
     echo 'Nothing to do.'
     return 0
   fi
+  if [[ -f "$(central_config)" ]]; then
+    split_config "$(central_config)"
+  fi
+  check_task_configs "${nums[@]}"
   # Plain call, not "A && B || C": bash disables errexit inside a && / ||
   # list, which would let failing commands in tasks go unnoticed.
   run_tasks "${nums[@]}"
