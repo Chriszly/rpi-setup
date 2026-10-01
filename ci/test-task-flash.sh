@@ -248,7 +248,7 @@ fetch() { # fetch DIR  - run fetch_image with DOWNLOAD_DIR=DIR; stdout only
 dl="$TMP/dl1"
 assert_eq "fetch_image prints only the image path" "$dl/$IMG" "$(fetch "$dl")"
 assert_eq "fetch_image downloads the image" "image bytes" "$(cat "$dl/$IMG")"
-assert_eq "no .part files are left behind" "" "$(cd "$dl" && ls -- *.part 2>/dev/null || true)"
+assert_eq "no .part files are left behind" "" "$(find "$dl" -maxdepth 1 -name '*.part')"
 # Truncated image and checksum left by an interrupted run: replaced, not fatal.
 printf 'ima' >"$dl/$IMG"
 printf 'abc' >"$dl/$IMG.sha256"
