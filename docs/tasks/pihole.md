@@ -55,9 +55,9 @@ it is missing, and `PIHOLE_CONFIRM` and `PIHOLE_UNATTENDED` are not needed.
   again. `PIHOLE_DOCKER=no` switches back.
 - Update with `sudo bash update.sh` (pulls the new image); `pihole -up` is for
   the native install only.
-- Not yet aware of the container: the `firewall` task (add `53/tcp 53/udp`
-  and the admin port to `FIREWALL_EXTRA_PORTS`) and the `tailscale` task's
-  automatic `TAILSCALE_ACCEPT_DNS` (set `TAILSCALE_ACCEPT_DNS=no` yourself).
+- The `firewall` task (DNS, admin port, DHCP), `check.sh`, the `backup` task
+  and the `tailscale` task's automatic `TAILSCALE_ACCEPT_DNS` all recognise
+  the container.
 
 ## Good to know
 

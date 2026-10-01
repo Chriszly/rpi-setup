@@ -25,7 +25,7 @@ Always allowed: SSH, ping, loopback, everything over Tailscale
 (`tailscale0`), Docker's networks, mDNS (`<host>.local`) and replies to
 connections the Pi started.
 
-| Service (when installed) | Ports | Who may connect |
+| Service (when installed, natively or in its container) | Ports | Who may connect |
 |--------------------------|-------|-----------------|
 | Pi-hole DNS | 53/tcp, 53/udp | anyone |
 | Pi-hole DHCP (when its DHCP server is on) | 67/udp, 547/udp for IPv6 | anyone |
@@ -57,7 +57,7 @@ sudo systemctl disable --now rpi-setup-firewall     # turn it off
 - Ports published by Docker containers (TeamSpeak's) are forwarded by Docker
   before these rules see them, so the firewall does not limit them. The task
   lists them when it runs.
-- Services switched to Docker with `<TASK>_DOCKER=yes` (web, monitoring,
-  pihole, samba) are not detected yet; open their ports with
-  `FIREWALL_EXTRA_PORTS`. NetAlertX and TeamSpeak are detected.
+- Services running in their own container (`<TASK>_DOCKER=yes`) are
+  detected like native ones; they use the host network, so these rules apply
+  to them.
 - Inside a container or CI the rules are generated and checked but not loaded.

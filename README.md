@@ -147,8 +147,11 @@ Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
 [`samba`](docs/tasks/samba.md#run-it-in-docker) and
 [`tailscale`](docs/tasks/tailscale.md#run-it-in-docker) (native recommended).
 `netalertx` and `teamspeak` always run in Docker; `base`, `docker`, `network`,
-`backup` and `firewall` always run natively. The `firewall` task does not
-detect these containers yet: open their ports with `FIREWALL_EXTRA_PORTS`.
+`backup` and `firewall` always run natively. The `firewall`, `backup` and
+`check.sh` recognise a task running in its container.
+
+Containers are opt-in for now: every `<TASK>_DOCKER` defaults to `no`, so
+nothing changes on a Pi unless you set one to `yes`.
 
 ## Raspberry Pi 5
 

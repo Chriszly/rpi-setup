@@ -25,7 +25,7 @@ by hand with `tailscale set`.
 | `TAILSCALE_SSH` | leave as it is | `yes`/`no`: Tailscale SSH. |
 | `TAILSCALE_ADVERTISE_EXIT_NODE` | leave as it is | `yes`/`no`: offer this Pi as an exit node (turns on IP forwarding). |
 | `TAILSCALE_ADVERTISE_ROUTES` | leave as it is | LAN subnets to reach through this Pi, comma separated, e.g. `192.168.1.0/24` (turns on IP forwarding). |
-| `TAILSCALE_ACCEPT_DNS` | `yes`, but `no` on a Pi with Pi-hole | `yes`/`no`: use the tailnet's DNS settings (MagicDNS). On a Pi that runs Pi-hole it is turned off, so the Pi does not resolve names through itself. |
+| `TAILSCALE_ACCEPT_DNS` | `yes`, but `no` on a Pi with Pi-hole | `yes`/`no`: use the tailnet's DNS settings (MagicDNS). On a Pi that runs Pi-hole (natively or in its container) it is turned off, so the Pi does not resolve names through itself. |
 
 ## What it installs and changes
 
@@ -51,6 +51,7 @@ do natively. Docker is installed first if it is missing.
 - Without an auth key the task prints the login URL (later: `docker logs tailscale`).
   Use `docker exec tailscale tailscale status` instead of `tailscale status`.
 - `TAILSCALE_DOCKER=no` stops the container and brings the native tailscaled back.
+- The `firewall` task and `check.sh` recognise the container.
 
 ## Good to know
 

@@ -39,7 +39,7 @@ Docker is installed first if it is missing.
   them so you can add them to `/opt/web/conf`.
 - If the container does not stay up, the native nginx is started again.
   `WEB_DOCKER=no` stops the container and brings the native nginx back.
-- The `firewall` task does not detect the container yet (it looks for the native nginx package), so it does not open its port for it; add e.g. `80/tcp` to `FIREWALL_EXTRA_PORTS` until it does.
+- The `firewall` task, `check.sh` and the `backup` task recognise the container (the firewall opens the port from `/opt/web/conf`).
 
 ## Good to know
 

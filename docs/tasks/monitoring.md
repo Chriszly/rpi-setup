@@ -46,4 +46,4 @@ and `/` mounted read-only. Docker is installed first if it is missing.
 - A native netdata is stopped (its package stays); its metric history is not
   carried over. If the container does not stay up, the native netdata is
   started again. `MONITORING_DOCKER=no` switches back.
-- The `firewall` task does not detect the container yet (it looks for the native netdata package), so it does not open the dashboard port for it; add `19999/tcp` to `FIREWALL_EXTRA_PORTS` until it does.
+- The `firewall` task, `check.sh` and the `backup` task recognise the container; the backup leaves out the metrics cache in `/opt/monitoring/cache`, which Netdata rebuilds.

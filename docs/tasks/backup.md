@@ -26,7 +26,9 @@ file and data), `/etc/pihole`, `/etc/samba/smb.conf`,
 `/var/lib/samba/private` (Samba passwords), `/var/lib/rpi-setup`,
 `/etc/nginx/sites-available`, `/etc/netdata`, `/etc/ssh/sshd_config.d`, the
 rpi-setup `config/` folder, and with `BACKUP_INCLUDE_SHARE=yes` the share
-folder.
+folder (also when Samba runs in its container). Netdata's metrics cache in a
+container (`/opt/monitoring/cache`) is left out; it is large and rebuilt on
+its own.
 
 ## What it installs
 

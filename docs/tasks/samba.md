@@ -47,7 +47,7 @@ is missing.
   same password); the task says so.
 - If the container does not stay up, the native smbd is started again.
   `SAMBA_DOCKER=no` switches back.
-- The `firewall` task does not detect the container yet (it looks for the native samba package), so it does not open the Samba ports for it; add `445/tcp` to `FIREWALL_EXTRA_PORTS` until it does.
+- The `firewall` task, `check.sh` and the `backup` task recognise the container; with `BACKUP_INCLUDE_SHARE=yes` the backup also takes the shared folder.
 
 ## Good to know
 
