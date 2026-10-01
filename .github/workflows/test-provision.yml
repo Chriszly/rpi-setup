@@ -73,6 +73,9 @@ jobs:
       - name: Test setup.sh CLI and menu
         run: sudo bash ci/test-setup.sh
 
+      - name: Test task helpers (ci/test-task-*.sh)
+        run: for t in ci/test-task-*.sh; do [ -e "$t" ] || continue; echo "== $t"; sudo bash "$t"; done
+
   # Exercises the Docker-based tasks on a plain x86 runner. The nspawn gate
   # cannot run Docker, so without this the compose/UID logic in netalertx and
   # teamspeak would only be tested by the manual QEMU job.
@@ -99,15 +102,50 @@ jobs:
 
   # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
   # today, resolved at run time) and on Bookworm (what existing Pis still run).
-  provision-gate:
-    name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }})
+  # Decides whether the PR touches anything the nspawn gate exercises. PRs that
+  # only change the flashers, their tests or other workflows skip the gate.
+  changes:
+    name: Detect provisioning changes
     runs-on: ubuntu-latest
-    needs: [syntax, unit]
     if: github.event_name == 'pull_request'
+    outputs:
+      provision: ${{ steps.diff.outputs.provision }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Diff against the base branch
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$files"
+          if grep -qE '^(setup\.sh|lib/|tasks/|ci/provision\.sh|\.github/workflows/test-provision\.yml|\.github/actions/)' <<<"$files"; then
+            echo provision=true >>"$GITHUB_OUTPUT"
+          else
+            echo provision=false >>"$GITHUB_OUTPUT"
+            echo "No provisioning changes; the nspawn gate is skipped."
+          fi
+
+  # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
+  # today, resolved at run time) and on Bookworm (what existing Pis still run).
+  # Each release runs as two parallel jobs (ci/provision.sh profiles
+  # container-system and container-web): package installs under arm64
+  # emulation dominate the gate, and splitting them roughly halves wall time.
+  provision-gate:
+    name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }}, ${{ matrix.group }})
+    runs-on: ubuntu-latest
+    needs: [syntax, unit, changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.provision == 'true'
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
+        release: [bookworm, latest]
+        group: [system, web]
         include:
           - release: bookworm
             version: 2025-05-13
@@ -170,7 +208,7 @@ jobs:
           run: |
             set -euo pipefail
             cd /workspace
-            bash ci/provision.sh /workspace
+            PROVISION_PROFILE=container-${{ matrix.group }} bash ci/provision.sh /workspace
 
       # ci/provision.sh writes the guest's journal, service status and logs to
       # <workdir>/ci-logs on failure; /workspace is the bind-mounted checkout.
@@ -178,7 +216,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: provision-gate-logs-${{ matrix.release }}
+          name: provision-gate-logs-${{ matrix.release }}-${{ matrix.group }}
           path: ci-logs/
           retention-days: 7
 
