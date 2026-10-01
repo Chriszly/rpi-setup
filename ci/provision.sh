@@ -238,12 +238,69 @@ unsandbox_in_container() {
     systemctl restart "$unit" || true
 }
 
+# Every package install ends in "systemctl daemon-reload", and on Trixie in the
+# nspawn gate each reload took ~16 s (36 reloads, ~9.5 of the ~16 min of the
+# "system" half). Nearly all of it is rpi-swap-generator, which takes ~11 s
+# under qemu-user; the rest is other generators and units that can never start
+# in this container (getty: CREDENTIALS, logind: NAMESPACE, remount-fs and the
+# zram/swap units: no block devices) and restart for the whole run. In
+# containers only, mask those generators and units, and print each
+# generator's run time so the next slow one shows up in the log. Real Pis and
+# the QEMU VM are untouched.
+CONTAINER_MASK_UNITS=(
+    console-getty.service
+    systemd-logind.service
+    systemd-remount-fs.service
+    systemd-zram-setup@zram0.service
+    dev-zram0.swap
+    rpi-resize-swap-file.service
+    rpi-setup-loop@var-swap.service
+)
+CONTAINER_MASK_GENERATORS=(rpi-swap-generator zram-generator cloud-init-generator)
+
+time_daemon_reload() {
+    local start end
+    start="$(date +%s%N)"
+    systemctl daemon-reload
+    end="$(date +%s%N)"
+    echo "=== CI: daemon-reload $1 took $(((end - start) / 1000000)) ms ==="
+}
+
+quiet_container_systemd() {
+    in_container || return 0
+    local g name out start end
+    echo "=== CI: masking units and generators that cannot work in this container ==="
+    time_daemon_reload before
+    echo "=== CI: generator run times ==="
+    for g in /usr/lib/systemd/system-generators/*; do
+        [[ -x "$g" && ! -d "$g" ]] || continue
+        out="$(mktemp -d)"
+        start="$(date +%s%N)"
+        timeout 60 "$g" "$out" "$out" "$out" >/dev/null 2>&1 || true
+        end="$(date +%s%N)"
+        rm -rf "$out"
+        echo "  $(((end - start) / 1000000)) ms  $g"
+    done
+    mkdir -p /etc/systemd/system-generators
+    for name in "${CONTAINER_MASK_GENERATORS[@]}"; do
+        ln -sfn /dev/null "/etc/systemd/system-generators/$name"
+    done
+    # Plain symlinks instead of "systemctl mask", which reloads once per unit.
+    for name in "${CONTAINER_MASK_UNITS[@]}"; do
+        ln -sfn /dev/null "/etc/systemd/system/$name"
+    done
+    time_daemon_reload after
+    systemctl stop "${CONTAINER_MASK_UNITS[@]}" >/dev/null 2>&1 || true
+    systemctl reset-failed || true
+}
+
 main() {
     local workdir="${1:-/workspace}"
     LOG_DIR="$workdir/ci-logs"
 
     echo "=== Profile: $PROFILE ==="
     echo "=== Tasks: ${TASKS[*]} ==="
+    quiet_container_systemd
 
     echo "=== Provisioning ==="
     run_setup "$workdir"

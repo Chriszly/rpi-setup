@@ -82,6 +82,39 @@ All switches:
 | `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 | `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`) |
+| `-Hostname`         | Host name, e.g. `homepi` (reachable as `homepi.local`)              |
+| `-WifiSsid`         | Wi-Fi network to join on first boot                                 |
+| `-WifiPassword`     | Its password (prompted, hidden, if omitted; empty = open network)   |
+| `-WifiCountry`      | Wi-Fi country code (regulatory domain); default `DE`                |
+| `-SshPublicKeyFile` | SSH public key to authorize for the user, e.g. `$HOME\.ssh\id_ed25519.pub` |
+
+### Optional: host name, Wi-Fi and SSH key
+
+With `-Hostname`, `-WifiSsid` and `-SshPublicKeyFile` the Pi comes up on your
+Wi-Fi under its own name and accepts your SSH key on the very first boot, with
+no screen or network cable:
+
+```powershell
+.\host\flash.ps1 -Disk 2 -UserName pi -Hostname homepi -WifiSsid 'My WiFi' -SshPublicKeyFile $HOME\.ssh\id_ed25519.pub
+ssh pi@homepi.local        # a few minutes later
+```
+
+Instead of switches you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` as
+environment variables (`$env:FLASH_HOSTNAME = 'homepi'`) or in
+`config\rpi-setup.env` next to the scripts (see the `flash` section at the end
+of `config\rpi-setup.env.example`; only the `FLASH_*` lines are read).
+Switches win over the environment, which wins over the file. The Wi-Fi
+password is never printed.
+
+Everything is checked before the card is written: the host name (letters,
+digits and `-`), the country (two letters), the Wi-Fi password (8-63
+characters) and the key file (must be an OpenSSH public key, not the private
+key). On a **Trixie** image the settings go into cloud-init's `user-data` and
+`network-config` on the boot partition; on **Bookworm** (no cloud-init) into a
+one-time `firstrun.sh` started from `cmdline.txt`, as Raspberry Pi Imager does
+it, so the Pi reboots once on first boot. The login user and SSH are still set
+up by `userconf.txt` and `ssh`, exactly as without these options.
 
 If Raspberry Pi Imager is missing or outdated, the script downloads the latest
 installer into `host\downloads\` and installs it silently before flashing. The
@@ -101,7 +134,7 @@ When finished it prints the SSH address and the commands to run on the Pi
 3. Connect over SSH:
 
 ```bash
-ssh <username>@raspberrypi.local
+ssh <username>@raspberrypi.local     # or <hostname>.local if you set -Hostname
 ```
 
 If `raspberrypi.local` does not resolve, find the Pi's IP address from your

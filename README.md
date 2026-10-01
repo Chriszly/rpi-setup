@@ -10,6 +10,11 @@ which the flash scripts write, or Bookworm).
    Lite, verifies it, writes it, and pre-creates your login user with SSH on:
    - Linux: `sudo ./host/flash.sh` ([guide](docs/setup-linux.md))
    - Windows, elevated PowerShell: `.\host\flash.ps1` ([guide](docs/setup-windows.md))
+
+   Optionally it also sets the host name, Wi-Fi and your SSH public key, so the
+   Pi comes up on your network without a screen or cable, e.g.
+   `sudo ./host/flash.sh -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub`
+   (Windows: `-Hostname`, `-WifiSsid`, `-SshPublicKeyFile`); see the guides.
 2. **Boot the Pi** with the card, wait 1-2 minutes, then
    `ssh <user>@raspberrypi.local` (or the Pi's IP from your router).
 3. **Fill in your settings** on the Pi (passwords, ports, host name, ...):
@@ -50,13 +55,16 @@ firmware updates take effect.
 |--------------|---------------------------------------------------------------------|-----------------------------------|
 | `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban, daily security updates, optional key-only SSH, journal size limit | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
 | `docker`     | Docker Engine, buildx and Compose (apt), log rotation               | none needed |
+| `network`    | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
 | `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended     | `PIHOLE_PASSWORD`, `PIHOLE_CONFIRM=yes`, `PIHOLE_DNS` |
 | `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
+| `backup`     | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
 | `web`        | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
 | `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
-| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | none needed (needs `docker`) |
+| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | `NETALERTX_PASSWORD` (empty = generated), `NETALERTX_LOGIN` (needs `docker`) |
 | `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` (needs `docker`, 64-bit OS) |
+| `firewall`   | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
 
 Each task prints the address to open when it finishes. Tasks are plain bash
 scripts inside `tasks/` - add your own by dropping in a file that appends to
@@ -117,8 +125,21 @@ on an older one. Use the **64-bit** Lite image: `teamspeak`'s Docker image is
 Both go into a marked block at the end of `/boot/firmware/config.txt` and
 apply after a reboot; switching them back to `no` removes the block again.
 
+## Updating
+
+Re-running a task does not update a container that is already running. To
+bring an installed Pi up to date, run `sudo bash update.sh`: it upgrades the
+OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`) and
+recreates the ones that changed, runs `pihole -up` if Pi-hole is installed and
+`rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
+skipped, a failed step does not stop the others, and it tells you when a reboot
+is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
+`--no-containers`.
+
 ## Documentation
 
+- [Raspberry Pi 5 test checklist](docs/pi5-test-checklist.md) - one full test
+  run on real hardware, checked with `sudo bash check.sh`, and what to report.
 - [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
   `host/flash.ps1` and provision the Pi, step by step.
 - [Setup guide - Linux host](docs/setup-linux.md) - flash an SD card with
@@ -147,8 +168,13 @@ apply after a reboot; switching them back to `no` removes the block again.
   On first start the ServerAdmin privilege key is printed to the console - save
   it, it is only shown once and is needed to log in from the TS6 client at
   `<pi-ip>:9987` (later: `docker logs teamspeak`).
-- Check the `[+] Complete: <task>` lines at the end of a run; a task that
-  could not finish prints `[!]` or `[x]` lines explaining why.
+- A run ends with a summary: each task with `ok`, `failed` or `skipped`, and a
+  reboot hint when one is needed. A failed task does not stop the others, but
+  tasks that need it are skipped and `setup.sh` exits non-zero. `base` always
+  runs first, and `docker` is added automatically (before the tasks that need
+  it) when you pick `netalertx` or `teamspeak` without Docker installed. The
+  whole output is appended to `/var/log/rpi-setup.log` (readable by root only,
+  as it holds generated passwords).
 
 ## Acknowledgements
 
