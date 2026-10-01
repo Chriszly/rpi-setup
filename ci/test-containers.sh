@@ -14,12 +14,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TMP="$(mktemp -d)"
 export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
-PROJECTS=()
 UNIT=rpi-setup-test-native
 cleanup() {
-    local p
-    for p in "${PROJECTS[@]}"; do
-        docker compose -f "$p/docker-compose.yml" down -t 1 >/dev/null 2>&1 || true
+    local c
+    for c in $(docker ps -aq --filter name=^rpi-setup-test- 2>/dev/null); do
+        docker rm -f "$c" >/dev/null 2>&1 || true
     done
     if [[ -f "/etc/systemd/system/$UNIT.service" ]]; then
         systemctl disable --now "$UNIT" >/dev/null 2>&1 || true
@@ -97,7 +96,6 @@ compose_project() {
         container_service_head "rpi-setup-test-$task" alpine:3
         printf '    command: ["sh", "-c", "%s"]\n' "$*"
     } >"$dir/docker-compose.yml"
-    PROJECTS+=("$dir")
     printf '%s\n' "$dir"
 }
 
