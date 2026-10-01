@@ -180,6 +180,7 @@ flow() {
         export RPI_SETUP_CONFIG_DIR="$flow_tmp/cfg"
         export RPI_SETUP_REBOOT_FILE="${REBOOT_FILE:-$flow_tmp/no-reboot}"
         export RPI_SETUP_MODEL_FILE="${MODEL_FILE:-$flow_tmp/no-model}"
+        export RPI_SETUP_DONE_FILE="$flow_tmp/tasks.done"
         run_base()      { echo "ran-base"; }
         run_docker()    { echo "ran-docker"; false; echo "docker-went-on"; }
         run_netalertx() { echo "ran-netalertx"; }
@@ -198,6 +199,8 @@ else
     pass "errexit still applies inside a task"
 fi
 assert_contains "the run goes on after a failed task" "ran-samba" "$out"
+assert_eq "finished tasks are recorded for autodeploy, failed or skipped ones are not" "base samba" \
+    "$(xargs <"$flow_tmp/tasks.done")"
 if [[ "$out" == *ran-netalertx* ]]; then
     fail "a task whose dependency failed must not run"
 else
