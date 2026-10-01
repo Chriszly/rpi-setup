@@ -176,6 +176,7 @@ run_tasks() {
     set -e
     if [[ $rc -eq 0 ]]; then
       TASK_RESULT[$name]=ok
+      record_task_done "$name"
       say "Complete: $name"
     else
       TASK_RESULT[$name]=failed
@@ -183,6 +184,17 @@ run_tasks() {
       RUN_FAILED=1
     fi
   done
+}
+
+# Remember that task $1 finished on this Pi, so the autodeploy task knows
+# which tasks to rerun. Best effort: a read-only state folder never fails a run.
+record_task_done() {
+  local f="${RPI_SETUP_DONE_FILE:-/var/lib/rpi-setup/tasks.done}"
+  {
+    mkdir -p "$(dirname "$f")" &&
+      { cat "$f" 2>/dev/null || true; printf '%s\n' "$1"; } | sort -u >"$f.tmp" &&
+      mv -f "$f.tmp" "$f"
+  } 2>/dev/null || true
 }
 
 # The results table, reboot hint and log location printed at the end of a run.

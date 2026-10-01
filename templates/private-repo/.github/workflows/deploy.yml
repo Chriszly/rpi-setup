@@ -1,0 +1,60 @@
+# Deploy to Pi - copy this file to .github/workflows/deploy.yml in your
+# PRIVATE settings repository (see README.md next to it). It runs only when
+# you start it under Actions > "Deploy to Pi" > Run workflow, on the runner
+# that "sudo bash setup.sh runner" installed on the Pi.
+name: Deploy to Pi
+
+on:
+  workflow_dispatch:
+    inputs:
+      pi:
+        description: 'Which Pi: its runner label (default: its hostname) and its folder under pis/'
+        required: true
+        default: pi5
+      tasks:
+        description: 'Tasks to run, space separated. Empty: every task already set up on the Pi'
+        required: false
+        default: ''
+      branch:
+        description: 'Branch of rpi-setup to deploy (must be listed in RUNNER_BRANCHES on the Pi)'
+        required: true
+        default: main
+      settings:
+        description: 'Install pis/<pi>/rpi-setup.env from this repository on the Pi first'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.pi }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy rpi-setup to ${{ inputs.pi }}
+    runs-on: [self-hosted, '${{ inputs.pi }}']
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy
+        env:
+          PI: ${{ inputs.pi }}
+          TASKS: ${{ inputs.tasks }}
+          BRANCH: ${{ inputs.branch }}
+          SETTINGS: ${{ inputs.settings }}
+        run: |
+          args=(--branch "$BRANCH" --tasks "$TASKS")
+          if [ "$SETTINGS" = true ]; then
+            test -f "pis/$PI/rpi-setup.env" || { echo "pis/$PI/rpi-setup.env not found in this repository"; exit 1; }
+            args+=(--config "$PWD/pis/$PI/rpi-setup.env")
+          fi
+          sudo -n /usr/local/sbin/rpi-setup-deploy "${args[@]}"
+
+      # The checkout holds your settings; do not leave it in the runner's
+      # work folder on the Pi.
+      - name: Remove the checkout
+        if: always()
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -delete
