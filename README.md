@@ -226,8 +226,8 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
   `samba` tasks pick up your user through `SUDO_USER`. After `docker`, log out
   and back in to use `docker` without `sudo`.
 - `pihole` and `tailscale` run their official installers (`curl | sh`); both
-  print a warning first, and `pihole` asks you to type `yes` unless
-  `PIHOLE_CONFIRM=yes`.
+  print a warning first; `PIHOLE_CONFIRM=no` stops `pihole` from running its
+  installer (the task then fails).
 - `network` changes the Pi's address: over SSH the session drops, so run it
   alone or last.
 - Check the `[+] Complete: <task>` lines and the summary at the end of a run;

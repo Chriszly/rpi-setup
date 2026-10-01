@@ -9,14 +9,14 @@ sudo bash setup.sh pihole
 ```
 
 The official installer runs as `curl https://install.pi-hole.net | bash`. The
-task warns first and asks you to type `yes`, unless `PIHOLE_CONFIRM=yes` (set
-it for an unattended run).
+task prints a warning first and asks no question: it runs the installer unless
+`PIHOLE_CONFIRM=no`, which fails the task instead (the run summary shows it).
 
 ## Settings
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `PIHOLE_CONFIRM` | empty: ask | `yes` skips the "type yes" question before the installer runs. |
+| `PIHOLE_CONFIRM` | `yes` | `yes`: run the official `curl \| bash` installer (after the warning). `no`: do not run it; the task fails so the summary shows Pi-hole is not installed. Not used once Pi-hole is installed or with `PIHOLE_DOCKER=yes`. |
 | `PIHOLE_UNATTENDED` | `yes` | Install without Pi-hole's dialogs using the settings below; `no` shows the dialogs. |
 | `PIHOLE_PASSWORD` | empty: generated | Web admin password. Empty: generated on the first install, printed once and saved. Set it later to change the password on the next run. |
 | `PIHOLE_INTERFACE` | the default route's | Interface Pi-hole answers on, e.g. `eth0` or `wlan0`. Install only. |
