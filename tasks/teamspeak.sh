@@ -5,6 +5,31 @@ set -euo pipefail
 
 TASKS+=("teamspeak|TeamSpeak 6 voice server (voice :9987, file :30033, web :10080)")
 
+# teamspeak_server_port DIR FRESH PORT - print the UDP port the server listens
+# on inside the container and record it in DIR/voice-port. TSSERVER_DEFAULT_PORT
+# only sets the port of the first virtual server when its database is created;
+# after that the server keeps that port. So a new server (FRESH=1) takes PORT
+# and an existing one keeps the recorded port. A server set up before the port
+# was recorded falls back to TSSERVER_DEFAULT_PORT in DIR/docker-compose.yml
+# (what it was started with), else 9987.
+teamspeak_server_port() {
+  local file="$1/voice-port" fresh="$2" port="$3"
+  if [[ "$fresh" -ne 1 ]]; then
+    if [[ -f "$file" ]]; then
+      port="$(tr -d '[:space:]' <"$file")"
+    else
+      port="$(sed -n 's/^ *TSSERVER_DEFAULT_PORT: *"\{0,1\}\([0-9]*\)"\{0,1\} *$/\1/p' \
+        "$1/docker-compose.yml" 2>/dev/null | tail -n1)"
+      port="${port:-9987}"
+    fi
+    if ! [[ "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+      die "$file must hold the server's voice port (got '$port'); fix or delete it"
+    fi
+  fi
+  printf '%s\n' "$port" | write_if_changed "$file" 0644 || true
+  printf '%s\n' "$port"
+}
+
 run_teamspeak() {
   : "${TEAMSPEAK_VOICE_PORT:=9987}" "${TEAMSPEAK_FILE_PORT:=30033}" "${TEAMSPEAK_QUERY_PORT:=10080}"
   : "${TEAMSPEAK_QUERY_HTTP:=yes}" "${TEAMSPEAK_ACCEPT_LICENSE:=yes}"
@@ -41,9 +66,16 @@ run_teamspeak() {
   # directory must stay owned by 9987 for the bind mount to be writable.
   ensure_container_dir "$dir" 9987
 
-  # The container listens on the same ports it publishes: TeamSpeak tells
-  # clients which file transfer port to use, so the two must match. The
-  # compose file holds the query password, hence root-only (0600).
+  # The privilege key is only printed when the server creates its database.
+  local fresh=0 token="" inner
+  [[ -n "$(ls -A "$dir/data" 2>/dev/null)" ]] || fresh=1
+  inner="$(teamspeak_server_port "$dir" "$fresh" "$TEAMSPEAK_VOICE_PORT")"
+
+  # The file transfer and query ports are the same inside and outside:
+  # TeamSpeak tells clients which file transfer port to use, so the two must
+  # match. The voice port inside stays the one the server was created with
+  # and TEAMSPEAK_VOICE_PORT is published on the host. The compose file holds
+  # the query password, hence root-only (0600).
   local changed=0
   if write_if_changed "$dir/docker-compose.yml" 0600 <<EOF
 services:
@@ -52,12 +84,12 @@ services:
     container_name: $name
     restart: unless-stopped
     ports:
-      - "${TEAMSPEAK_VOICE_PORT}:${TEAMSPEAK_VOICE_PORT}/udp"   # Voice
+      - "${TEAMSPEAK_VOICE_PORT}:${inner}/udp"   # Voice
       - "${TEAMSPEAK_FILE_PORT}:${TEAMSPEAK_FILE_PORT}/tcp"     # File transfer
       - "${TEAMSPEAK_QUERY_PORT}:${TEAMSPEAK_QUERY_PORT}/tcp"   # Web query
     environment:
       TSSERVER_LICENSE_ACCEPTED: "accept"
-      TSSERVER_DEFAULT_PORT: "${TEAMSPEAK_VOICE_PORT}"
+      TSSERVER_DEFAULT_PORT: "${inner}"
       TSSERVER_FILE_TRANSFER_PORT: "${TEAMSPEAK_FILE_PORT}"
       TSSERVER_QUERY_HTTP_PORT: "${TEAMSPEAK_QUERY_PORT}"
 ${query}
@@ -77,15 +109,14 @@ EOF
     return
   fi
 
-  # The privilege key is only printed when the server creates its database.
-  local fresh=0 token=""
-  [[ -n "$(ls -A "$dir/data" 2>/dev/null)" ]] || fresh=1
-
   say 'Starting TeamSpeak 6 container'
   compose_up "$dir"
 
   ip="$(pi_ip)" || true
   if [[ $fresh -eq 0 ]]; then
+    if [[ "$inner" != "$TEAMSPEAK_VOICE_PORT" ]]; then
+      info "Host UDP port ${TEAMSPEAK_VOICE_PORT} forwards to the server's own voice port ${inner} (fixed when it was created)."
+    fi
     say "TeamSpeak 6 restarted with the new settings at ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT}"
     return
   fi
@@ -100,7 +131,4 @@ EOF
     say "Find it later with: docker logs $name"
   fi
   say "Connect with the TeamSpeak 6 client and enter the privilege key when asked."
-  if [[ "$TEAMSPEAK_VOICE_PORT" != 9987 ]]; then
-    info 'TEAMSPEAK_VOICE_PORT only takes effect for a new server (empty data directory).'
-  fi
 }
