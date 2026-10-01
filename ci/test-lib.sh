@@ -10,8 +10,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/host/flash.sh"
 
 # --- lib/common.sh: net_base --------------------------------------------------
@@ -44,7 +43,7 @@ assert_contains "die prints message to stderr" "boom" "$( (die "boom") 2>&1 >/de
 if [[ $EUID -eq 0 ]] && command -v getent >/dev/null 2>&1; then
     uid_dir=/var/lib/rpi-setup/uids
     svc="citest-$$"
-    cleanup_uids() { rm -f "$uid_dir/$svc" "$uid_dir/$svc-taken"; }
+    cleanup_uids() { rm -f "$uid_dir/$svc" "$uid_dir/$svc-taken"; rm -rf "$TMP"; }
     trap cleanup_uids EXIT
 
     first="$(assign_uid "$svc")"

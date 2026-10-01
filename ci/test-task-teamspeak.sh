@@ -6,14 +6,10 @@
 # Run: bash ci/test-task-teamspeak.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 TASKS=()
 . "$ROOT/tasks/teamspeak.sh"
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
 # --- new server: takes the configured port and records it ---------------------
 d="$TMP/new"; mkdir -p "$d"

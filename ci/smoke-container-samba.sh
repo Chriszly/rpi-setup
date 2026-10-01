@@ -7,8 +7,7 @@
 # Run: sudo bash ci/smoke-container-samba.sh   (installs samba, adds a user; CI runners only)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 U=smbci
 PW=ci-Passw0rd

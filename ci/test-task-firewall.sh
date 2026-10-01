@@ -5,14 +5,10 @@
 # Run: bash ci/test-task-firewall.sh   (sudo for the "nft -c" and run_firewall cases)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 declare -a TASKS=()
 . "$ROOT/tasks/firewall.sh"
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
 # --- firewall_port_specs --------------------------------------------------------
 assert_eq "port specs: empty" "" "$(firewall_port_specs X '')"
@@ -54,8 +50,8 @@ assert_contains "ruleset: tailscale0" 'iifname "tailscale0" accept' "$rs"
 assert_contains "ruleset: ssh" 'tcp dport { 22 } accept comment "SSH"' "$rs"
 assert_contains "ruleset: no allow-from opens web ports to all" "tcp dport { 53, 445, 80, 19999 } accept" "$rs"
 assert_contains "ruleset: udp" "udp dport { 53 } accept" "$rs"
-if [[ "$rs" == *"saddr"* ]]; then fail "ruleset: no saddr rule without allow-from"; else pass "ruleset: no saddr rule without allow-from"; fi
-if [[ "$rs" == *"flush ruleset"* ]]; then fail "ruleset: never flushes other tables"; else pass "ruleset: never flushes other tables"; fi
+assert_lacks "ruleset: no saddr rule without allow-from" "saddr" "$rs"
+assert_lacks "ruleset: never flushes other tables" "flush ruleset" "$rs"
 
 rs="$(firewall_ruleset "22 2222" "53/udp 80/tcp" "80/tcp 19999/tcp" "192.168.1.0/24 fd00::/8")"
 assert_contains "ruleset: several ssh ports" 'tcp dport { 22, 2222 } accept comment "SSH"' "$rs"
@@ -64,7 +60,8 @@ assert_contains "ruleset: v4 web rule" 'ip saddr { 192.168.1.0/24 } tcp dport { 
 assert_contains "ruleset: v6 web rule" 'ip6 saddr { fd00::/8 } tcp dport { 19999 } accept' "$rs"
 
 rs="$(firewall_ruleset "22" "" "" "")"
-if [[ "$rs" == *"{  }"* || "$rs" == *"{ }"* ]]; then fail "ruleset: no empty sets"; else pass "ruleset: no empty sets"; fi
+assert_lacks "ruleset: no empty sets" "{ }" "$rs"
+assert_lacks "ruleset: no empty sets (two spaces)" "{  }" "$rs"
 assert_eq "ruleset: braces balance" "$(grep -o '{' <<<"$rs" | wc -l)" "$(grep -o '}' <<<"$rs" | wc -l)"
 
 # --- firewall_service_ports (stubbed system) --------------------------------------
@@ -89,7 +86,7 @@ else
   assert_contains "services: pihole dns udp" "53/udp open pihole-dns" "$out"
   assert_contains "services: pihole web 80" "80/tcp web pihole-web" "$out"
   assert_contains "services: pihole web 443" "443/tcp web pihole-web" "$out"
-  if [[ "$out" == *"67/udp"* ]]; then fail "services: no DHCP when off"; else pass "services: no DHCP when off"; fi
+  assert_lacks "services: no DHCP when off" "67/udp" "$out"
 
   FAKE_DHCP=true
   assert_contains "services: pihole DHCP" "67/udp open pihole-dhcp" "$(firewall_service_ports)"
@@ -104,14 +101,10 @@ else
   out="$(firewall_service_ports)"
   assert_contains "services: netdata port from settings" "19998/tcp web netdata" "$out"
   assert_contains "services: samba 445" "445/tcp open samba" "$out"
-  if [[ "$out" == *pihole* ]]; then fail "services: no pihole when absent"; else pass "services: no pihole when absent"; fi
+  assert_lacks "services: no pihole when absent" "pihole" "$out"
 
   printf "MONITORING_BIND='127.0.0.1'\n" >"$RPI_SETUP_CONFIG_DIR/local/monitoring.env"
-  if [[ "$(firewall_service_ports)" == *netdata* ]]; then
-    fail "services: localhost-only netdata stays closed"
-  else
-    pass "services: localhost-only netdata stays closed"
-  fi
+  assert_lacks "services: localhost-only netdata stays closed" "netdata" "$(firewall_service_ports)"
   printf "MONITORING_PORT='99999'\n" >"$RPI_SETUP_CONFIG_DIR/local/monitoring.env"
   assert_fails "services: bad MONITORING_PORT dies" firewall_service_ports
   rm -f "$RPI_SETUP_CONFIG_DIR/local/monitoring.env"

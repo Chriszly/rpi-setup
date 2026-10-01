@@ -7,8 +7,7 @@
 # Run: sudo bash ci/smoke-container-monitoring.sh   (installs netdata; CI runners only)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 PORT=19999
 setup() { env "$@" bash "$ROOT/setup.sh" monitoring; }

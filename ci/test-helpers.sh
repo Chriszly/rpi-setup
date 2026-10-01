@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # test-helpers.sh - tiny assertion helpers shared by ci/test-*.sh.
 # Source this file; call finish_tests at the end of the test script.
+# It sets ROOT (the repo checkout) and TMP (a temp folder removed on exit; a
+# script that sets its own EXIT trap must remove $TMP itself).
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
 TEST_FAILURES=0
 TEST_PASSES=0
@@ -29,6 +35,11 @@ assert_contains() {
     fi
 }
 
+# assert_lacks NAME NEEDLE HAYSTACK
+assert_lacks() {
+    if [[ "$3" == *"$2"* ]]; then fail "$1 (did not expect '$2')"; else pass "$1"; fi
+}
+
 # assert_ok NAME CMD [ARGS...]  - command must exit 0 (run in a subshell)
 assert_ok() {
     local name="$1"; shift
@@ -47,6 +58,18 @@ assert_fails() {
     else
         pass "$name"
     fi
+}
+
+# stub_container_helpers - replace the Docker, image and port helpers a
+# container task calls before container_up with no-ops (no port is taken).
+stub_container_helpers() {
+    require_image_ref() { :; }
+    container_require_64bit() { :; }
+    container_require_docker() { :; }
+    container_pull() { :; }
+    container_stop_native() { :; }
+    container_state() { :; }
+    port_owner() { return 1; }
 }
 
 finish_tests() {
