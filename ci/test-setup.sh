@@ -148,8 +148,10 @@ done
 assert_eq "every name in the example belongs to a task" "$example_names" "$(grep -v '^$' <<<"$all_names" | sort)"
 
 # --- Run plan: dependencies and order -----------------------------------------
+# container_require_docker (lib/containers.sh) installs Docker itself, only
+# when <TASK>_DOCKER=yes, so it is no fixed dependency.
 for n in "${names[@]}"; do
-    if grep -q 'require_docker' "$ROOT/tasks/$n.sh"; then
+    if grep -Eq '(^|[^_[:alnum:]])require_docker' "$ROOT/tasks/$n.sh"; then
         assert_contains "TASK_NEEDS lists docker for '$n' (it calls require_docker)" "docker" "${TASK_NEEDS[$n]:-}"
     fi
 done
