@@ -8,14 +8,10 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 # Sourcing host/flash.sh loads lib/common.sh and defines the helpers without
 # running main().
 . "$ROOT/host/flash.sh"
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
 CMDLINE='console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=ext4 fsck.repair=yes rootwait'
 KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBx4Wp1PpH0Qm5b6kG5a0bq0nZ4s2yY1j0mQ3v5fYk8e you@pc'
