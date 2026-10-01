@@ -2,11 +2,14 @@
 # Task: web - nginx web server serving a simple index page.
 # Settings: WEB_* in config/rpi-setup.env (names in config/tasks/web.env).
 set -euo pipefail
+. "$RPI_SETUP_ROOT/lib/containers.sh"
 
 TASKS+=("web|Lite web server (nginx with a default page, :80 or :8080)")
 
 run_web() {
-  : "${WEB_TITLE:=Raspberry Pi}"
+  : "${WEB_TITLE:=Raspberry Pi}" "${WEB_DOCKER:=no}"
+  if setting_on WEB_DOCKER; then run_web_container; return; fi
+  container_leave web
   local site=/etc/nginx/sites-available/default owner="" want="${WEB_PORT:-}" cur
   [[ -z "$want" ]] || require_port WEB_PORT
   [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
@@ -87,4 +90,106 @@ nginx_site_port() {
 nginx_move_port() {
   local site="$1" from="$2" to="$3"
   sed -Ei "s/^([[:space:]]*listen[[:space:]]+(\\[::\\]:)?)${from}([[:space:];])/\\1${to}\\3/" "$site"
+}
+
+# WEB_DOCKER=yes: nginx in its own container (host network), serving
+# /opt/web/html with the site config from /opt/web/conf. A native nginx is
+# stopped and its /var/www/html copied over once.
+run_web_container() {
+  : "${WEB_IMAGE:=nginx:stable-alpine}"
+  local dir name=web port="${WEB_PORT:-}" owner="" changed=0 native=/etc/nginx/sites-available/default
+  [[ -z "$port" ]] || require_port WEB_PORT
+  require_image_ref WEB_IMAGE
+  [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
+  container_require_64bit WEB_DOCKER
+  container_require_docker
+  dir="$(container_dir web)"
+
+  # Port: WEB_PORT, else the one used so far (container or native nginx),
+  # else 80, or 8080 when something other than nginx (Pi-hole) holds 80.
+  if [[ -z "$port" ]]; then
+    port="$(nginx_site_port "$dir/conf/default.conf")"
+    [[ -n "$port" ]] || port="$(nginx_site_port "$native")"
+    if [[ -z "$port" ]]; then
+      port=80
+      owner="$(port_owner 80)" || owner=""
+      [[ -z "$owner" || "$owner" == nginx ]] || port=8080
+    fi
+  fi
+  owner="$(port_owner "$port")" || owner=""
+  [[ -z "$owner" || "$owner" == nginx ]] ||
+    die "Port $port is already used by '$owner'; set WEB_PORT to a free port"
+
+  install -m 0755 -d "$dir" "$dir/conf" "$dir/html"
+  if web_container_compose "$dir" "$name" | write_if_changed "$dir/docker-compose.yml" 0644; then changed=1; fi
+  if web_container_site "$port" | write_if_changed "$dir/conf/default.conf" 0644; then changed=1; fi
+  container_pull "$dir"
+
+  container_copy_once "$dir" /var/www/html "$dir/html" || true
+  web_index_page "$dir/html/index.html"
+  local extra=""
+  if [[ -d /etc/nginx/sites-enabled ]]; then
+    extra="$(find /etc/nginx/sites-enabled -mindepth 1 ! -name default -printf '%f ' 2>/dev/null)" || extra=""
+  fi
+  [[ -z "$extra" ]] || warn "Native nginx sites not carried over: ${extra}(add them to $dir/conf)"
+  container_stop_native "$dir" nginx
+
+  # The site config is a bind mount; nginx reads it at start.
+  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
+    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
+  fi
+  container_up "$dir" "$name"
+
+  local url ip=""
+  ip="$(pi_ip)" || true
+  url="http://${ip:-$(hostname)}"
+  [[ "$port" == 80 ]] || url="$url:$port"
+  say "nginx container running - open $url in your browser (files in $dir/html)"
+}
+
+# nginx site for the container, listening on port $1 (IPv6 too where the
+# host has it; nginx will not start on a missing address family).
+web_container_site() {
+  local v6=""
+  [[ ! -s /proc/net/if_inet6 ]] || v6="    listen [::]:$1;"
+  cat <<EOF
+# Managed by rpi-setup (tasks/web.sh, WEB_* settings).
+server {
+    listen $1;
+${v6}
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+}
+
+# Compose file of the web container in folder $1, container name $2.
+web_container_compose() {
+  local dir="$1" name="$2"
+  echo 'services:'
+  echo '  web:'
+  container_service_head "$name" "$WEB_IMAGE" CHOWN SETUID SETGID NET_BIND_SERVICE
+  cat <<EOF
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /run
+      - /tmp
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - type: bind
+        source: $dir/html
+        target: /usr/share/nginx/html
+        read_only: true
+      - type: bind
+        source: $dir/conf
+        target: /etc/nginx/conf.d
+        read_only: true
+EOF
 }
