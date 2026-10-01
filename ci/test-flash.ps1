@@ -3,7 +3,7 @@
 # admin privileges, a physical SD card, Imager or network access.
 #
 # Loads flash.ps1's function definitions (skipping main()) and asserts on the
-# pure logic: Imager install-path detection, version parsing, and the guard
+# pure logic: Imager install-path detection, argument quoting, and the guard
 # that keeps main() from colliding with the [int]$Disk parameter.
 #
 # Run: pwsh -NoProfile -File ci/test-flash.ps1
@@ -37,99 +37,27 @@ function Assert-True {
     else            { Write-Host "[FAIL] $Name" -ForegroundColor Red; $script:failures++ }
 }
 
-# --- Get-ImagerVersion: must accept a leading 'v' (e.g. v2.0.10) ---------------
-# Test the version parsing logic directly (pure logic, no file I/O)
-$testCases = @(
-    @{ Input = 'v2.0.10';       Expected = '2.0.10' },
-    @{ Input = 'V2.0.10';       Expected = '2.0.10' },
-    @{ Input = '2.0.10';        Expected = '2.0.10' },
-    @{ Input = 'v2.0.10.0';     Expected = '2.0.10.0' },
-    @{ Input = 'v1.2.3.4';      Expected = '1.2.3.4' },
-    @{ Input = 'v2.0.10 beta';  Expected = '2.0.10' }  # stops at space
-)
-foreach ($tc in $testCases) {
-    $parsed = ($tc.Input -replace '^[vV]' -split ' ')[0]
-    $v = $null
-    $ok = [version]::TryParse($parsed, [ref]$v) -and $v.ToString() -eq $tc.Expected
-    Assert-True $ok "Get-ImagerVersion parsing logic: '$($tc.Input)' -> '$($tc.Expected)' (got '$parsed')"
-}
-
-# Also test Get-ImagerVersion with a real file if possible (best-effort)
-$tmpDir = Join-Path $env:TEMP "imager_test_$([guid]::NewGuid().ToString('N'))"
-New-Item -ItemType Directory -Path $tmpDir | Out-Null
-try {
-    $dll = Join-Path $tmpDir 'rpi-imager-test.dll'
-    $td = @'
-using System.Reflection;
-[assembly: AssemblyInformationalVersion("v2.0.10")]
-[assembly: AssemblyFileVersion("2.0.10")]
-[assembly: AssemblyProduct("Raspberry Pi Imager")]
-namespace ImagerTest { public class Marker { } }
-'@
-    Add-Type -TypeDefinition $td -OutputAssembly $dll
-    $ver = Get-ImagerVersion -Path $dll
-    if ($ver) {
-        Assert-True ($ver -eq '2.0.10') "Get-ImagerVersion with mock DLL: 'v2.0.10' -> '2.0.10' (got '$ver')"
-    } else {
-        Write-Warn "Mock DLL version detection skipped (Add-Type -OutputAssembly limitation in this PS version)"
-    }
-} finally {
-    Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-# --- Get-ImagerPath: must find the current 'Raspberry Pi Ltd\Imager' layout -----
+# --- Get-ImagerPath: finds the current and the legacy install layout ------------
 $origProg   = $env:ProgramFiles
 $origProg86 = ${env:ProgramFiles(x86)}
 $origLocal  = $env:LOCALAPPDATA
-$mock       = Join-Path $env:TEMP "imager_path_$([guid]::NewGuid().ToString('N'))"
-$exe        = Join-Path $mock 'Raspberry Pi Ltd\Imager\rpi-imager.exe'
-New-Item -ItemType Directory -Path (Split-Path -Parent $exe) -Force | Out-Null
-New-Item -ItemType File -Path $exe -Force | Out-Null
-try {
-    $env:ProgramFiles = $mock
-    ${env:ProgramFiles(x86)} = "$mock\x86"
-    $env:LOCALAPPDATA = "$mock\local"
-    $found = Get-ImagerPath
-    Assert-True ($found -eq $exe) "Get-ImagerPath finds 'Raspberry Pi Ltd\Imager\rpi-imager.exe' (got '$found')"
-} finally {
-    $env:ProgramFiles = $origProg
-    ${env:ProgramFiles(x86)} = $origProg86
-    $env:LOCALAPPDATA = $origLocal
-    Remove-Item -LiteralPath $mock -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-# --- Get-ImagerPath: legacy 'Raspberry Pi Imager' layout must still work --------
-$mock2 = Join-Path $env:TEMP "imager_path2_$([guid]::NewGuid().ToString('N'))"
-$exe2  = Join-Path $mock2 'Raspberry Pi Imager\rpi-imager.exe'
-New-Item -ItemType Directory -Path (Split-Path -Parent $exe2) -Force | Out-Null
-New-Item -ItemType File -Path $exe2 -Force | Out-Null
-try {
-    $env:ProgramFiles = $mock2
-    ${env:ProgramFiles(x86)} = "$mock2\x86"
-    $env:LOCALAPPDATA = "$mock2\local"
-    $found = Get-ImagerPath
-    Assert-True ($found -eq $exe2) "Get-ImagerPath still finds legacy 'Raspberry Pi Imager' (got '$found')"
-} finally {
-    $env:ProgramFiles = $origProg
-    ${env:ProgramFiles(x86)} = $origProg86
-    $env:LOCALAPPDATA = $origLocal
-    Remove-Item -LiteralPath $mock2 -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-# --- Resolve-ImagerExe: a .cmd wrapper must resolve to the sibling rpi-imager.exe
-$mock3 = Join-Path $env:TEMP "imager_cli_$([guid]::NewGuid().ToString('N'))"
-$exe3  = Join-Path $mock3 'rpi-imager.exe'
-$cmd3  = Join-Path $mock3 'rpi-imager-cli.cmd'
-New-Item -ItemType Directory -Path $mock3 -Force | Out-Null
-New-Item -ItemType File -Path $exe3 -Force | Out-Null
-New-Item -ItemType File -Path $cmd3 -Force | Out-Null
-try {
-    Assert-True ((Resolve-ImagerExe $cmd3) -eq $exe3) "Resolve-ImagerExe maps rpi-imager-cli.cmd to the sibling rpi-imager.exe"
-    Assert-True ((Resolve-ImagerExe $exe3) -eq $exe3) "Resolve-ImagerExe leaves rpi-imager.exe untouched"
-    Remove-Item -LiteralPath $exe3 -Force
-    Assert-True ((Resolve-ImagerExe $cmd3) -eq $cmd3) "Resolve-ImagerExe keeps the .cmd when no sibling exe exists"
-} finally {
-    Remove-Item -LiteralPath $mock3 -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($layout in @('Raspberry Pi Ltd\Imager', 'Raspberry Pi Imager')) {
+    $mock = Join-Path $env:TEMP "imager_path_$([guid]::NewGuid().ToString('N'))"
+    $exe  = Join-Path $mock "$layout\rpi-imager.exe"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $exe) -Force | Out-Null
+    New-Item -ItemType File -Path $exe -Force | Out-Null
+    try {
+        $env:ProgramFiles = $mock
+        ${env:ProgramFiles(x86)} = "$mock\x86"
+        $env:LOCALAPPDATA = "$mock\local"
+        $found = Get-ImagerPath
+        Assert-True ($found -eq $exe) "Get-ImagerPath finds '$layout\rpi-imager.exe' (got '$found')"
+    } finally {
+        $env:ProgramFiles = $origProg
+        ${env:ProgramFiles(x86)} = $origProg86
+        $env:LOCALAPPDATA = $origLocal
+        Remove-Item -LiteralPath $mock -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # --- ConvertTo-ArgumentString: quote only what needs it, escape embedded quotes

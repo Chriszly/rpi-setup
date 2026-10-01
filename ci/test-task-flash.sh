@@ -173,6 +173,7 @@ bad "hostname longer than 63" "FLASH_HOSTNAME=$(printf 'a%.0s' {1..64})"
 bad "country with 3 letters" FLASH_WIFI_COUNTRY=DEU
 bad "country with a digit" FLASH_WIFI_COUNTRY=D1
 bad "SSID longer than 32 bytes" "FLASH_WIFI_SSID=$(printf 'x%.0s' {1..33})"
+bad "SSID of 17 characters but 34 bytes" "FLASH_WIFI_SSID=$(printf '\xc3\xa9%.0s' {1..17})"
 bad "SSID with a newline" $'FLASH_WIFI_SSID=a\nb'
 bad "Wi-Fi password shorter than 8" FLASH_WIFI_SSID=net FLASH_WIFI_PASSWORD=short
 bad "Wi-Fi password longer than 63" FLASH_WIFI_SSID=net "FLASH_WIFI_PASSWORD=$(printf 'p%.0s' {1..64})"

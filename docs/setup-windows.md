@@ -11,9 +11,9 @@ For the equivalent guide on a Linux host, see [setup-linux.md](setup-linux.md).
 
 - A Raspberry Pi (any model that runs Raspberry Pi OS 64-bit) and an SD card
   (plus a card reader for your PC).
-- **Raspberry Pi Imager 2.x** - https://www.raspberrypi.com/software/. The flash
-  script installs it automatically and keeps it up to date if it is missing or
-  outdated (silently, admin required).
+- **Raspberry Pi Imager** - https://www.raspberrypi.com/software/. The flash
+  script uses any installed version and installs the latest one automatically
+  if it is missing (silently, admin required).
 - **openssl** - bundled with Git for Windows. Only needed for the SSH/user
   setup step; skip it entirely with `-SkipCustomize`.
 - An **elevated** PowerShell (the script flashes a raw disk).
@@ -77,9 +77,8 @@ All switches:
 | Switch              | Meaning                                                             |
 |---------------------|---------------------------------------------------------------------|
 | `-Image <path>`     | Flash a locally downloaded `.img` / `.img.xz` instead               |
-| `-SkipDownload`     | Require a cached image in `host\downloads\` (no network)            |
 | `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
-| `-SkipImagerInstall`| Don't auto-install/auto-update Raspberry Pi Imager; fail if missing |
+| `-SkipImagerInstall`| Don't auto-install Raspberry Pi Imager; fail if it is missing       |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 | `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`) |
 | `-Hostname`         | Host name, e.g. `homepi` (reachable as `homepi.local`)              |
@@ -116,13 +115,14 @@ one-time `firstrun.sh` started from `cmdline.txt`, as Raspberry Pi Imager does
 it, so the Pi reboots once on first boot. The login user and SSH are still set
 up by `userconf.txt` and `ssh`, exactly as without these options.
 
-If Raspberry Pi Imager is missing or outdated, the script downloads the latest
-installer into `host\downloads\` and installs it silently before flashing. The
-installer is cached by version (`imager_<version>.exe`), so a newer release is
-fetched automatically; re-running also upgrades an already-installed Imager.
-When the script installs or upgrades Imager, it is uninstalled again once the
-run finishes - even if it failed - including any pre-existing installation it
-replaced, leaving the host clean.
+An already installed Raspberry Pi Imager is used as it is. If none is
+installed, the script downloads the latest installer into `host\downloads\`
+and installs it silently before flashing. An Imager the script installed is
+uninstalled again once the run finishes - even if it failed - and the
+installer is deleted, leaving the host clean.
+
+To flash an image you downloaded earlier without network access, pass it with
+`-Image`, e.g. `-Image host\downloads\<name>.img.xz`.
 
 When finished it prints the SSH address and the commands to run on the Pi
 (Step 4 and 5 below).

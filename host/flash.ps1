@@ -6,12 +6,11 @@
 #   * writes it to an SD card with Raspberry Pi Imager
 #   * enables SSH and creates a login user (headless first boot)
 #
-# If Raspberry Pi Imager is missing or outdated, the latest installer is
-# downloaded and installed silently (unless -SkipImagerInstall). Once the run
-# finishes - successfully or not - the Imager installed or upgraded by this
-# script is uninstalled again, including any pre-existing installation it
-# replaced, leaving the host clean. Also requires openssl (bundled with Git
-# for Windows) unless -SkipCustomize.
+# Any installed Raspberry Pi Imager is used. If none is installed, the latest
+# installer is downloaded and installed silently (unless -SkipImagerInstall).
+# Once the run finishes - successfully or not - an Imager installed by this
+# script is uninstalled again, leaving the host clean. Also requires openssl
+# (bundled with Git for Windows) unless -SkipCustomize.
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
@@ -39,13 +38,9 @@ param(
     [string]$Password,
     # Where to cache the downloaded image. Defaults to .\downloads.
     [string]$DownloadDir,
-    # Do not download; require a cached image in $DownloadDir.
-    [switch]$SkipDownload,
     # Skip SSH/user pre-configuration (boot to the on-screen setup wizard instead).
     [switch]$SkipCustomize,
-    # Path to rpi-imager.exe / rpi-imager-cli.cmd (auto-detected if omitted).
-    [string]$ImagerExe,
-    # Do not auto-install/auto-update Raspberry Pi Imager; fail if it is missing.
+    # Do not auto-install Raspberry Pi Imager; fail if it is missing.
     [switch]$SkipImagerInstall,
     # Skip the "type 'yes' to DESTROY" confirmation. Only for unattended runs
     # together with -Disk; the wrong number wipes the wrong disk without asking.
@@ -66,62 +61,27 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Script:BaseUri        = 'https://downloads.raspberrypi.com/raspios_lite_arm64'
-$Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager
-                                            # it installed/upgraded (including any pre-existing install)
+$Script:ImagerInstalledByScript = $false   # set when Install-Imager runs; triggers removal of the Imager it installed
 
 function Write-Step { param([string]$m) Write-Host "[+] $m" -ForegroundColor Green }
 function Write-Info { param([string]$m) Write-Host "[*] $m" -ForegroundColor Cyan }
 function Write-Warn { param([string]$m) Write-Host "[!] $m" -ForegroundColor Yellow }
 function Fail       { param([string]$m) Write-Host "[x] $m" -ForegroundColor Red; exit 1 }
 
-function Test-Admin {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
 function Get-ImagerPath {
-    if ($ImagerExe) {
-        if (Test-Path -LiteralPath $ImagerExe) { return $ImagerExe }
-        return $null
-    }
     $candidates = @()
-    if (Get-Command rpi-imager-cli -ErrorAction SilentlyContinue) { $candidates += (Get-Command rpi-imager-cli).Source }
-    if (Get-Command rpi-imager -ErrorAction SilentlyContinue)     { $candidates += (Get-Command rpi-imager).Source }
+    $cmd = Get-Command rpi-imager.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { $candidates += $cmd.Source }
     $candidates += @(
         "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager.exe",
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Raspberry Pi Imager\rpi-imager.exe",
         "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe",
-        "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager-cli.cmd",
-        "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager-cli.cmd",
         "${env:ProgramFiles(x86)}\Raspberry Pi Ltd\Imager\rpi-imager.exe",
-        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager.exe",
-        "${env:ProgramFiles(x86)}\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd",
-        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager-cli.cmd"
+        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager.exe"
     )
     foreach ($p in $candidates) {
         if ($p -and (Test-Path -LiteralPath $p)) { return $p }
-    }
-    return $null
-}
-
-function Get-ImagerLatestVersion {
-    # imager_latest.exe 302-redirects to imager_<version>.exe; the final URL encodes the version.
-    $target = & curl.exe -sIL -o NUL -w '%{url_effective}' 'https://downloads.raspberrypi.com/imager/imager_latest.exe'
-    if ($LASTEXITCODE -ne 0) { return $null }
-    $m = [regex]::Match($target, 'imager_(\d+\.\d+\.\d+(?:\.\d+)?)\.exe')
-    $v = $null
-    if ($m.Success -and [version]::TryParse($m.Groups[1].Value, [ref]$v)) { return $v }
-    return $null
-}
-
-function Get-ImagerVersion {
-    param([string]$Path)
-    $info = (Get-Item -LiteralPath $Path).VersionInfo
-    foreach ($raw in @($info.ProductVersion, $info.FileVersion, $info.InformationalVersion)) {
-        if (-not $raw) { continue }
-        $v = $null
-        if ([version]::TryParse(($raw -replace '^[vV]' -split ' ')[0], [ref]$v)) { return $v }
     }
     return $null
 }
@@ -136,15 +96,10 @@ function Clear-ImagerCache {
 
 function Install-Imager {
     $dir = $script:DownloadDir
-    if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
 
-    $latest = Get-ImagerLatestVersion
-    $fileName = if ($latest) { "imager_$latest.exe" } else { 'imager_latest.exe' }
-    $installer = Join-Path $dir $fileName
-    if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -eq 0) {
-        Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
-    }
+    $installer = Join-Path $dir 'imager_latest.exe'
+    Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
     Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
     $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
     if ($p.ExitCode -ne 0) {
@@ -155,11 +110,9 @@ function Install-Imager {
 }
 
 function Uninstall-Imager {
-    # Remove the Imager that this script installed (or upgraded, if a
-    # pre-existing installation was outdated), leaving the host clean.
+    # Remove the Imager that this script installed, leaving the host clean.
     # Inno Setup places unins000.exe next to rpi-imager.exe.
     $dir = $script:DownloadDir
-    if (-not $dir) { $dir = Join-Path $PSScriptRoot 'downloads' }
     try {
         $exe = Get-ImagerPath
         if (-not $exe) { Write-Warn 'Raspberry Pi Imager binary no longer found; nothing to uninstall.'; return }
@@ -185,21 +138,8 @@ function Uninstall-Imager {
 }
 
 function Find-Imager {
-    if ($ImagerExe) {
-        $p = Get-ImagerPath
-        if ($p) { return $p }
-        Fail "Raspberry Pi Imager not found at: $ImagerExe"
-    }
-    if (-not $SkipImagerInstall) {
-        $p        = Get-ImagerPath
-        $latest   = Get-ImagerLatestVersion
-        $installed = if ($p) { Get-ImagerVersion $p } else { $null }
-        if ($p -and $installed -and $latest -and $installed -ge $latest) {
-            Write-Step "Raspberry Pi Imager is up to date (v$latest)."
-            return $p
-        }
-        Install-Imager
-    }
+    # Any installed Imager will do; install one only when there is none.
+    if (-not (Get-ImagerPath) -and -not $SkipImagerInstall) { Install-Imager }
     $p = Get-ImagerPath
     if ($p) { return $p }
     Fail 'Raspberry Pi Imager not found. Install it from https://www.raspberrypi.com/software/ and re-run.'
@@ -326,21 +266,6 @@ function Confirm-Destroy {
     if ($confirm -ne 'yes') { Fail 'Aborted.' }
 }
 
-# rpi-imager.exe is built as a GUI application, so "& rpi-imager.exe ..."
-# returns the moment it has launched: $LASTEXITCODE is left stale (0) while the
-# write is still running, and the boot partition is not there yet when we look
-# for it. The bundled rpi-imager-cli.cmd exists only to "start /WAIT" the exe
-# (and does so relative to the caller's directory), so resolve any .cmd to the
-# sibling exe and do the waiting here.
-function Resolve-ImagerExe {
-    param([string]$Path)
-    if ($Path -match '\.cmd$') {
-        $exe = Join-Path (Split-Path -Parent $Path) 'rpi-imager.exe'
-        if (Test-Path -LiteralPath $exe) { return $exe }
-    }
-    return $Path
-}
-
 # Start-Process joins -ArgumentList with spaces and does not quote, so quote
 # anything that needs it (image paths under "C:\Users\First Last\...").
 function ConvertTo-ArgumentString {
@@ -353,18 +278,16 @@ function ConvertTo-ArgumentString {
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
-    $exe = Resolve-ImagerExe $Imager
     $cliArgs = @('--cli', '--disable-telemetry')
     if ($Hash) { $cliArgs += @('--sha256', $Hash) }
     $cliArgs += @($ImagePath, $device)
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
-    # -Wait blocks until the process and its children have exited, whichever
-    # subsystem the binary was built for; -PassThru gives us the real exit code.
-    if ($exe -match '\.cmd$') {
-        $p = Start-Process -FilePath $env:ComSpec -ArgumentList ('/c ' + (ConvertTo-ArgumentString (@($exe) + $cliArgs))) -Wait -PassThru
-    } else {
-        $p = Start-Process -FilePath $exe -ArgumentList (ConvertTo-ArgumentString $cliArgs) -Wait -PassThru
-    }
+    # rpi-imager.exe is built as a GUI application, so "& rpi-imager.exe ..."
+    # returns the moment it has launched: $LASTEXITCODE is left stale (0) while
+    # the write is still running, and the boot partition is not there yet when
+    # we look for it. -Wait blocks until the process and its children have
+    # exited; -PassThru gives us the real exit code.
+    $p = Start-Process -FilePath $Imager -ArgumentList (ConvertTo-ArgumentString $cliArgs) -Wait -PassThru
     if ($p.ExitCode -ne 0) { Fail "Raspberry Pi Imager failed with exit code $($p.ExitCode)." }
 }
 
@@ -404,9 +327,7 @@ function Get-Credentials {
     if (-not $Password) {
         $sec = Read-Host -AsSecureString 'Password for the Pi user (input is hidden)'
         if (-not $sec -or $sec.Length -eq 0) { Fail 'Password required.' }
-        $ptr  = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-        $Password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+        $Password = [Net.NetworkCredential]::new('', $sec).Password
     }
     if ($Password -match ':' -or $Password -match '[^\x21-\x7E]') {
         Fail 'Password must be ASCII and must not contain a colon (":").'
@@ -508,7 +429,6 @@ function Get-FlashSettings {
         if (-not $v -and $FromFile) { $v = $FromFile[$name] }
         $s[$name] = [string]$v
     }
-    $s['SSH_KEYS'] = @()
     return $s
 }
 
@@ -574,9 +494,7 @@ function Request-WifiPassword {
     if (-not $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_WIFI_PASSWORD']) { return }
     $sec = Read-Host -AsSecureString "Wi-Fi password for '$($Settings['FLASH_WIFI_SSID'])' (hidden, empty for an open network)"
     if ($sec -and $sec.Length -gt 0) {
-        $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-        $Settings['FLASH_WIFI_PASSWORD'] = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+        $Settings['FLASH_WIFI_PASSWORD'] = [Net.NetworkCredential]::new('', $sec).Password
         Assert-FlashSettings $Settings
     } else {
         Write-Warn "No Wi-Fi password: '$($Settings['FLASH_WIFI_SSID'])' is set up as an open network."
@@ -747,7 +665,6 @@ function Write-FirstRun {
     )
     Write-UnixFile (Join-Path $Root 'firstrun.sh') $fr
 
-    $line = Get-CmdlineText $Root
     if ($line -notmatch 'systemd\.run=') {
         $line += ' systemd.run=/boot/firmware/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target'
     }
@@ -775,12 +692,10 @@ function Write-FirstBootSettings {
 }
 
 # --- main -------------------------------------------------------------
+# Below the marker, so ci/test-flash.ps1 can load the functions without admin.
+#Requires -RunAsAdministrator
 
 try {
-    if (-not (Test-Admin)) {
-        Fail 'Please run this script as Administrator (right-click PowerShell > "Run as administrator").'
-    }
-
     if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
 
     # First-boot settings are checked before anything is downloaded or written.
@@ -813,12 +728,6 @@ try {
         if (-not (Test-Path -LiteralPath $Image)) { Fail "Image not found: $Image" }
         Write-Step "Using image: $Image"
         $img = @{ Path = $Image; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Image).Hash.ToLowerInvariant() }
-    } elseif ($SkipDownload) {
-        $cached = Get-ChildItem -LiteralPath $DownloadDir -Filter '*.img.xz' -ErrorAction SilentlyContinue |
-                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if (-not $cached) { Fail "No cached image found in $DownloadDir (and -SkipDownload was given)." }
-        Write-Step "Using cached image: $($cached.FullName)"
-        $img = @{ Path = $cached.FullName; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cached.FullName).Hash.ToLowerInvariant() }
     } else {
         $img = Get-Image $DownloadDir
     }
@@ -845,8 +754,7 @@ try {
 }
 finally {
     # Cleanup is never skipped: once the script installed Imager, it is
-    # removed on success AND on any failure - including any pre-existing
-    # installation it upgraded - and the cached installers are cleared, so the
-    # next run starts clean without stale artifacts.
+    # removed on success AND on any failure, and the cached installers are
+    # cleared, so the next run starts clean without stale artifacts.
     if ($Script:ImagerInstalledByScript) { Uninstall-Imager }
 }
