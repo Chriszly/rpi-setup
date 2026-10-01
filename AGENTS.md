@@ -60,11 +60,7 @@ Before submitting changes:
 
 ## PR Requirements
 
-All PRs must include:
-- Completed PR template sections: Summary, Type of change, Checklist, Testing
-- Clear, concise commit messages
-- No secrets or personal info
-- Updated README if task list/options/behavior changed
+Fill in `.github/PULL_REQUEST_TEMPLATE.md` (checked by the PR Template Validation workflow).
 
 ## Architecture Notes
 
@@ -77,8 +73,5 @@ All PRs must include:
 
 ## Common Pitfalls to Avoid
 
-- Don't assume specific UIDs/GIDs - use `assign_uid <service>` (except where the image needs a fixed one, like `teamspeak`)
-- Don't skip `apt_update()` before `apt_install()`
-- Don't use `curl | bash` without warning
 - Don't hardcode fallback versions/dates - fail with actionable error instead
 - Don't forget `systemctl enable --now` for services

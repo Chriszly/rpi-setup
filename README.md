@@ -201,14 +201,6 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
 
 ## Documentation
 
-- Task pages: [base](docs/tasks/base.md), [docker](docs/tasks/docker.md),
-  [network](docs/tasks/network.md), [tailscale](docs/tasks/tailscale.md),
-  [pihole](docs/tasks/pihole.md), [samba](docs/tasks/samba.md),
-  [backup](docs/tasks/backup.md), [web](docs/tasks/web.md),
-  [monitoring](docs/tasks/monitoring.md), [netalertx](docs/tasks/netalertx.md),
-  [teamspeak](docs/tasks/teamspeak.md), [runner](docs/tasks/runner.md),
-  [firewall](docs/tasks/firewall.md),
-  and the SD card settings in [flash](docs/tasks/flash.md).
 - [Raspberry Pi 5 test checklist](docs/pi5-test-checklist.md) - one full test
   run on real hardware, checked with `sudo bash check.sh`, and what to report.
 - [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
