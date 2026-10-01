@@ -2,11 +2,12 @@
 # Task: samba - a simple password-protected NAS share for one user.
 # Settings: SAMBA_* in config/rpi-setup.env (names in config/tasks/samba.env).
 set -euo pipefail
+. "$RPI_SETUP_ROOT/lib/containers.sh"
 
 TASKS+=("samba|Samba NAS share (read-write, per-user password)")
 
 run_samba() {
-  : "${SAMBA_SHARE_NAME:=nas-share}" "${SAMBA_READ_ONLY:=no}"
+  : "${SAMBA_SHARE_NAME:=nas-share}" "${SAMBA_READ_ONLY:=no}" "${SAMBA_DOCKER:=no}"
   local u="${SAMBA_USER:-}" dir="${SAMBA_SHARE_PATH:-}" share="$SAMBA_SHARE_NAME" home ro=no
   if setting_on SAMBA_READ_ONLY; then ro=yes; fi
   [[ "$share" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] ||
@@ -23,6 +24,8 @@ run_samba() {
     dir="${home}/${share}"
   fi
   [[ "$dir" == /* ]] || die "SAMBA_SHARE_PATH must be an absolute path (got '$dir')"
+  if setting_on SAMBA_DOCKER; then run_samba_container "$u" "$dir" "$share" "$ro"; return; fi
+  container_leave samba
 
   apt_install samba
   if [[ ! -d "$dir" ]]; then
@@ -76,4 +79,114 @@ samba_share_section() {
     }
     !skip { print }
     END { if (!done) print body }' "$conf" | write_if_changed "$conf"
+}
+
+# SAMBA_DOCKER=yes: Samba in its own container (crazymax/samba, host network
+# for port 445), sharing folder $2 as [$3] for Linux user $1 with the same
+# uid/gid, read-only if $4 is "yes". The share folder stays where it is. The
+# password comes from SAMBA_PASSWORD or the one saved on an earlier run; a
+# native smbd's password hash cannot be carried over, so then it must be set.
+run_samba_container() {
+  local u="$1" dir="$2" share="$3" ro="$4" name=samba cdir owner="" changed=0 pw="${SAMBA_PASSWORD:-}" fresh=0
+  : "${SAMBA_IMAGE:=crazymax/samba:latest}"
+  require_image_ref SAMBA_IMAGE
+  container_require_64bit SAMBA_DOCKER
+  [[ "$u" != root ]] || die 'SAMBA_USER cannot be root for the container; set SAMBA_USER to a normal user'
+  container_require_docker
+  cdir="$(container_dir samba)"
+  owner="$(port_owner 445)" || owner=""
+  [[ -z "$owner" || "$owner" == smbd ]] || die "Port 445 is already used by '$owner'; Samba needs it"
+
+  if [[ -z "$pw" ]]; then
+    pw="$(sed -nE 's/^SAMBA_PASSWORD=//p' /var/lib/rpi-setup/secrets/samba.env 2>/dev/null)" || pw=""
+  fi
+  if [[ -z "$pw" && -f "$cdir/password" ]]; then
+    pw="$(<"$cdir/password")"
+  fi
+  if [[ -z "$pw" ]]; then
+    if command -v pdbedit >/dev/null 2>&1 && pdbedit -L -u "$u" >/dev/null 2>&1; then
+      die "The native Samba password of '$u' cannot be moved into the container; set SAMBA_PASSWORD (it can be the same one) and run again"
+    fi
+    pw="$(gen_secret 16)"
+    fresh=1
+  fi
+
+  if [[ ! -d "$dir" ]]; then
+    install -d -m 0755 -o "$u" -g "$(id -gn "$u")" "$dir"
+    say "Created $dir"
+  fi
+  install -m 0755 -d "$cdir" "$cdir/data"
+  if printf '%s' "$pw" | write_if_changed "$cdir/password" 0600; then changed=1; fi
+  if samba_container_config "$u" "$share" "$ro" | write_if_changed "$cdir/data/config.yml" 0644; then changed=1; fi
+  if samba_container_compose "$cdir" "$name" "$dir" "$share" | write_if_changed "$cdir/docker-compose.yml" 0644; then changed=1; fi
+  container_pull "$cdir"
+  container_stop_native "$cdir" smbd nmbd
+
+  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
+    docker compose -f "$cdir/docker-compose.yml" up -d --force-recreate >/dev/null
+  fi
+  container_up "$cdir" "$name"
+
+  if [[ $fresh -eq 1 ]]; then
+    save_secret samba SAMBA_PASSWORD "$pw"
+    say "Generated Samba password for ${u}: $pw"
+    info 'Saved in /var/lib/rpi-setup/secrets/samba.env; set SAMBA_PASSWORD to choose your own.'
+  fi
+  say "Samba container running - share: \\\\$(hostname)\\${share} (user ${u}$([[ $ro == yes ]] && echo ', read-only'))"
+}
+
+# The image's config.yml: user $1 with its own uid/gid, share $2, read-only $3.
+samba_container_config() {
+  local u="$1" share="$2" ro="$3" g
+  g="$(id -gn "$u")"
+  cat <<EOF
+# Managed by rpi-setup (tasks/samba.sh, SAMBA_* settings).
+auth:
+  - user: "$u"
+    group: "$g"
+    uid: $(id -u "$u")
+    gid: $(id -g "$u")
+    password_file: /run/secrets/samba_password
+global:
+  - "server min protocol = SMB2_10"
+share:
+  - name: "$share"
+    comment: Raspberry Pi share
+    path: /samba/share
+    browsable: yes
+    readonly: $ro
+    guestok: no
+    validusers: "$u"
+    writelist: "$u"
+EOF
+}
+
+# Compose file: folder $1, container name $2, share folder $3, share name $4.
+samba_container_compose() {
+  local cdir="$1" name="$2" dir="$3"
+  cat <<EOF
+services:
+  samba:
+    image: "$SAMBA_IMAGE"
+    container_name: $name
+    hostname: $(hostname)
+    restart: unless-stopped
+    network_mode: host
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: "$(cat /etc/timezone 2>/dev/null || echo UTC)"
+    volumes:
+      - type: bind
+        source: $cdir/data
+        target: /data
+      - type: bind
+        source: $cdir/password
+        target: /run/secrets/samba_password
+        read_only: true
+      - type: bind
+        source: $dir
+        target: /samba/share
+EOF
 }
