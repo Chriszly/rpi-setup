@@ -2,6 +2,7 @@
 # Task: teamspeak - TeamSpeak 6 voice chat server (official Docker image, native arm64).
 # Settings: TEAMSPEAK_* in config/rpi-setup.env (names in config/tasks/teamspeak.env).
 set -euo pipefail
+. "$RPI_SETUP_ROOT/lib/containers.sh"
 
 TASKS+=("teamspeak|TeamSpeak 6 voice server (voice :9987, file :30033, web :10080)")
 
@@ -56,15 +57,15 @@ run_teamspeak() {
   [[ "$arch" == arm64 || "$arch" == amd64 ]] ||
     die "The TeamSpeak 6 image needs a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit)."
 
-  require_docker
+  container_require_docker
 
-  local dir=/opt/teamspeak
-  local name=teamspeak
-  local ip=""
+  local dir name=teamspeak ip=""
+  dir="$(container_dir teamspeak)"
 
   # The official image runs as uid:gid 9987 and ignores PUID/PGID, so the data
   # directory must stay owned by 9987 for the bind mount to be writable.
-  ensure_container_dir "$dir" 9987
+  install -m 0755 -d "$dir" "$dir/data"
+  chown 9987:9987 "$dir/data"
 
   # The privilege key is only printed when the server creates its database.
   local fresh=0 token="" inner
@@ -103,21 +104,19 @@ EOF
     changed=1
   fi
 
-  if [[ $changed -eq 0 ]] && compose_is_up "$name"; then
-    ip="$(pi_ip)" || true
-    say "TeamSpeak 6 is already running with these settings. Connect to ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT}"
-    return
-  fi
-
-  say 'Starting TeamSpeak 6 container'
-  compose_up "$dir"
+  container_pull "$dir"
+  container_up "$dir" "$name"
 
   ip="$(pi_ip)" || true
   if [[ $fresh -eq 0 ]]; then
     if [[ "$inner" != "$TEAMSPEAK_VOICE_PORT" ]]; then
       info "Host UDP port ${TEAMSPEAK_VOICE_PORT} forwards to the server's own voice port ${inner} (fixed when it was created)."
     fi
-    say "TeamSpeak 6 restarted with the new settings at ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT}"
+    if [[ $changed -eq 1 ]]; then
+      say "TeamSpeak 6 restarted with the new settings at ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT}"
+    else
+      say "TeamSpeak 6 is running with these settings. Connect to ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT}"
+    fi
     return
   fi
   token="$(wait_for_log "$name" 'privilege key')"

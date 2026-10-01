@@ -122,14 +122,12 @@ firewall_port_specs() {
 # Validate IPv4/IPv6 addresses or subnets (spaces or commas between them) from
 # setting $1 with value $2; print them space separated.
 firewall_cidrs() {
-  local name="$1" v="${2//,/ }" c ip prefix o out=""
+  local name="$1" v="${2//,/ }" c ip prefix out=""
   for c in $v; do
     ip="${c%/*}" prefix=""
     [[ "$c" != */* ]] || prefix="${c##*/}"
-    if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
-      for o in "${BASH_REMATCH[@]:1}"; do
-        (( 10#$o <= 255 )) || die "$name: '$c' is not an IPv4 address or subnet"
-      done
+    if [[ "$ip" =~ ^[0-9.]+$ ]]; then
+      valid_ipv4 "$ip" || die "$name: '$c' is not an IPv4 address or subnet"
       [[ -z "$prefix" ]] || { [[ "$prefix" =~ ^[0-9]{1,2}$ ]] && (( 10#$prefix <= 32 )); } ||
         die "$name: '$c' has a bad prefix length (0-32)"
     elif [[ "$ip" =~ ^[0-9A-Fa-f:]+$ && "$ip" == *:*:* ]]; then
@@ -247,28 +245,9 @@ firewall_sshd_ports() {
 # site files of the web container).
 firewall_nginx_ports() {
   local -a sites=(/etc/nginx/sites-enabled/*)
-  if task_in_container web; then sites=("${RPI_SETUP_CONTAINER_ROOT:-/opt}"/web/conf/*.conf); fi
+  if task_in_container web; then sites=("$(container_dir web)"/conf/*.conf); fi
   sed -nE 's/^[[:space:]]*listen[[:space:]]+([^;[:space:]]*:)?([0-9]+)([[:space:];]).*/\2/p' \
     "${sites[@]}" 2>/dev/null | sort -un
-}
-
-# Run pihole-FTL with arguments "$@" where Pi-hole runs: in its container
-# (PIHOLE_DOCKER=yes) or on the host.
-firewall_ftl() {
-  if task_in_container pihole; then docker exec pihole pihole-FTL "$@"
-  else pihole-FTL "$@"
-  fi
-}
-
-# Ports of Pi-hole's web server, from "80o,443os,[::]:80o" style config.
-firewall_pihole_web_ports() {
-  local cfg e
-  cfg="$(firewall_ftl --config webserver.port 2>/dev/null)" || return 0
-  for e in ${cfg//,/ }; do
-    e="${e##*:}"
-    e="${e%%[!0-9]*}"
-    [[ -z "$e" ]] || printf '%s\n' "$e"
-  done | sort -un
 }
 
 # "port/proto kind service" lines for the rpi-setup services installed on
@@ -279,12 +258,12 @@ firewall_service_ports() {
   if command -v pihole-FTL >/dev/null 2>&1 || command -v pihole >/dev/null 2>&1 || task_in_container pihole; then
     load_task_config pihole >/dev/null
     printf '53/tcp open pihole-dns\n53/udp open pihole-dns\n'
-    p="$(firewall_pihole_web_ports)"
+    p="$(pihole_web_ports | sort -un)"
     [[ -n "$p" ]] || p="${PIHOLE_WEB_PORT:-80}"
     for p in $p; do printf '%s/tcp web pihole-web\n' "$p"; done
-    if [[ "$(firewall_ftl --config dhcp.active 2>/dev/null)" == true ]]; then
+    if [[ "$(pihole_ftl --config dhcp.active 2>/dev/null)" == true ]]; then
       printf '67/udp open pihole-dhcp\n'
-      if [[ "$(firewall_ftl --config dhcp.ipv6 2>/dev/null)" == true ]]; then
+      if [[ "$(pihole_ftl --config dhcp.ipv6 2>/dev/null)" == true ]]; then
         printf '547/udp open pihole-dhcpv6\n'
       fi
     fi

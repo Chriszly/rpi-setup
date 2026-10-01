@@ -18,13 +18,9 @@ tmp="$TMP"
 
 # Defaults as run_base sets them.
 set_defaults() {
-  BASE_AUTO_UPDATES=yes BASE_AUTO_REBOOT=no BASE_AUTO_REBOOT_TIME=03:30
+  BASE_AUTO_UPDATES=yes BASE_AUTO_REBOOT=no
   BASE_SSH_PASSWORD_AUTH=yes BASE_JOURNAL_MAX_SIZE=100M
 }
-
-# --- base_valid_time ----------------------------------------------------------
-for t in 00:00 03:30 12:05 23:59; do assert_ok "base_valid_time accepts $t" base_valid_time "$t"; done
-for t in 24:00 3:30 03:60 0330 '03:30 ' now ''; do assert_fails "base_valid_time rejects '$t'" base_valid_time "$t"; done
 
 # --- base_valid_journal_size --------------------------------------------------
 for s in 100M 50M 1G 512K 104857600 no NO; do assert_ok "journal size accepts $s" base_valid_journal_size "$s"; done
@@ -35,13 +31,10 @@ set_defaults
 assert_ok "defaults validate" base_validate_hardening
 assert_fails "BASE_AUTO_UPDATES=maybe dies" eval 'BASE_AUTO_UPDATES=maybe; base_validate_hardening'
 assert_fails "BASE_AUTO_REBOOT=sometimes dies" eval 'BASE_AUTO_REBOOT=sometimes; base_validate_hardening'
-assert_fails "BASE_AUTO_REBOOT_TIME=3am dies" eval 'BASE_AUTO_REBOOT_TIME=3am; base_validate_hardening'
 assert_fails "BASE_SSH_PASSWORD_AUTH=perhaps dies" eval 'BASE_SSH_PASSWORD_AUTH=perhaps; base_validate_hardening'
 assert_fails "BASE_JOURNAL_MAX_SIZE=lots dies" eval 'BASE_JOURNAL_MAX_SIZE=lots; base_validate_hardening'
 assert_fails "BASE_SSH_PASSWORD_AUTH=no as root dies" \
   eval 'BASE_SSH_PASSWORD_AUTH=no; SUDO_USER=root; base_validate_hardening'
-assert_contains "time error names the setting" "BASE_AUTO_REBOOT_TIME" \
-  "$( (BASE_AUTO_REBOOT_TIME=25:00; base_validate_hardening) 2>&1 || true)"
 
 # --- base_has_authorized_key / base_ssh_key_guard -----------------------------
 key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample0 me@pc'
@@ -126,9 +119,8 @@ assert_contains "unattended: Debian-Security origin" \
 assert_contains "unattended: no reboot by default" 'Unattended-Upgrade::Automatic-Reboot "false";' "$uu"
 assert_contains "unattended: reboot time" 'Unattended-Upgrade::Automatic-Reboot-Time "03:30";' "$uu"
 assert_lacks "unattended: security origins only" 'label=Debian";' "$uu"
-uu="$(BASE_AUTO_REBOOT=yes BASE_AUTO_REBOOT_TIME=04:15; base_unattended_conf)"
+uu="$(BASE_AUTO_REBOOT=yes; base_unattended_conf)"
 assert_contains "unattended: reboot on" 'Unattended-Upgrade::Automatic-Reboot "true";' "$uu"
-assert_contains "unattended: custom reboot time" 'Unattended-Upgrade::Automatic-Reboot-Time "04:15";' "$uu"
 if command -v apt-config >/dev/null 2>&1; then
   base_unattended_conf >"$tmp/apt.conf"
   if APT_CONFIG="$tmp/apt.conf" apt-config dump >/dev/null 2>&1; then

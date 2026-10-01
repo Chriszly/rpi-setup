@@ -55,7 +55,7 @@ upd() {
     : >"$LOG"
     RC=0
     OUT="$(env -i PATH="$TMP/$shims:$TMP/base" LOG="$LOG" SHIM_FAIL="${SHIM_FAIL:-}" \
-        RPI_SETUP_OPT_DIR="$OPT" RPI_SETUP_MODEL_FILE="$TMP/model-$model" \
+        RPI_SETUP_CONTAINER_ROOT="$OPT" RPI_SETUP_MODEL_FILE="$TMP/model-$model" \
         RPI_SETUP_REBOOT_FILE="$TMP/reboot-required" \
         "$BASH_BIN" "$ROOT/update.sh" "$@" 2>&1)" || RC=$?
 }

@@ -31,16 +31,17 @@ trap cleanup EXIT
 assert_eq "container_dir follows RPI_SETUP_CONTAINER_ROOT" "$TMP/opt/web" "$(container_dir web)"
 assert_eq "container_dir defaults to /opt" "/opt/web" "$(RPI_SETUP_CONTAINER_ROOT='' container_dir web)"
 
-# --- container_service_head -----------------------------------------------------
-head_out="$(container_service_head web nginx:stable-alpine NET_BIND_SERVICE CHOWN)"
-assert_contains "service head names the image" '    image: "nginx:stable-alpine"' "$head_out"
-assert_contains "service head names the container" '    container_name: web' "$head_out"
-assert_contains "service head restarts unless stopped" 'restart: unless-stopped' "$head_out"
-assert_contains "service head blocks privilege escalation" 'no-new-privileges:true' "$head_out"
-assert_contains "service head drops every capability" $'cap_drop:\n      - ALL' "$head_out"
-assert_contains "service head adds the listed capabilities" $'cap_add:\n      - NET_BIND_SERVICE\n      - CHOWN' "$head_out"
-assert_eq "service head without capabilities adds none" "" \
-    "$(container_service_head web img | grep cap_add || true)"
+# --- the web container's compose file ----------------------------------------------
+TASKS=()
+. "$ROOT/tasks/web.sh"
+head_out="$(WEB_IMAGE=nginx:stable-alpine web_container_compose /opt/web web)"
+assert_contains "web compose names the image" '    image: "nginx:stable-alpine"' "$head_out"
+assert_contains "web compose names the container" '    container_name: web' "$head_out"
+assert_contains "web compose restarts unless stopped" 'restart: unless-stopped' "$head_out"
+assert_contains "web compose blocks privilege escalation" 'no-new-privileges:true' "$head_out"
+assert_contains "web compose drops every capability" $'cap_drop:\n      - ALL' "$head_out"
+assert_contains "web compose adds only nginx's capabilities" \
+    $'cap_add:\n      - CHOWN\n      - SETUID\n      - SETGID\n      - NET_BIND_SERVICE\n' "$head_out"
 
 # --- container_write_secrets ----------------------------------------------------
 sdir="$TMP/secrets"
@@ -125,7 +126,9 @@ compose_project() {
     {
         echo 'services:'
         echo "  $task:"
-        container_service_head "rpi-setup-test-$task" alpine:3
+        echo '    image: alpine:3'
+        echo "    container_name: rpi-setup-test-$task"
+        echo '    restart: unless-stopped'
         printf '    command: ["sh", "-c", "%s"]\n' "$*"
     } >"$dir/docker-compose.yml"
     printf '%s\n' "$dir"

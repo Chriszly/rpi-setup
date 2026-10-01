@@ -7,8 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 
-# Overridable so the unit tests can point them at a temp dir.
-UPDATE_OPT_DIR="${RPI_SETUP_OPT_DIR:-/opt}"
+# Overridable so the unit tests can point it at a temp dir.
 UPDATE_REBOOT_FILE="${RPI_SETUP_REBOOT_FILE:-/run/reboot-required}"
 
 DRY_RUN=0
@@ -48,8 +47,6 @@ run() {
   "$@"
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
 # Record a step's outcome for the summary.
 result() {
   UPDATE_RESULTS+=("$(printf '%-11s %s' "$1" "$2")")
@@ -62,8 +59,8 @@ compose_projects() {
   local f task
   for f in "$SCRIPT_DIR"/tasks/*.sh; do
     task="$(basename "$f" .sh)"
-    [[ -f "$UPDATE_OPT_DIR/$task/docker-compose.yml" ]] &&
-      printf '%s\n' "$UPDATE_OPT_DIR/$task/docker-compose.yml"
+    [[ -f "$(container_dir "$task")/docker-compose.yml" ]] &&
+      printf '%s\n' "$(container_dir "$task")/docker-compose.yml"
   done
   return 0
 }
@@ -93,11 +90,7 @@ step_containers() {
   return "$rc"
 }
 
-step_pihole() { run pihole -up; }
-
-step_eeprom() { run rpi-eeprom-update -a; }
-
-# Run step $2 (a function, with args $3...) and record it under name $1.
+# Run step $2 (a command, with args $3...) and record it under name $1.
 do_step() {
   local name="$1"; shift
   hr
@@ -146,7 +139,7 @@ main() {
   elif ! have docker; then
     skip_step containers 'Docker not installed'
   elif [[ ${#projects[@]} -eq 0 ]]; then
-    skip_step containers "no rpi-setup compose project under $UPDATE_OPT_DIR"
+    skip_step containers "no rpi-setup compose project in $(container_dir "<task>")"
   else
     do_step containers step_containers "${projects[@]}"
   fi
@@ -154,7 +147,7 @@ main() {
   if [[ $DO_PIHOLE -eq 0 ]]; then
     skip_step pihole "$SKIP_REASON"
   elif have pihole; then
-    do_step pihole step_pihole
+    do_step pihole run pihole -up
   else
     skip_step pihole 'Pi-hole not installed'
   fi
@@ -164,7 +157,7 @@ main() {
   elif ! is_pi; then
     skip_step eeprom 'not a Raspberry Pi'
   elif have rpi-eeprom-update; then
-    do_step eeprom step_eeprom
+    do_step eeprom run rpi-eeprom-update -a
   else
     skip_step eeprom 'rpi-eeprom-update not found'
   fi

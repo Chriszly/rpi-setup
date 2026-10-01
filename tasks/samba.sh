@@ -47,12 +47,7 @@ run_samba() {
     say "Samba user '${u}' already exists; keeping its password (set SAMBA_PASSWORD to change it)"
   else
     pw="${SAMBA_PASSWORD:-}"
-    if [[ -z "$pw" ]]; then
-      pw="$(gen_secret 16)"
-      save_secret samba SAMBA_PASSWORD "$pw"
-      say "Generated Samba password for ${u}: $pw"
-      info 'Saved in /var/lib/rpi-setup/secrets/samba.env; set SAMBA_PASSWORD to choose your own.'
-    fi
+    if [[ -z "$pw" ]]; then new_secret pw samba SAMBA_PASSWORD "Samba password for ${u}" 16; fi
     printf '%s\n%s\n' "$pw" "$pw" | smbpasswd -s -a "$u" >/dev/null
     smbpasswd -e "$u" >/dev/null
   fi
@@ -97,9 +92,7 @@ run_samba_container() {
   owner="$(port_owner 445)" || owner=""
   [[ -z "$owner" || "$owner" == smbd ]] || die "Port 445 is already used by '$owner'; Samba needs it"
 
-  if [[ -z "$pw" ]]; then
-    pw="$(sed -nE 's/^SAMBA_PASSWORD=//p' /var/lib/rpi-setup/secrets/samba.env 2>/dev/null)" || pw=""
-  fi
+  if [[ -z "$pw" ]]; then pw="$(load_secret samba SAMBA_PASSWORD)" || pw=""; fi
   if [[ -z "$pw" && -f "$cdir/password" ]]; then
     pw="$(<"$cdir/password")"
   fi
@@ -107,12 +100,9 @@ run_samba_container() {
     if command -v pdbedit >/dev/null 2>&1 && pdbedit -L -u "$u" >/dev/null 2>&1; then
       die "The native Samba password of '$u' cannot be moved into the container; set SAMBA_PASSWORD (it can be the same one) and run again"
     fi
-    pw="$(gen_secret 16)"
     # Print and save it now: once it is in $cdir/password a later run reads
     # it from there, so a failed first start must not lose it.
-    save_secret samba SAMBA_PASSWORD "$pw"
-    say "Generated Samba password for ${u}: $pw"
-    info 'Saved in /var/lib/rpi-setup/secrets/samba.env; set SAMBA_PASSWORD to choose your own.'
+    new_secret pw samba SAMBA_PASSWORD "Samba password for ${u}" 16
   fi
 
   if [[ ! -d "$dir" ]]; then
@@ -122,14 +112,11 @@ run_samba_container() {
   install -m 0755 -d "$cdir" "$cdir/data"
   if printf '%s' "$pw" | write_if_changed "$cdir/password" 0600; then changed=1; fi
   if samba_container_config "$u" "$share" "$ro" | write_if_changed "$cdir/data/config.yml" 0644; then changed=1; fi
-  if samba_container_compose "$cdir" "$name" "$dir" "$share" | write_if_changed "$cdir/docker-compose.yml" 0644; then changed=1; fi
+  if samba_container_compose "$cdir" "$name" "$dir" | write_if_changed "$cdir/docker-compose.yml" 0644; then changed=1; fi
   container_pull "$cdir"
   container_stop_native "$cdir" smbd nmbd
 
-  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
-    docker compose -f "$cdir/docker-compose.yml" up -d --force-recreate >/dev/null
-  fi
-  container_up "$cdir" "$name"
+  container_up "$cdir" "$name" "$changed"
   say "Samba container running - share: \\\\$(hostname)\\${share} (user ${u}$([[ $ro == yes ]] && echo ', read-only'))"
 }
 
@@ -159,7 +146,7 @@ share:
 EOF
 }
 
-# Compose file: folder $1, container name $2, share folder $3, share name $4.
+# Compose file: folder $1, container name $2, share folder $3.
 samba_container_compose() {
   local cdir="$1" name="$2" dir="$3"
   cat <<EOF

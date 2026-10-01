@@ -124,7 +124,7 @@ assert_eq "apply_login no: keeps one line per key" "1" "$(grep -c '^SETPWD_enabl
 
 # --- netalertx_password: reuse of the saved password (root only) --------------------
 if [[ $EUID -eq 0 ]]; then
-    secret="$netalertx_secret_file"
+    secret=/var/lib/rpi-setup/secrets/netalertx.env
     backup=""
     if [[ -e "$secret" ]]; then backup="$TMP/secret.bak"; cp -p "$secret" "$backup"; fi
     restore_secret() {

@@ -178,14 +178,8 @@ backup_run_container_share() {
 # Delete all but the newest $2 archives in folder $1, and leftovers of an
 # interrupted run. Archive names sort by date, so the newest are the last.
 backup_run_prune() {
-  local dir="$1" keep="$2" f n=0 total
-  rm -f "$dir"/.rpi-setup-backup-*.partial
-  total="$(find "$dir" -maxdepth 1 -type f -name 'rpi-setup-backup-*.tar.gz' | wc -l)"
-  while IFS= read -r f; do
-    (( n < total - keep )) || break
-    rm -f "$f"
-    n=$((n + 1))
-  done < <(find "$dir" -maxdepth 1 -type f -name 'rpi-setup-backup-*.tar.gz' | sort)
+  rm -f "$1"/.rpi-setup-backup-*.partial
+  find "$1" -maxdepth 1 -type f -name 'rpi-setup-backup-*.tar.gz' | sort | head -n "-$2" | xargs -r -d '\n' rm -f --
 }
 
 # Make one dated archive (mode 0600: it holds passwords) in $BK_DEST, prune

@@ -22,7 +22,7 @@ run_network() {
   if [[ -n "$cidr" ]] && ! network_valid_host_cidr "$cidr"; then
     die "NETWORK_STATIC_IP must be an IPv4 host address with a prefix from 8 to 30, e.g. 192.168.1.10/24 (got '$cidr')"
   fi
-  if [[ -n "$gw" ]] && ! network_valid_ipv4 "$gw"; then
+  if [[ -n "$gw" ]] && ! valid_ipv4 "$gw"; then
     die "NETWORK_GATEWAY must be an IPv4 address such as 192.168.1.1 (got '$gw')"
   fi
   if [[ -n "$dns" ]]; then
@@ -89,17 +89,6 @@ run_network() {
   say "$iface now uses the fixed address $cidr"
 }
 
-# True if $1 is a dotted IPv4 address: four numbers 0-255 without leading
-# zeros (tools disagree whether 010 means 8 or 10).
-network_valid_ipv4() {
-  local ip="$1" o
-  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
-  for o in ${ip//./ }; do
-    [[ "$o" == 0 || "$o" != 0* ]] || return 1
-    (( o <= 255 )) || return 1
-  done
-}
-
 # Print IPv4 address $1 as a 32-bit number.
 network_ip_to_int() {
   local a b c d
@@ -113,7 +102,7 @@ network_ip_to_int() {
 network_valid_host_cidr() {
   local ip="${1%/*}" prefix="${1##*/}" n host_mask first
   [[ "$1" == */* ]] || return 1
-  network_valid_ipv4 "$ip" || return 1
+  valid_ipv4 "$ip" || return 1
   [[ "$prefix" =~ ^[0-9]{1,2}$ && "$prefix" != 0? ]] || return 1
   (( prefix >= 8 && prefix <= 30 )) || return 1
   first="${ip%%.*}"
@@ -142,7 +131,7 @@ network_dns_list() {
   read -r -a list <<<"${1//,/ }"
   [[ ${#list[@]} -gt 0 ]] || return 1
   for s in "${list[@]}"; do
-    network_valid_ipv4 "$s" || return 1
+    valid_ipv4 "$s" || return 1
     out+=("$s")
   done
   (IFS=,; printf '%s\n' "${out[*]}")

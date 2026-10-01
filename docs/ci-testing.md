@@ -82,7 +82,7 @@ After provisioning, every profile does:
 4. A **settings check**: the run takes its settings from a central
    `rpi-setup.env` (in a temp folder, via `RPI_SETUP_CONFIG_DIR`), exactly as a
    user would, and verifies that `WEB_TITLE`, `BASE_TIMEZONE` and
-   `BASE_FAIL2BAN_MAXRETRY` reached the Pi and that a Samba user exists.
+   `BASE_JOURNAL_MAX_SIZE` reached the Pi and that a Samba user exists.
 5. An **idempotency re-run** of the same `setup.sh` invocation - every task must
    exit 0 on a second pass (this is what the README promises: "re-running is
    safe"). The re-run's settings file has no `SAMBA_PASSWORD` and there is no
@@ -110,7 +110,7 @@ expected service and `docker logs` for every expected container into
 | Task        | CI handling                                                                 |
 |-------------|-----------------------------------------------------------------------------|
 | `samba`     | `SAMBA_PASSWORD=testpw` in the settings file on the first run; without it the task would generate a password, never prompt. |
-| `pihole`    | `PIHOLE_CONFIRM=yes` in the settings file; the task then skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
+| `pihole`    | Skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
 | `tailscale` | **Excluded** - `tailscale up` blocks waiting for interactive login.         |
 
 Because the container/VM runs as `root`, `real_user()` resolves to `root`, so

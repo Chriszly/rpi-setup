@@ -51,17 +51,13 @@ tailscale_options() {
     valid_hostname "$TAILSCALE_HOSTNAME" || die "TAILSCALE_HOSTNAME must be letters, digits and '-' (got '$TAILSCALE_HOSTNAME')"
     _ts_opts+=("--hostname=$TAILSCALE_HOSTNAME")
   fi
-  if [[ -n "${TAILSCALE_SSH:-}" ]]; then
-    if setting_on TAILSCALE_SSH; then _ts_opts+=(--ssh=true); else _ts_opts+=(--ssh=false); fi
-  fi
-  if [[ -n "${TAILSCALE_ADVERTISE_EXIT_NODE:-}" ]]; then
-    if setting_on TAILSCALE_ADVERTISE_EXIT_NODE; then _ts_opts+=(--advertise-exit-node=true); else _ts_opts+=(--advertise-exit-node=false); fi
-  fi
+  ts_bool_flag TAILSCALE_SSH --ssh
+  ts_bool_flag TAILSCALE_ADVERTISE_EXIT_NODE --advertise-exit-node
   # A Pi running Pi-hole is the DNS server: taking the tailnet's DNS settings
   # (MagicDNS, or a global nameserver pointing at this Pi) would make it
   # resolve through itself. So "auto" (empty) turns it off when Pi-hole is here.
   if [[ -n "${TAILSCALE_ACCEPT_DNS:-}" ]]; then
-    if setting_on TAILSCALE_ACCEPT_DNS; then _ts_opts+=(--accept-dns=true); else _ts_opts+=(--accept-dns=false); fi
+    ts_bool_flag TAILSCALE_ACCEPT_DNS --accept-dns
   elif tailscale_pihole_here; then
     _ts_opts+=(--accept-dns=false)
   fi
@@ -73,6 +69,13 @@ tailscale_options() {
     done
     _ts_opts+=("--advertise-routes=$routes")
   fi
+}
+
+# Add flag $2=true or $2=false to tailscale_options' array as yes/no setting
+# $1 says; nothing when $1 is empty.
+ts_bool_flag() {
+  [[ -n "${!1:-}" ]] || return 0
+  if setting_on "$1"; then _ts_opts+=("$2=true"); else _ts_opts+=("$2=false"); fi
 }
 
 # True if Pi-hole is installed on this Pi, natively or in its container.
@@ -128,10 +131,7 @@ run_tailscale_container() {
   tailscale_forwarding
   container_stop_native "$dir" tailscaled
 
-  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
-    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
-  fi
-  container_up "$dir" "$name"
+  container_up "$dir" "$name" "$changed"
 
   if docker exec "$name" tailscale status >/dev/null 2>&1; then
     if [[ $# -gt 0 ]]; then

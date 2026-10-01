@@ -101,8 +101,7 @@ write_ci_config() {
     {
         echo "WEB_TITLE='$CI_WEB_TITLE'"
         echo "BASE_TIMEZONE=Europe/Berlin"
-        echo "BASE_FAIL2BAN_MAXRETRY=4"
-        echo "PIHOLE_CONFIRM=yes"
+        echo "BASE_JOURNAL_MAX_SIZE=50M"
         echo "MONITORING_TELEMETRY=no"
         [[ "$mode" == rerun ]] || echo "SAMBA_PASSWORD=testpw"
     } >"$CI_CONFIG_DIR/rpi-setup.env"
@@ -130,9 +129,9 @@ verify_settings() {
             base)
                 [[ "$(readlink -f /etc/localtime)" == */Europe/Berlin ]] ||
                     { echo "FAILED: BASE_TIMEZONE not applied ($(readlink -f /etc/localtime))" >&2; return 1; }
-                grep -qx 'maxretry = 4' /etc/fail2ban/jail.local ||
-                    { echo "FAILED: BASE_FAIL2BAN_MAXRETRY not applied" >&2; return 1; }
-                echo "OK: BASE_TIMEZONE and BASE_FAIL2BAN_MAXRETRY applied" ;;
+                grep -qx 'SystemMaxUse=50M' /etc/systemd/journald.conf.d/10-rpi-setup.conf ||
+                    { echo "FAILED: BASE_JOURNAL_MAX_SIZE not applied" >&2; return 1; }
+                echo "OK: BASE_TIMEZONE and BASE_JOURNAL_MAX_SIZE applied" ;;
             samba)
                 [[ -n "$(pdbedit -L 2>/dev/null)" ]] ||
                     { echo "FAILED: no Samba user was created" >&2; return 1; }

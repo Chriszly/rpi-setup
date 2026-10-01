@@ -60,7 +60,7 @@ how to reach it and what to watch out for.
 | [`docker`](docs/tasks/docker.md) | Docker Engine, buildx and Compose (apt), log rotation | none needed |
 | [`network`](docs/tasks/network.md) | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
 | [`tailscale`](docs/tasks/tailscale.md) | Tailscale WireGuard VPN (official installer) | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
-| [`pihole`](docs/tasks/pihole.md) | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended | `PIHOLE_CONFIRM=yes`, `PIHOLE_PASSWORD`, `PIHOLE_DNS` |
+| [`pihole`](docs/tasks/pihole.md) | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended | `PIHOLE_PASSWORD`, `PIHOLE_DNS` |
 | [`samba`](docs/tasks/samba.md) | Read-write NAS share `\\<pi>\nas-share` for your user | `SAMBA_PASSWORD` |
 | [`backup`](docs/tasks/backup.md) | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
 | [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
@@ -75,11 +75,10 @@ The SD card settings of the flash scripts (`FLASH_*`) have their own page:
 
 How a run works:
 
-- `base` runs first when you pick it, and a task's dependency runs before it.
-  `netalertx` and `teamspeak` need `docker`; it is added to the run
-  automatically when Docker is not installed.
-- A failed task does not stop the others, but the tasks that need it are
-  skipped and `setup.sh` exits non-zero.
+- `base` runs first when you pick it; the others run in the order given.
+  `netalertx` and `teamspeak` need Docker; they run the `docker` task
+  themselves when Docker is not installed.
+- A failed task does not stop the others, and `setup.sh` then exits non-zero.
 - The run ends with a summary (`ok`, `failed` or `skipped` per task) and a
   reboot hint when one is needed. The whole output is appended to
   `/var/log/rpi-setup.log` (root only, as it holds generated passwords).
@@ -101,7 +100,7 @@ The format is one `NAME=value` per line:
 BASE_HOSTNAME=homepi
 BASE_TIMEZONE=Europe/Berlin
 SAMBA_PASSWORD='my secret #1'   # quote values with " #" or spaces at the ends
-PIHOLE_CONFIRM=yes
+PIHOLE_DNS=9.9.9.9
 TAILSCALE_AUTHKEY=tskey-auth-...
 ```
 
@@ -190,8 +189,8 @@ password or key is printed.
 
 ### Updating
 
-Re-running a task does not update a container that is already running. To
-bring an installed Pi up to date, run `sudo bash update.sh`: it upgrades the
+Re-running a container task pulls its image and recreates the container when
+the image changed. To bring the whole Pi up to date, run `sudo bash update.sh`: it upgrades the
 OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`) and
 recreates the ones that changed, runs `pihole -up` if Pi-hole is installed and
 `rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
@@ -218,8 +217,7 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
   `samba` tasks pick up your user through `SUDO_USER`. After `docker`, log out
   and back in to use `docker` without `sudo`.
 - `pihole` and `tailscale` run their official installers (`curl | sh`); both
-  print a warning first; `PIHOLE_CONFIRM=no` stops `pihole` from running its
-  installer (the task then fails).
+  print a warning first.
 - `network` changes the Pi's address: over SSH the session drops, so run it
   alone or last.
 - Check the `[+] Complete: <task>` lines and the summary at the end of a run;

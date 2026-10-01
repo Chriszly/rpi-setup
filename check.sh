@@ -44,17 +44,18 @@ summary() {
 # "STATUS|detail". Under-voltage or throttling right now is a FAIL; anything
 # that only happened since boot is a WARN (a Pi 5 needs a 5V/5A supply).
 throttle_status() {
-  local raw="${1#throttled=}" val flags=() status=OK
+  local raw="${1#throttled=}" val flags=() status=OK entry bit sev label
   [[ "$raw" =~ ^0[xX][0-9a-fA-F]+$ ]] || { printf 'WARN|cannot read "%s"\n' "$1"; return 0; }
   val=$((raw))
-  if (( val & 0x1 )); then flags+=("under-voltage now"); status=FAIL; fi
-  if (( val & 0x2 )); then flags+=("CPU frequency capped now"); [[ $status == FAIL ]] || status=WARN; fi
-  if (( val & 0x4 )); then flags+=("throttled now"); status=FAIL; fi
-  if (( val & 0x8 )); then flags+=("soft temperature limit now"); [[ $status == FAIL ]] || status=WARN; fi
-  if (( val & 0x10000 )); then flags+=("under-voltage since boot"); [[ $status == FAIL ]] || status=WARN; fi
-  if (( val & 0x20000 )); then flags+=("frequency capped since boot"); [[ $status == FAIL ]] || status=WARN; fi
-  if (( val & 0x40000 )); then flags+=("throttled since boot"); [[ $status == FAIL ]] || status=WARN; fi
-  if (( val & 0x80000 )); then flags+=("soft temperature limit since boot"); [[ $status == FAIL ]] || status=WARN; fi
+  for entry in '0x1:FAIL:under-voltage now' '0x2:WARN:CPU frequency capped now' \
+      '0x4:FAIL:throttled now' '0x8:WARN:soft temperature limit now' \
+      '0x10000:WARN:under-voltage since boot' '0x20000:WARN:frequency capped since boot' \
+      '0x40000:WARN:throttled since boot' '0x80000:WARN:soft temperature limit since boot'; do
+    IFS=: read -r bit sev label <<<"$entry"
+    (( val & bit )) || continue
+    flags+=("$label")
+    [[ $status == FAIL ]] || status="$sev"
+  done
   if [[ ${#flags[@]} -eq 0 ]]; then
     printf 'OK|%s (no under-voltage or throttling)\n' "$raw"
     return 0
@@ -115,14 +116,6 @@ check_config() {
   fi
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
-# True if systemd knows unit $1 (installed, whatever its state).
-unit_exists() {
-  have systemctl || return 1
-  [[ -n "$(systemctl list-unit-files "$1.service" --no-legend 2>/dev/null)" ]]
-}
-
 # Report "<svc> active/enabled" for a systemd service.
 check_service() {
   local svc="$1" label="${2:-$1}" active enabled
@@ -175,12 +168,6 @@ check_container() {
     report FAIL "container $name" "$state (see: sudo docker logs $name)"
   fi
 }
-
-# Folder that holds the containers' compose projects (/opt/<task>).
-container_root() { printf '%s\n' "${RPI_SETUP_CONTAINER_ROOT:-/opt}"; }
-
-# URL host for services on the LAN: the Pi's LAN address, else localhost.
-lan_host() { printf '%s\n' "${CHECK_LANIP:-localhost}"; }
 
 # --- Checks -------------------------------------------------------------------
 
@@ -266,7 +253,7 @@ check_network() {
 }
 
 check_tasks() {
-  local found=0
+  local found=0 host="${CHECK_LANIP:-localhost}"
 
   if apt_installed fail2ban; then
     found=1; check_service fail2ban "base: fail2ban"
@@ -281,12 +268,11 @@ check_tasks() {
 
   if task_in_container monitoring netdata || unit_exists netdata; then
     found=1; check_config monitoring
-    local mport mhost
+    local mport mhost="$host"
     mport="$(port_setting MONITORING_PORT 19999)"
     if task_in_container monitoring netdata; then check_container netdata
     else check_service netdata "monitoring"
     fi
-    mhost="$(lan_host)"
     case "${MONITORING_BIND:-0.0.0.0}" in 127.0.0.1|localhost) mhost=localhost ;; esac
     check_http "monitoring: web" "http://$mhost:$mport/"
   fi
@@ -294,30 +280,26 @@ check_tasks() {
   if task_in_container web || unit_exists nginx; then
     found=1; check_config web
     local wport site=/etc/nginx/sites-available/default
-    task_in_container web && site="$(container_root)/web/conf/default.conf"
+    task_in_container web && site="$(container_dir web)/conf/default.conf"
     wport="$(sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)([[:space:];]).*/\1/p' \
       "$site" 2>/dev/null | head -n1)" || wport=""
     [[ -n "$wport" ]] || wport="$(port_setting WEB_PORT 80)"
     if task_in_container web; then check_container web
     else check_service nginx "web"
     fi
-    check_http "web: page" "http://$(lan_host):$wport/"
+    check_http "web: page" "http://$host:$wport/"
   fi
 
   if task_in_container pihole || have pihole-FTL || unit_exists pihole-FTL; then
     found=1; check_config pihole
     local pport
-    if task_in_container pihole; then
-      pport="$(docker exec pihole pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || pport=""
-    else
-      pport="$(pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || pport=""
-    fi
+    pport="$(pihole_web_ports | head -n1)" || pport=""
     [[ -n "$pport" ]] || pport="$(port_setting PIHOLE_WEB_PORT 80)"
     if task_in_container pihole; then check_container pihole
     else check_service pihole-FTL "pihole"
     fi
     check_listen "pihole: dns" 53 udp
-    check_http "pihole: admin" "http://$(lan_host):$pport/admin/"
+    check_http "pihole: admin" "http://$host:$pport/admin/"
   fi
 
   if task_in_container samba; then
@@ -325,9 +307,9 @@ check_tasks() {
     check_container samba
     check_listen "samba: smb" 445 tcp
     local cshare="${SAMBA_SHARE_NAME:-nas-share}"
-    if grep -qF "name: \"$cshare\"" "$(container_root)/samba/data/config.yml" 2>/dev/null; then
+    if grep -qF "name: \"$cshare\"" "$(container_dir samba)/data/config.yml" 2>/dev/null; then
       report OK "samba: share" "[$cshare] in the container's config.yml"
-    else report WARN "samba: share" "[$cshare] not found in $(container_root)/samba/data/config.yml"
+    else report WARN "samba: share" "[$cshare] not found in $(container_dir samba)/data/config.yml"
     fi
   elif unit_exists smbd; then
     found=1; check_config samba
@@ -356,7 +338,7 @@ check_tasks() {
   if [[ -f /opt/netalertx/docker-compose.yml ]]; then
     found=1; check_config netalertx
     if have docker; then check_container netalertx; fi
-    check_http "netalertx: web" "http://$(lan_host):$(port_setting NETALERTX_PORT 20211)/"
+    check_http "netalertx: web" "http://$host:$(port_setting NETALERTX_PORT 20211)/"
   fi
 
   if [[ -f /opt/teamspeak/docker-compose.yml ]]; then
@@ -366,7 +348,7 @@ check_tasks() {
     check_listen "teamspeak: files" "$(port_setting TEAMSPEAK_FILE_PORT 30033)" tcp
     local qhttp="${TEAMSPEAK_QUERY_HTTP:-yes}"
     if [[ "${qhttp,,}" =~ ^(yes|true|on|1)$ ]]; then
-      check_http "teamspeak: query" "http://$(lan_host):$(port_setting TEAMSPEAK_QUERY_PORT 10080)/" any
+      check_http "teamspeak: query" "http://$host:$(port_setting TEAMSPEAK_QUERY_PORT 10080)/" any
     fi
   fi
 

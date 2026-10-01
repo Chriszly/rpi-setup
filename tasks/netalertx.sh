@@ -2,6 +2,7 @@
 # Task: netalertx - LAN device presence tracking via NetAlertX (Docker).
 # Settings: NETALERTX_* in config/rpi-setup.env (names in config/tasks/netalertx.env).
 set -euo pipefail
+. "$RPI_SETUP_ROOT/lib/containers.sh"
 
 TASKS+=("netalertx|LAN device presence tracking (web UI :20211)")
 
@@ -19,15 +20,13 @@ run_netalertx() {
     [[ "$subnets" =~ ^[0-9./]+\ --interface=[A-Za-z0-9._-]+(\;[0-9./]+\ --interface=[A-Za-z0-9._-]+)*$ ]] ||
       die "NETALERTX_SCAN_SUBNETS must look like '192.168.1.0/24 --interface=eth0' (got '$subnets')"
   fi
-  require_docker
+  container_require_docker
 
-  local dir=/opt/netalertx
-  local name=netalertx
-  local ip=""
-
-  local uid
+  local dir name=netalertx uid
+  dir="$(container_dir netalertx)"
   uid="$(assign_uid netalertx)"
-  ensure_container_dir "$dir" "$uid"
+  install -m 0755 -d "$dir" "$dir/data"
+  chown "$uid:$uid" "$dir/data"
 
   local subnet_cfg="" s list="" pw_hash=""
   local -a parts=()
@@ -77,11 +76,6 @@ services:
     read_only: true
     restart: unless-stopped
     pids_limit: 512
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
     cap_drop:
       - ALL
     cap_add:
@@ -112,27 +106,19 @@ EOF
     changed=1
   fi
 
-  if [[ $changed -eq 0 ]] && compose_is_up "$name"; then
-    netalertx_apply_login "$dir/data/config/app.conf" "$login" "$pw_hash"
-    ip="$(pi_ip)" || true
-    say "NetAlertX is already running with these settings. Dashboard: http://${ip:-<pi-ip>}:${NETALERTX_PORT}"
-    return
-  fi
-
-  # 'up -d' recreates the container when the compose file changed, so a new
-  # password, login or subnet setting takes effect; otherwise it just starts it.
-  say 'Starting NetAlertX container'
-  compose_up "$dir"
+  # 'up -d' recreates the container when the compose file or the image
+  # changed, so a new password, login or subnet setting takes effect.
+  container_pull "$dir"
+  container_up "$dir" "$name"
   netalertx_apply_login "$dir/data/config/app.conf" "$login" "$pw_hash"
 
-  ip="$(pi_ip)" || true
-  say "NetAlertX dashboard: http://${ip:-<pi-ip>}:${NETALERTX_PORT}"
-  say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
+  say "NetAlertX dashboard: $(service_url "$NETALERTX_PORT")"
+  if [[ $changed -eq 1 ]]; then
+    say "Give it a few minutes to run its first ARP scan. Initial discovery can take 5-10 minutes."
+  fi
 }
 
 # --- netalertx helpers (unit tested in ci/test-task-netalertx.sh) ------------
-
-netalertx_secret_file=/var/lib/rpi-setup/secrets/netalertx.env
 
 # Print $1 as a JSON string literal (quotes, backslashes, control chars escaped).
 netalertx_json_str() {
@@ -179,28 +165,15 @@ netalertx_hash() {
   printf '%s\n' "${h%% *}"
 }
 
-# The password generated on an earlier run, if any.
-netalertx_saved_password() {
-  local line
-  [[ -r "$netalertx_secret_file" ]] || return 1
-  line="$(grep -m1 '^NETALERTX_PASSWORD=' "$netalertx_secret_file")" || return 1
-  line="${line#NETALERTX_PASSWORD=}"
-  [[ -n "$line" ]] || return 1
-  printf '%s\n' "$line"
-}
-
 # Set netalertx_pw: NETALERTX_PASSWORD, else the saved one, else a new one
 # (printed once and saved, so re-runs keep the same password).
 netalertx_password() {
   if [[ -n "${NETALERTX_PASSWORD:-}" ]]; then
     netalertx_pw="$NETALERTX_PASSWORD"
-  elif netalertx_pw="$(netalertx_saved_password)"; then
-    info "Web UI login: using the password saved in $netalertx_secret_file"
+  elif netalertx_pw="$(load_secret netalertx NETALERTX_PASSWORD)"; then
+    info 'Web UI login: using the password saved in /var/lib/rpi-setup/secrets/netalertx.env'
   else
-    netalertx_pw="$(gen_secret 20)"
-    save_secret netalertx NETALERTX_PASSWORD "$netalertx_pw"
-    say "Generated NetAlertX web UI password: $netalertx_pw"
-    info "Saved in $netalertx_secret_file; set NETALERTX_PASSWORD to choose your own."
+    new_secret netalertx_pw netalertx NETALERTX_PASSWORD 'NetAlertX web UI password'
   fi
 }
 

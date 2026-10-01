@@ -2,22 +2,20 @@
 
 Installs [Pi-hole](https://pi-hole.net/) so every device that uses the Pi as
 its DNS server gets ads and trackers blocked. Installs without Pi-hole's
-dialogs by default, using the settings below.
+dialogs, using the settings below.
 
 ```bash
 sudo bash setup.sh pihole
 ```
 
 The official installer runs as `curl https://install.pi-hole.net | bash`. The
-task prints a warning first and asks no question: it runs the installer unless
-`PIHOLE_CONFIRM=no`, which fails the task instead (the run summary shows it).
+task prints a warning first and asks no question; leave `pihole` out of the
+run if you do not want the installer to run.
 
 ## Settings
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `PIHOLE_CONFIRM` | `yes` | `yes`: run the official `curl \| bash` installer (after the warning). `no`: do not run it; the task fails so the summary shows Pi-hole is not installed. Not used once Pi-hole is installed or with `PIHOLE_DOCKER=yes`. |
-| `PIHOLE_UNATTENDED` | `yes` | Install without Pi-hole's dialogs using the settings below; `no` shows the dialogs. |
 | `PIHOLE_PASSWORD` | empty: generated | Web admin password. Empty: generated on the first install, printed once and saved. Set it later to change the password on the next run. |
 | `PIHOLE_INTERFACE` | the default route's | Interface Pi-hole answers on, e.g. `eth0` or `wlan0`. Install only. |
 | `PIHOLE_DNS` | `1.1.1.1,1.0.0.1` | Upstream DNS servers, comma separated (`#port` suffix allowed). Install only. |
@@ -45,7 +43,7 @@ apply on every run instead.
 With `PIHOLE_DOCKER=yes` the task runs Pi-hole's official image
 (`PIHOLE_IMAGE`) in a container named `pihole` on the host network, so it
 gets port 53 and sees the real client addresses. Docker is installed first if
-it is missing, and `PIHOLE_CONFIRM` and `PIHOLE_UNATTENDED` are not needed.
+it is missing, and the `curl | bash` installer is not used.
 
 - Pi-hole's data (`/etc/pihole`) lives in `/opt/pihole/etc-pihole`.
 - All `PIHOLE_*` settings are passed to the container and apply on every run;

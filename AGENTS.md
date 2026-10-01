@@ -34,8 +34,8 @@ When adding a new task:
 1. Create `tasks/<name>.sh` following the pattern in `tasks/base.sh`
 2. Add `TASKS+=("<name>|<description>")`
 3. Define `run_<name>()` function
-4. Use `require_docker` helper for Docker-dependent tasks
-5. Use `ensure_container_dir` and `compose_up` for container tasks
+4. For Docker-dependent tasks, source `lib/containers.sh` and call `container_require_docker` (it runs the `docker` task when Docker is missing)
+5. For container tasks use `container_dir`, `container_pull` and `container_up` from `lib/containers.sh` (`container_up` waits until the container stays up and rolls back otherwise)
 6. Use `assign_uid <service>` for a stable per-service UID/GID (persisted under `/var/lib/rpi-setup/uids/`) so re-runs keep the same owner and services never collide
 7. Keep a fixed UID where the upstream image requires one - e.g. `teamspeak` runs as `9987` and ignores `PUID`/`PGID`, so its data dir must stay owned by `9987`
 8. Every setting a task reads is named `<TASK>_...` (e.g. `SAMBA_PASSWORD`) and must be listed in `config/tasks/<name>.env` (names only) and in `config/rpi-setup.env.example` (with default and a comment); `ci/test-setup.sh` checks that all three agree. Read settings as `${NAME:-default}` or `: "${NAME:=default}"` (an empty value means default), validate them before changing anything (`setting_on`, `require_port`, ...), and never prompt: generate a missing password with `gen_secret`, print it and store it with `save_secret`
@@ -68,7 +68,7 @@ Fill in `.github/PULL_REQUEST_TEMPLATE.md` (checked by the PR Template Validatio
 - `setup.sh` splits `config/rpi-setup.env` into `config/local/<task>.env` (`split_config`) and loads each task's file (`load_task_config`) right before running it; both files are git-ignored
 - `lib/common.sh` provides all shared helpers
 - `host/flash.sh` (Linux) and `host/flash.ps1` (Windows) create bootable SD cards
-- Tasks are independent but can declare dependencies (e.g., `netalertx` requires `docker`)
+- Tasks are independent; `base` runs first when picked, and a task that needs Docker installs it itself (`container_require_docker`)
 - Docker containers use host networking where needed (`network_mode: host`)
 
 ## Common Pitfalls to Avoid

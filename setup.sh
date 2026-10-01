@@ -23,103 +23,47 @@ print_tasks() {
   done
 }
 
-name_to_nums() {
-  local name i found
-  for name in "$@"; do
-    found=0
-    for i in "${!TASKS[@]}"; do
-      if [[ "$(task_name "${TASKS[$i]}")" == "$name" ]]; then
-        echo $((i + 1))
-        found=1
-        break
-      fi
-    done
-    [[ $found -eq 1 ]] || die "unknown task: $name"
+# Description of the task named $1; dies if there is no such task.
+task_desc_of() {
+  local entry
+  for entry in "${TASKS[@]}"; do
+    if [[ "$(task_name "$entry")" == "$1" ]]; then task_desc "$entry"; return 0; fi
   done
+  die "unknown task: $1"
 }
 
-dedupe() {
-  local -A seen
-  local x
-  for x in "$@"; do
-    [[ -z "$x" ]] && continue
-    [[ -n "${seen[$x]+x}" ]] && continue
-    echo "$x"
-    seen[$x]=1
-  done
-}
-
+# Read the menu answer and print the names of the tasks picked by number.
 prompt_selection() {
   local line p
   printf '> ' >&2
   IFS= read -r line
   line="${line//,/ }"
-  [[ -z "${line// /}" ]] && return
-  if [[ "$line" == "all" ]]; then
-    seq 1 ${#TASKS[@]}
-    return
-  fi
+  if [[ "$line" == "all" ]]; then line="$(seq 1 ${#TASKS[@]})"; fi
   # Use if/then rather than '[[ ]] && echo': a trailing non-numeric token would
-  # otherwise make the function return 1, and 'nums=($(prompt_selection))' in
+  # otherwise make the function return 1, and 'picked=($(prompt_selection))' in
   # main() would then abort the script under 'set -e' instead of cancelling.
   for p in $line; do
-    if [[ "$p" =~ ^[0-9]+$ ]]; then echo "$p"; fi
+    if [[ "$p" =~ ^[0-9]+$ ]] && (( 10#$p >= 1 && 10#$p <= ${#TASKS[@]} )); then
+      task_name "${TASKS[10#$p - 1]}"
+      echo
+    fi
   done
   return 0
 }
 
-# Tasks that need another task first: TASK_NEEDS[task]="dep ...". A missing
-# dependency is added to the run unless it is already installed (dep_installed).
-declare -A TASK_NEEDS=(
-  [netalertx]=docker
-  [teamspeak]=docker
-)
-
-# True if dependency $1 is already on this system, so it need not run again.
-dep_installed() {
-  case "$1" in
-    docker) command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Turn the selected task names into PLAN, the order they run in: missing
-# dependencies are added, base runs first, a dependency runs before the tasks
-# that need it, and everything else keeps the order it was given in.
+# Set PLAN, the order tasks $@ run in: base first if picked, then the others
+# in the order given, repeats dropped.
 declare -a PLAN=()
-declare -A _PLAN_SELECTED=() _PLAN_PLACED=()
 plan_tasks() {
-  local -a wanted=()
-  local name dep
-  _PLAN_SELECTED=()
-  _PLAN_PLACED=()
+  local -A seen=()
+  local name
   PLAN=()
+  if [[ " $* " == *" base "* ]]; then set -- base "$@"; fi
   for name in "$@"; do
-    [[ -n "${_PLAN_SELECTED[$name]+x}" ]] && continue
-    _PLAN_SELECTED[$name]=1
-    wanted+=("$name")
+    [[ -z "${seen[$name]+x}" ]] || continue
+    seen[$name]=1
+    PLAN+=("$name")
   done
-  for name in "${wanted[@]}"; do
-    for dep in ${TASK_NEEDS[$name]:-}; do
-      [[ -n "${_PLAN_SELECTED[$dep]+x}" ]] && continue
-      dep_installed "$dep" && continue
-      info "Adding task '$dep' because '$name' needs it."
-      _PLAN_SELECTED[$dep]=1
-      wanted+=("$dep")
-    done
-  done
-  if [[ -n "${_PLAN_SELECTED[base]+x}" ]]; then _plan_place base; fi
-  for name in "${wanted[@]}"; do _plan_place "$name"; done
-}
-
-_plan_place() {
-  local t="$1" d
-  [[ -n "${_PLAN_PLACED[$t]+x}" ]] && return 0
-  _PLAN_PLACED[$t]=1
-  for d in ${TASK_NEEDS[$t]:-}; do
-    if [[ -n "${_PLAN_SELECTED[$d]+x}" ]]; then _plan_place "$d"; fi
-  done
-  PLAN+=("$t")
 }
 
 # Parse the settings file of every selected task before running any, so a typo
@@ -131,23 +75,15 @@ check_task_configs() {
   done
 }
 
-# Description of the task named $1.
-task_desc_of() {
-  local entry
-  for entry in "${TASKS[@]}"; do
-    if [[ "$(task_name "$entry")" == "$1" ]]; then task_desc "$entry"; fi
-  done
-}
-
 # Run tasks by name. Each runs in a subshell, so a failing command or 'die'
 # ends only that task; the run goes on and TASK_RESULT records ok, failed or
-# skipped. RUN_FAILED becomes 1 if a task failed or was skipped because a
-# dependency failed. Call it plainly, never in a condition such as "run_tasks ||":
-# bash would then ignore errexit inside every task.
+# skipped. RUN_FAILED becomes 1 if a task failed. Call it plainly, never in a
+# condition such as "run_tasks ||": bash would then ignore errexit inside
+# every task.
 declare -A TASK_RESULT=()
 RUN_FAILED=0
 run_tasks() {
-  local name dep rc blocked
+  local name rc
   TASK_RESULT=()
   RUN_FAILED=0
   for name in "$@"; do
@@ -155,16 +91,6 @@ run_tasks() {
     if [[ "$(type -t "run_${name}")" != "function" ]]; then
       warn "No handler for task '$name', skipping."
       TASK_RESULT[$name]='skipped (no handler)'
-      continue
-    fi
-    blocked=''
-    for dep in ${TASK_NEEDS[$name]:-}; do
-      if [[ -n "${TASK_RESULT[$dep]+x}" && "${TASK_RESULT[$dep]}" != ok ]]; then blocked="$dep"; fi
-    done
-    if [[ -n "$blocked" ]]; then
-      warn "Skipping $name: it needs $blocked, which did not finish."
-      TASK_RESULT[$name]="skipped ($blocked did not finish)"
-      RUN_FAILED=1
       continue
     fi
     echo "Task $name: $(task_desc_of "$name")"
@@ -186,10 +112,11 @@ run_tasks() {
   done
 }
 
-# Remember that task $1 finished on this Pi, so the autodeploy task knows
-# which tasks to rerun. Best effort: a read-only state folder never fails a run.
+# Remember that task $1 finished on this Pi, so the runner task's deploy
+# reruns it (RPI_SETUP_DONE_FILE: see tasks/runner.sh). Best effort: a
+# read-only state folder never fails a run.
 record_task_done() {
-  local f="${RPI_SETUP_DONE_FILE:-/var/lib/rpi-setup/tasks.done}"
+  local f="$RPI_SETUP_DONE_FILE"
   {
     mkdir -p "$(dirname "$f")" &&
       { cat "$f" 2>/dev/null || true; printf '%s\n' "$1"; } | sort -u >"$f.tmp" &&
@@ -299,9 +226,11 @@ main() {
     warn 'This does not appear to be a Raspberry Pi. Some tasks may not work correctly.'
   fi
 
-  local -a nums=()
+  local -a picked=()
+  local n
   if [[ $# -gt 0 ]]; then
-    nums=($(name_to_nums "$@"))
+    for n in "$@"; do task_desc_of "$n" >/dev/null; done
+    picked=("$@")
   else
     echo "rpi-setup - easy Raspberry Pi provisioning"
     echo
@@ -309,26 +238,11 @@ main() {
     print_tasks
     echo
     echo 'Enter task numbers (comma/space separated), "all", or nothing to quit:'
-    nums=($(prompt_selection))
-    if [[ ${#nums[@]} -eq 0 ]]; then
+    picked=($(prompt_selection))
+    if [[ ${#picked[@]} -eq 0 ]]; then
       echo 'Cancelled.'
       return 0
     fi
-  fi
-
-  nums=($(dedupe "${nums[@]}"))
-  if [[ ${#nums[@]} -eq 0 ]]; then
-    echo 'Nothing to do.'
-    return 0
-  fi
-  local -a picked=()
-  local n
-  for n in "${nums[@]}"; do
-    if [[ -n "${TASKS[$((n - 1))]:-}" ]]; then picked+=("$(task_name "${TASKS[$((n - 1))]}")"); fi
-  done
-  if [[ ${#picked[@]} -eq 0 ]]; then
-    echo 'Nothing to do.'
-    return 0
   fi
   start_log "${picked[*]}"
   plan_tasks "${picked[@]}"

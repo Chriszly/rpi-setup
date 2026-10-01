@@ -14,18 +14,18 @@ declare -a TASKS=()
 
 assert_eq "network registers its task" "network" "${TASKS[0]%%|*}"
 
-# --- network_valid_ipv4 -------------------------------------------------------
-assert_ok    "ipv4 accepts 192.168.1.1"      network_valid_ipv4 192.168.1.1
-assert_ok    "ipv4 accepts 0 octets"         network_valid_ipv4 10.0.0.1
-assert_ok    "ipv4 accepts 255"              network_valid_ipv4 255.255.255.255
-assert_fails "ipv4 rejects 256"              network_valid_ipv4 192.168.1.256
-assert_fails "ipv4 rejects leading zero"     network_valid_ipv4 192.168.01.1
-assert_fails "ipv4 rejects three octets"     network_valid_ipv4 192.168.1
-assert_fails "ipv4 rejects five octets"      network_valid_ipv4 1.2.3.4.5
-assert_fails "ipv4 rejects a prefix"         network_valid_ipv4 192.168.1.1/24
-assert_fails "ipv4 rejects letters"          network_valid_ipv4 192.168.a.1
-assert_fails "ipv4 rejects empty"            network_valid_ipv4 ''
-assert_fails "ipv4 rejects trailing space"   network_valid_ipv4 '1.2.3.4 '
+# --- valid_ipv4 -------------------------------------------------------
+assert_ok    "ipv4 accepts 192.168.1.1"      valid_ipv4 192.168.1.1
+assert_ok    "ipv4 accepts 0 octets"         valid_ipv4 10.0.0.1
+assert_ok    "ipv4 accepts 255"              valid_ipv4 255.255.255.255
+assert_fails "ipv4 rejects 256"              valid_ipv4 192.168.1.256
+assert_fails "ipv4 rejects leading zero"     valid_ipv4 192.168.01.1
+assert_fails "ipv4 rejects three octets"     valid_ipv4 192.168.1
+assert_fails "ipv4 rejects five octets"      valid_ipv4 1.2.3.4.5
+assert_fails "ipv4 rejects a prefix"         valid_ipv4 192.168.1.1/24
+assert_fails "ipv4 rejects letters"          valid_ipv4 192.168.a.1
+assert_fails "ipv4 rejects empty"            valid_ipv4 ''
+assert_fails "ipv4 rejects trailing space"   valid_ipv4 '1.2.3.4 '
 
 # --- network_valid_host_cidr --------------------------------------------------
 assert_ok    "cidr accepts 192.168.1.10/24"  network_valid_host_cidr 192.168.1.10/24

@@ -53,7 +53,7 @@ assert_eq "backup_run_paths on an empty system prints nothing" "" \
     "$(mkdir -p "$tmp/empty"; BK_ROOT="$tmp/empty" BK_INCLUDE_SHARE=no BK_CONFIG_DIRS=(); backup_run_paths)"
 
 # --- backup_run_prune ---------------------------------------------------------
-d="$tmp/prune"
+d="$tmp/prune dir"  # a space in the folder must not split paths
 mkdir -p "$d"
 for i in 01 02 03 04 05 06 07 08 09 10; do touch "$d/rpi-setup-backup-202609${i}-030000.tar.gz"; done
 touch "$d/.rpi-setup-backup-20260911-030000.tar.gz.partial" "$d/notes.txt"

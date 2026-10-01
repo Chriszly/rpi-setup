@@ -7,8 +7,10 @@ official Docker image (native arm64).
 sudo bash setup.sh teamspeak
 ```
 
-Needs `docker` (added automatically when missing) and a **64-bit** OS: the
-image exists for arm64 and amd64 only, and the task stops on a 32-bit Pi OS.
+Needs Docker (the task runs the `docker` task first when it is missing) and a
+**64-bit** OS: the image exists for arm64 and amd64 only, and the task stops
+on a 32-bit Pi OS. If the container does not stay up, its last log lines are
+shown and it is taken down again.
 
 ## Settings
 
