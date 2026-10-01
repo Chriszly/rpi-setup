@@ -37,7 +37,10 @@ pis/<pi>/id_ed25519.pub        public SSH key for that Pi (for host/flash.sh -a)
 2. `rpi-setup-deploy` updates the rpi-setup checkout on the Pi to the chosen
    branch (only branches listed in `RUNNER_BRANCHES`), installs
    `pis/<pi>/rpi-setup.env` as `/etc/rpi-setup/rpi-setup.env` (root only)
-   and runs `setup.sh` with the chosen tasks.
+   and runs `setup.sh` with the chosen tasks for the user who owns the
+   checkout (never `rpi-runner`). Without the settings file it stops if your
+   settings are still in the checkout's `config/rpi-setup.env`; move them
+   once with `sudo bash setup.sh --move-config`.
 3. Only the run summary appears in the workflow log. The full output,
    including any generated passwords, stays on the Pi in
    `/var/log/rpi-setup-deploy/`.
