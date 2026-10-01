@@ -53,6 +53,7 @@ assert_contains "the deploy command checks where the settings are" 'deploy_run_c
 # --- deploy_run_args ----------------------------------------------------------
 args() { ( DP_BRANCHES="main next"; deploy_run_args "$@" && printf '%s|%s|%s' "$DP_BRANCH" "$DP_CONFIG" "$DP_TASKS" ) 2>/dev/null; }
 assert_eq "defaults to the first allowed branch" "main||" "$(args)"
+assert_eq "--update is accepted" "1" "$( (DP_BRANCHES=main; deploy_run_args --update --tasks base && echo "$DP_UPDATE") 2>/dev/null)"
 assert_eq "tasks may be comma separated" "next||base pihole" "$(args --branch next --tasks base,pihole)"
 assert_fails "a branch not in RUNNER_BRANCHES is refused" args --branch evil
 assert_fails "a task with odd characters is refused" args --tasks 'base;reboot'
@@ -112,7 +113,13 @@ echo "\$SUDO_USER" >"$tmp/ran-user"
 echo 'Summary:'
 echo "  \$1 ok"
 STUB
-git_q -C "$tmp/work" add setup.sh
+cat >"$tmp/work/update.sh" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >"$tmp/updated"
+echo 'Summary:'
+echo '  containers ok'
+STUB
+git_q -C "$tmp/work" add setup.sh update.sh
 git_q -C "$tmp/work" commit -m one
 git_q -C "$tmp/work" push origin main
 git_q clone "$tmp/origin.git" "$tmp/pi"
@@ -168,5 +175,20 @@ rm -f "$tmp/ran"
 out="$(deploy --tasks base || true)"
 assert_contains "settings left in the checkout stop the deploy" "--move-config" "$out"
 assert_ok "and run no setup" test ! -e "$tmp/ran"
+
+# --- --update: containers, then only the new tasks ----------------------------
+rm -rf "${tmp:?}/pi/config"
+printf 'base\nweb\n' >"$tmp/done"
+rm -f "$tmp/updated"
+out="$(deploy --update)"
+assert_eq "--update updates the containers only" "--containers-only" "$(cat "$tmp/updated")"
+assert_contains "the update summary reaches the workflow log" "containers ok" "$out"
+assert_contains "--update without tasks reports none new" "no new tasks" "$out"
+assert_ok "and reruns no recorded task" test ! -e "$tmp/ran"
+deploy --update --tasks "base pihole web" >/dev/null
+assert_eq "--update runs only the tasks not yet set up" "pihole cfg=$tmp/etc" "$(cat "$tmp/ran")"
+rm -f "$tmp/updated"
+assert_fails "--update refuses an unknown task" eval 'deploy --update --tasks nope >/dev/null'
+assert_ok "before updating anything" test ! -e "$tmp/updated"
 
 finish_tests

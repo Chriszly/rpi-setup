@@ -103,6 +103,14 @@ assert_contains "--no-apt is reported" "skipped (--no-apt)" "$OUT"
 assert_contains "--no-containers is reported" "skipped (--no-containers)" "$OUT"
 assert_contains "Pi-hole still updates" "[dry-run] pihole -up" "$OUT"
 
+upd all pi --dry-run --containers-only
+assert_eq "--containers-only exits 0" 0 "$RC"
+assert_contains "--containers-only updates the containers" "[dry-run] docker compose -f $OPT/netalertx/docker-compose.yml pull" "$OUT"
+assert_lacks "--containers-only skips apt" "[dry-run] apt-get" "$OUT"
+assert_lacks "--containers-only skips Pi-hole" "[dry-run] pihole -up" "$OUT"
+assert_lacks "--containers-only skips the EEPROM" "[dry-run] rpi-eeprom-update" "$OUT"
+assert_contains "--containers-only is reported" "skipped (--containers-only)" "$OUT"
+
 upd nodocker pc --dry-run
 assert_eq "dry-run without docker exits 0" 0 "$RC"
 assert_contains "no docker: containers skipped" "skipped (Docker not installed)" "$OUT"
