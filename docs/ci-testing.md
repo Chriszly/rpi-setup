@@ -17,17 +17,25 @@ quirks). The workflow uses several increasingly faithful layers:
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
 | `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
+| `container-helpers`, `container-smoke` | PR, push to `main`, manual | `<TASK>_DOCKER=yes` on a plain `ubuntu-latest` runner | low | minutes |
 | `provision-gate` | `pull_request` touching provisioning | booted `systemd-nspawn` container, latest release and Bookworm, two parallel halves each | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
-- **`syntax`** and **`unit`** are fast pre-checks; the three provisioning jobs
-  `needs:` both, so lint or unit-test failures stop before the expensive part.
+- **`syntax`** and **`unit`** are fast pre-checks; every other job `needs:`
+  both (directly or through `container-helpers`), so lint or unit-test
+  failures stop before the expensive part.
   `unit` runs the tests under `sudo` so the root-only assertions (UID
   assignment, the `setup.sh` menu) are included.
 - **`docker-smoke`** runs the `docker`, `netalertx` and `teamspeak` tasks on the
   stock Ubuntu runner (x86_64, Docker preinstalled). It is not a Pi, but it is
   the only per-PR coverage of the compose/UID logic, because Docker does not
   work inside the nspawn gate (see below).
+- **`container-helpers`** runs [`ci/test-containers.sh`](../ci/test-containers.sh)
+  (`lib/containers.sh`), then **`container-smoke`** runs every
+  `ci/smoke-container-<task>.sh`: each runs `setup.sh <task>` with
+  `<TASK>_DOCKER=yes`, checks the service answers, re-runs it and switches
+  back. The runner has Docker and a booted systemd; the nspawn gate has neither
+  Docker nor a free port 53.
 - **`provision-gate`** is the per-PR gate. It boots the image with systemd as
   PID 1 (`ethanjli/pinspawn-action` with `boot: true`) inside a
   `systemd-nspawn` container on an `ubuntu-latest` runner. Systemd PID 1 is
@@ -36,17 +44,17 @@ quirks). The workflow uses several increasingly faithful layers:
   Each release runs as two parallel jobs, `system` (`base samba`) and `web`
   (`web monitoring pihole`): package installs under arm64 emulation dominate
   the gate, so splitting them roughly halves its wall time. A small `changes`
-  job skips the gate for PRs that touch none of `setup.sh`, `lib/`, `tasks/`,
-  `ci/provision.sh`, this workflow or `.github/actions/` (a skipped job counts
-  as passed for required checks).
+  job (`dorny/paths-filter`) skips the gate for PRs that touch none of
+  `setup.sh`, `lib/`, `tasks/`, `ci/provision.sh`, this workflow or
+  `.github/actions/` (a skipped job counts as passed for required checks).
 - **`provision-qemu`** is the manual maximum-fidelity run. It boots the same
   image in `qemu-system-aarch64` emulating a Raspberry Pi 3B+
   (`ethanjli/piqemu-action`, `machine: rpi-3b+`). Use it before a release or
   whenever a task change touches hardware-dependent behavior. It is the only
   job that runs the Docker tasks on arm64.
 
-Changes that touch only Markdown, `docs/` or `LICENSE` skip this workflow
-(`paths-ignore`); they cannot change what provisioning does.
+Changes that touch only Markdown, `docs/`, `LICENSE` or `.claude/` skip this
+workflow (`paths-ignore`); they cannot change what provisioning does.
 
 The two flash-script workflows are separate:
 [`test-flash.yml`](../.github/workflows/test-flash.yml) parses and lints
@@ -57,26 +65,17 @@ itself) changes; `pr-template-validation.yml` checks the PR description.
 
 ## What runs
 
-All three provisioning jobs run [`ci/provision.sh`](../ci/provision.sh), which
-is the single source of truth for the task list and the checks. It selects a
-**profile**, either from `PROVISION_PROFILE` or by auto-detecting a container:
-
-| Profile     | Used by          | Tasks                                                              | Verified                                                         |
-|-------------|------------------|--------------------------------------------------------------------|------------------------------------------------------------------|
-| `container` | auto-detected in any container | `base samba web monitoring pihole`                   | `smbd nginx netdata fail2ban` active, `ssh` enabled; Netdata :19999 and nginx :80 |
-| `container-system` | `provision-gate` (`system`) | `base samba`                                           | `smbd fail2ban` active, `ssh` enabled                            |
-| `container-web` | `provision-gate` (`web`) | `web monitoring pihole`                                       | `nginx netdata` active; Netdata :19999 and nginx :80             |
-| `full`      | `provision-qemu` | `base docker samba web monitoring pihole netalertx teamspeak`      | above plus `docker` active, both containers running, :20211      |
-| `docker`    | `docker-smoke`   | `docker netalertx teamspeak`                                       | `docker` active, both containers running, NetAlertX on :20211    |
-
-(`tailscale` is deliberately excluded everywhere - see
-[Interactive tasks](#interactive-tasks).)
+All three provisioning jobs run [`ci/provision.sh`](../ci/provision.sh) with a
+`PROVISION_PROFILE` (`container-system`, `container-web`, `full` or `docker`).
+Its `case` block is the single source of truth for each profile's tasks,
+services, containers and endpoints. `tailscale` is deliberately excluded
+everywhere - see [Interactive tasks](#interactive-tasks).
 
 After provisioning, every profile does:
 
 1. `systemctl is-active` for each service in the profile.
 2. `docker ps` and a running-state check for each expected container.
-3. `curl` against each web endpoint with a retry loop (Netdata and NetAlertX
+3. `curl --retry` against each web endpoint (Netdata and NetAlertX
    take a while to listen). Endpoints are requested on the machine's LAN
    address (`hostname -I`), not `localhost`, so a service that only listens on
    loopback fails here the way it would for a user on another PC.
@@ -123,67 +122,35 @@ acceptable for CI.
 The gate runs as a matrix over two Raspberry Pi OS Lite (64-bit) images,
 matching the README's "Trixie or Bookworm" promise:
 
-- **`latest`**: resolved at run time from the
-  [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/),
-  exactly as `host/flash.sh` does, and verified against that release's own
-  `.sha256`. This is the image a user flashes today (currently Trixie), so a
-  new Raspberry Pi OS release that breaks a task shows up on the next PR.
-- **`bookworm`**: pinned, for Pis that are still on Bookworm:
+- **`latest`**: resolved at run time with `host/flash.sh`'s own
+  `latest_release`, and verified against that release's `.sha256`. This is the
+  image a user flashes today (currently Trixie), so a new Raspberry Pi OS
+  release that breaks a task shows up on the next PR.
+- **`bookworm`**: pinned (URL and SHA-256), for Pis that are still on
+  Bookworm. `provision-qemu` uses it only, because `piqemu-action` builds a
+  Bookworm-specific patched DTB (it merges the `disable-bt` overlay to make
+  the emulated Pi boot); Trixie images are not yet compatible with it.
 
-  ```
-  2025-05-13-raspios-bookworm-arm64-lite.img.xz
-  sha256 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-  ```
-
-`provision-qemu` uses the pinned Bookworm image only, because `piqemu-action`
-builds a Bookworm-specific patched DTB (it merges the `disable-bt` overlay to
-make the emulated Pi boot); Trixie images are not yet compatible with it. The
-gate's images live in the `provision-gate` job's `matrix.include`; the QEMU
-image in the `env:` block at the top of the workflow. Both go through the
-shared [`prepare-image`](../.github/actions/prepare-image/action.yml)
-composite action, which accepts `version: latest` or a pinned
-`version`/`url`/`sha256`.
+Both come from the shared
+[`prepare-image`](../.github/actions/prepare-image/action.yml) composite
+action, which downloads (or restores from the cache), verifies, extracts and
+grows the image; the steps and the reasons for them are commented there. The
+gate's steps in [`test-provision.yml`](../.github/workflows/test-provision.yml)
+then cache and install the host packages `pinspawn-action` needs, and bind
+the checkout into the container at `/workspace`; the QEMU job copies it into
+the image's `/opt/rpi-setup` instead, since QEMU has no bind mounts.
 
 ### Bumping the pinned image
 
 1. Pick a new image and note its `.sha256` from the
    [download index](https://downloads.raspberrypi.com/raspios_lite_arm64/images/).
-2. Update the `bookworm` entry of the `provision-gate` matrix and
-   `RPI_IMAGE_VERSION`, `RPI_IMAGE_URL`, `RPI_IMAGE_SHA256` in
-   `.github/workflows/test-provision.yml`. The cache key is derived from the
-   version, so a fresh image is downloaded automatically.
+2. Update the `bookworm` case in
+   [`prepare-image`](../.github/actions/prepare-image/action.yml). The cache key
+   is derived from the date, so the fresh image is downloaded once.
 3. If moving off Bookworm, first confirm `piqemu-action` supports the new
    image (its DTB build script is Bookworm-specific) and that the image's
    partition layout/boot behavior still matches nspawn/QEMU.
 4. Run the manual `provision-qemu` job before merging the bump.
-
-## How the image is prepared
-
-The `prepare-image` composite action does the same thing for both jobs:
-
-1. **Restore** the `.img.xz` from `actions/cache` (keyed on the image version)
-   or **download** it, then **verify** the SHA-256.
-2. **Save** it to the cache right away, so a later provisioning failure does
-   not force a re-download on the next run.
-3. **Extract** to a raw `.img`.
-4. **Grow** the root partition to 8G (`truncate` + `parted resizepart` +
-   `resize2fs` on a loop device). The stock image has only ~1-2 GB free, which
-   is too small for `apt upgrade` plus the `netalertx`/`teamspeak` images.
-
-Before booting, the gate installs the host packages `pinspawn-action` needs
-(`systemd-container`, `qemu-user-static`, `binfmt-support`) through the
-[`nspawn-deps`](../.github/actions/nspawn-deps/action.yml) action, which caches
-their `.deb` files keyed on the runner image. The runner's Ubuntu mirror serves
-them at under 120 kB/s, so letting `pinspawn-action` download them cost 2-4
-minutes per run.
-
-The two layers then differ in how they get the repo into the OS:
-
-- **gate**: `--bind ${{ github.workspace }}:/workspace` is passed to
-  `systemd-nspawn`; the run script does `cd /workspace`.
-- **qemu**: QEMU has no bind mounts, so a prep step mounts the image's root
-  partition, copies the checkout into `/opt/rpi-setup`, and unmounts; the run
-  script does `cd /opt/rpi-setup`.
 
 ## Known limitations
 
@@ -203,7 +170,7 @@ The two layers then differ in how they get the repo into the OS:
   on Trixie, is sandboxed) with a copy minus those lines, inside containers
   only.
 - **No Docker in the gate.** Docker cannot run inside the nspawn container, so
-  the `container` profile skips `docker`, `netalertx` and `teamspeak`. Those
+  the gate's profiles skip `docker`, `netalertx` and `teamspeak`. Those
   tasks get x86 coverage from `docker-smoke` and arm64 coverage only from the
   manual QEMU job.
 - **Emulation is slow.** The gate emulates arm64 via QEMU user-mode binaries on
@@ -246,10 +213,10 @@ the gate by hand:
 ```bash
 sudo systemd-nspawn --directory=/mnt/raspi-root --boot --bind "$PWD:/workspace"
 # inside the container:
-cd /workspace && bash ci/provision.sh /workspace
+cd /workspace && PROVISION_PROFILE=container-system bash ci/provision.sh /workspace
 ```
 
-The GitHub Actions workflow is the supported path though; the actions install
+The GitHub Actions workflow is the supported path though; it installs
 `systemd-container`, `qemu-user-static`, `binfmt-support` (and
 `qemu-system-aarch64` for QEMU) automatically.
 
