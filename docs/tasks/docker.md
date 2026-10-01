@@ -8,9 +8,9 @@ cannot fill the SD card.
 sudo bash setup.sh docker
 ```
 
-`netalertx` and `teamspeak` need Docker. When you pick one of them and Docker
-is not installed yet, `setup.sh` adds the `docker` task automatically and runs
-it first.
+`netalertx` and `teamspeak` (and any task with `<TASK>_DOCKER=yes`) need
+Docker. When Docker is not installed yet, such a task runs the `docker` task
+itself first, with your `DOCKER_*` settings.
 
 ## Settings
 
@@ -35,8 +35,8 @@ task only adds the Compose plugin.
 - Log out and back in (reconnect SSH) after the first run to use `docker`
   without `sudo`.
 - rpi-setup's containers live in `/opt/<task>/` (a `docker-compose.yml` plus
-  a `data/` folder). `sudo bash update.sh` pulls new images and recreates the
-  containers that changed; re-running a task does not. Switching a task back
+  a `data/` folder). `sudo bash update.sh` (or re-running the task) pulls new
+  images and recreates the containers that changed. Switching a task back
   to native (`<TASK>_DOCKER=no`) renames its file to
   `docker-compose.yml.disabled`, so `update.sh` leaves it alone; the data stays.
 - Turn Docker off with `sudo systemctl disable --now docker docker.socket`.

@@ -193,8 +193,8 @@ sudo bash setup.sh docker netalertx teamspeak
 ```
 
 `pihole` and `tailscale` run their official installers. `pihole` prints a
-security warning and, unless `PIHOLE_CONFIRM=no`, installs without dialogs
-from the `PIHOLE_*` settings. `tailscale` prints a login URL to open, unless
+security warning and installs without dialogs from the `PIHOLE_*`
+settings. `tailscale` prints a login URL to open, unless
 `TAILSCALE_AUTHKEY` is set in `config/rpi-setup.env`.
 
 ## Task rundown

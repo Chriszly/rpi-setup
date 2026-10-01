@@ -121,7 +121,6 @@ write_ci_config() {
         echo "WEB_TITLE='$CI_WEB_TITLE'"
         echo "BASE_TIMEZONE=Europe/Berlin"
         echo "BASE_JOURNAL_MAX_SIZE=50M"
-        echo "PIHOLE_CONFIRM=yes"
         echo "MONITORING_TELEMETRY=no"
         [[ "$mode" == rerun ]] || echo "SAMBA_PASSWORD=testpw"
     } >"$CI_CONFIG_DIR/rpi-setup.env"

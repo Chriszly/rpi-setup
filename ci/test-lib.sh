@@ -14,17 +14,37 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/ci/test-helpers.sh"
 . "$ROOT/host/flash.sh"
 
-# --- lib/common.sh: net_base --------------------------------------------------
-assert_eq "net_base /24"  "192.168.1.0/24"   "$(net_base 192.168.1.50/24)"
-assert_eq "net_base /8"   "10.0.0.0/8"       "$(net_base 10.20.30.40/8)"
-assert_eq "net_base /12"  "172.16.0.0/12"    "$(net_base 172.20.5.9/12)"
-assert_eq "net_base /16"  "192.168.0.0/16"   "$(net_base 192.168.77.5/16)"
-assert_eq "net_base /32"  "192.168.1.50/32"  "$(net_base 192.168.1.50/32)"
-assert_eq "net_base /25 upper half" "192.168.1.128/25" "$(net_base 192.168.1.200/25)"
-assert_fails "net_base rejects /0"            net_base 1.2.3.4/0
-assert_fails "net_base rejects /33"           net_base 1.2.3.4/33
-assert_fails "net_base rejects missing prefix" net_base 1.2.3.4
-assert_fails "net_base rejects non-numeric prefix" net_base 1.2.3.4/abc
+# --- lib/common.sh: detect_subnet (ip mocked) ----------------------------------
+ip() {
+    case "$*" in
+        'route show default') echo 'default via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.50 metric 100' ;;
+        '-4 -o route show dev eth0 proto kernel scope link') echo '192.168.1.0/24 proto kernel scope link src 192.168.1.50 metric 100' ;;
+    esac
+}
+assert_eq "detect_subnet takes the kernel's route of the default interface" \
+    "192.168.1.0/24 --interface=eth0" "$(detect_subnet)"
+unset -f ip
+ip() { [[ "$*" == 'route show default' ]] && echo 'default via 10.0.0.1 dev wlan0'; return 0; }
+assert_fails "detect_subnet fails without a route for the interface" detect_subnet
+unset -f ip
+
+# --- lib/common.sh: service_url -------------------------------------------------
+# url ARGS... - service_url on a Pi whose LAN address is 192.168.1.50.
+url() { ( pi_ip() { echo 192.168.1.50; }; service_url "$@" ); }
+assert_eq "service_url uses the LAN address" "http://192.168.1.50:8080" "$(url 8080)"
+assert_eq "service_url leaves out port 80" "http://192.168.1.50" "$(url 80)"
+assert_eq "service_url leaves out an empty port" "http://192.168.1.50" "$(url '')"
+assert_eq "service_url: localhost for a 127.0.0.1 bind" "http://localhost:19999" "$(url 19999 127.0.0.1)"
+assert_eq "service_url: LAN address for a 0.0.0.0 bind" "http://192.168.1.50:19999" "$(url 19999 0.0.0.0)"
+assert_eq "service_url falls back to the host name" "http://$(hostname):8080" \
+    "$( pi_ip() { return 1; }; service_url 8080 )"
+
+# --- lib/common.sh: pihole_web_ports (pihole-FTL mocked) ------------------------
+pihole-FTL() { echo '8080o,443os,[::]:8080o,[::]:443os'; }
+assert_eq "pihole_web_ports lists each port once, in order" $'8080\n443' "$(pihole_web_ports)"
+pihole-FTL() { return 1; }
+assert_eq "pihole_web_ports prints nothing without Pi-hole" "" "$(pihole_web_ports)"
+unset -f pihole-FTL
 
 # --- lib/common.sh: real_user -------------------------------------------------
 assert_eq "real_user prefers SUDO_USER" "alice" "$(SUDO_USER=alice USER=bob real_user)"
@@ -73,15 +93,6 @@ if [[ $EUID -eq 0 ]] && command -v getent >/dev/null 2>&1; then
     fi
 else
     skip "assign_uid / find_free_uid tests need root and getent"
-fi
-
-# --- lib/common.sh: compose_is_up (needs a working docker) --------------------
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    # 'docker ps' exits 0 even with no match, so this must inspect the output.
-    assert_fails "compose_is_up is false for a container that does not exist" \
-        compose_is_up "rpi-setup-no-such-container-$$"
-else
-    skip "compose_is_up test needs a running docker daemon"
 fi
 
 # --- lib/common.sh: port_owner (ss mocked) ------------------------------------

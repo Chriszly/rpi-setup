@@ -8,11 +8,11 @@ TASKS+=("web|Lite web server (nginx with a default page, :80 or :8080)")
 
 run_web() {
   : "${WEB_TITLE:=Raspberry Pi}" "${WEB_DOCKER:=no}"
+  [[ -z "${WEB_PORT:-}" ]] || require_port WEB_PORT
+  [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
   if setting_on WEB_DOCKER; then run_web_container; return; fi
   container_leave web
   local site=/etc/nginx/sites-available/default owner="" want="${WEB_PORT:-}" cur
-  [[ -z "$want" ]] || require_port WEB_PORT
-  [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
 
   if ! apt_installed nginx; then
     owner="$(port_owner 80)" || owner=""
@@ -53,12 +53,7 @@ run_web() {
   systemctl enable --now nginx
   systemctl reload nginx 2>/dev/null || systemctl restart nginx
 
-  local port url ip=""
-  port="$(nginx_site_port "$site")"
-  ip="$(pi_ip)" || true
-  url="http://${ip:-$(hostname)}"
-  [[ -z "$port" || "$port" == 80 ]] || url="$url:$port"
-  say "nginx running - open $url in your browser"
+  say "nginx running - open $(service_url "$(nginx_site_port "$site")") in your browser"
 }
 
 # The page is (re)written while it is ours or missing; a page you put there
@@ -98,9 +93,7 @@ nginx_move_port() {
 run_web_container() {
   : "${WEB_IMAGE:=nginx:stable-alpine}"
   local dir name=web port="${WEB_PORT:-}" owner="" changed=0 native=/etc/nginx/sites-available/default
-  [[ -z "$port" ]] || require_port WEB_PORT
   require_image_ref WEB_IMAGE
-  [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
   container_require_64bit WEB_DOCKER
   container_require_docker
   dir="$(container_dir web)"
@@ -136,16 +129,8 @@ run_web_container() {
   container_stop_native "$dir" nginx
 
   # The site config is a bind mount; nginx reads it at start.
-  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
-    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
-  fi
-  container_up "$dir" "$name"
-
-  local url ip=""
-  ip="$(pi_ip)" || true
-  url="http://${ip:-$(hostname)}"
-  [[ "$port" == 80 ]] || url="$url:$port"
-  say "nginx container running - open $url in your browser (files in $dir/html)"
+  container_up "$dir" "$name" "$changed"
+  say "nginx container running - open $(service_url "$port") in your browser (files in $dir/html)"
 }
 
 # nginx site for the container, listening on port $1 (IPv6 too where the
@@ -169,13 +154,27 @@ ${v6}
 EOF
 }
 
-# Compose file of the web container in folder $1, container name $2.
+# Compose file of the web container in folder $1, container name $2: no
+# privilege escalation, a process limit and only the capabilities nginx
+# needs to bind its port and drop to its own user.
 web_container_compose() {
   local dir="$1" name="$2"
-  echo 'services:'
-  echo '  web:'
-  container_service_head "$name" "$WEB_IMAGE" CHOWN SETUID SETGID NET_BIND_SERVICE
   cat <<EOF
+services:
+  web:
+    image: "$WEB_IMAGE"
+    container_name: $name
+    restart: unless-stopped
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     network_mode: host
     read_only: true
     tmpfs:

@@ -111,7 +111,7 @@ expected service and `docker logs` for every expected container into
 | Task        | CI handling                                                                 |
 |-------------|-----------------------------------------------------------------------------|
 | `samba`     | `SAMBA_PASSWORD=testpw` in the settings file on the first run; without it the task would generate a password, never prompt. |
-| `pihole`    | `PIHOLE_CONFIRM=yes` in the settings file; the task then skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
+| `pihole`    | Skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
 | `tailscale` | **Excluded** - `tailscale up` blocks waiting for interactive login.         |
 
 Because the container/VM runs as `root`, `real_user()` resolves to `root`, so

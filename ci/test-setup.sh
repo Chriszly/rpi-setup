@@ -41,27 +41,23 @@ done
 dupes="$(printf '%s\n' "${names[@]}" | sort | uniq -d)"
 assert_eq "task names are unique" "" "$dupes"
 
-# --- name_to_nums / dedupe ----------------------------------------------------
+# --- task_desc_of ---------------------------------------------------------------
 first="$(task_name "${TASKS[0]}")"
-last="$(task_name "${TASKS[-1]}")"
-assert_eq "name_to_nums maps the first task to 1" "1" "$(name_to_nums "$first")"
-assert_eq "name_to_nums maps the last task to N" "${#TASKS[@]}" "$(name_to_nums "$last")"
-assert_eq "name_to_nums keeps argument order" "${#TASKS[@]} 1" "$(name_to_nums "$last" "$first" | xargs)"
-assert_fails "name_to_nums dies on an unknown task" name_to_nums no-such-task
-assert_contains "name_to_nums names the unknown task" "unknown task: no-such-task" \
-    "$( (name_to_nums no-such-task) 2>&1 || true)"
-
-assert_eq "dedupe removes repeats, keeps first occurrence order" "1 3 2" "$(dedupe 1 1 3 2 3 | xargs)"
-assert_eq "dedupe drops empty entries" "4" "$(dedupe "" 4 "" | xargs)"
+assert_eq "task_desc_of gives the description" "$(task_desc "${TASKS[0]}")" "$(task_desc_of "$first")"
+assert_fails "task_desc_of dies on an unknown task" task_desc_of no-such-task
+assert_contains "task_desc_of names the unknown task" "unknown task: no-such-task" \
+    "$( (task_desc_of no-such-task) 2>&1 || true)"
 
 # --- prompt_selection ---------------------------------------------------------
-# The '> ' prompt must go to stderr; anything on stdout is parsed as a task number.
-assert_eq "prompt_selection parses comma-separated numbers" "1 3" "$(printf '1,3\n' | prompt_selection 2>/dev/null | xargs)"
-assert_eq "prompt_selection parses space-separated numbers" "2 4" "$(printf '2 4\n' | prompt_selection 2>/dev/null | xargs)"
-assert_eq "prompt_selection expands 'all'" "$(seq 1 "${#TASKS[@]}" | xargs)" "$(printf 'all\n' | prompt_selection 2>/dev/null | xargs)"
+# The '> ' prompt must go to stderr; anything on stdout is taken as a task name.
+nth() { task_name "${TASKS[$1 - 1]}"; }
+assert_eq "prompt_selection parses comma-separated numbers" "$(nth 1) $(nth 3)" "$(printf '1,3\n' | prompt_selection 2>/dev/null | xargs)"
+assert_eq "prompt_selection parses space-separated numbers" "$(nth 2) $(nth 4)" "$(printf '2 4\n' | prompt_selection 2>/dev/null | xargs)"
+assert_eq "prompt_selection expands 'all'" "${names[*]}" "$(printf 'all\n' | prompt_selection 2>/dev/null | xargs)"
 assert_eq "prompt_selection returns nothing for empty input" "" "$(printf '\n' | prompt_selection 2>/dev/null)"
-assert_eq "prompt_selection ignores non-numeric tokens" "2" "$(printf 'abc 2 x\n' | prompt_selection 2>/dev/null | xargs)"
-# main() does nums=($(prompt_selection)) under 'set -e', so a non-zero return
+assert_eq "prompt_selection ignores non-numeric tokens" "$(nth 2)" "$(printf 'abc 2 x\n' | prompt_selection 2>/dev/null | xargs)"
+assert_eq "prompt_selection ignores numbers without a task" "$(nth 1)" "$(printf '0 1 999\n' | prompt_selection 2>/dev/null | xargs)"
+# main() does picked=($(prompt_selection)) under 'set -e', so a non-zero return
 # here would silently kill setup.sh instead of printing "Cancelled.".
 assert_ok "prompt_selection exits 0 on non-numeric input"  eval "printf 'abc\n' | prompt_selection"
 assert_ok "prompt_selection exits 0 on a trailing non-numeric token" eval "printf '1 x\n' | prompt_selection"
@@ -71,12 +67,12 @@ assert_eq "prompt_selection writes the prompt to stderr, not stdout" "> " "$(pri
 tmp="$(mktemp -d)"
 # Debian's netdata.conf ships localhost-only; the dashboard must reach the LAN.
 printf '[global]\n\tbind socket to IP = 127.0.0.1\n[web]\n\tbind to = localhost\n' >"$tmp/netdata.conf"
-assert_ok "netdata_listen_on_lan rewrites a localhost bind" netdata_listen_on_lan "$tmp/netdata.conf"
-assert_eq "netdata_listen_on_lan leaves no localhost bind behind" "0" \
+assert_ok "netdata_set_bind rewrites a localhost bind" netdata_set_bind "$tmp/netdata.conf" 0.0.0.0
+assert_eq "netdata_set_bind leaves no localhost bind behind" "0" \
     "$(grep -Ec '127\.0\.0\.1|localhost' "$tmp/netdata.conf" || true)"
-assert_contains "netdata_listen_on_lan binds 0.0.0.0" "bind socket to IP = 0.0.0.0" "$(cat "$tmp/netdata.conf")"
-assert_fails "netdata_listen_on_lan reports nothing to change on a re-run" netdata_listen_on_lan "$tmp/netdata.conf"
-assert_fails "netdata_listen_on_lan tolerates a missing file" netdata_listen_on_lan "$tmp/missing.conf"
+assert_contains "netdata_set_bind binds 0.0.0.0" "bind socket to IP = 0.0.0.0" "$(cat "$tmp/netdata.conf")"
+assert_fails "netdata_set_bind reports nothing to change on a re-run" netdata_set_bind "$tmp/netdata.conf" 0.0.0.0
+assert_fails "netdata_set_bind needs no file for all interfaces" netdata_set_bind "$tmp/missing.conf" 0.0.0.0
 
 printf 'server {\n\tlisten 80 default_server;\n\tlisten [::]:80 default_server;\n\t# listen 443 ssl default_server;\n}\n' >"$tmp/site"
 nginx_move_port "$tmp/site" 80 8080
@@ -156,27 +152,19 @@ for n in "${names[@]}"; do
 done
 assert_eq "every name in the example belongs to a task" "$example_names" "$(grep -v '^$' <<<"$all_names" | sort)"
 
-# --- Run plan: dependencies and order -----------------------------------------
-# container_require_docker (lib/containers.sh) installs Docker itself, only
-# when <TASK>_DOCKER=yes, so it is no fixed dependency.
+# --- Run plan: order ------------------------------------------------------------
+# A task that needs Docker installs it itself (container_require_docker in
+# lib/containers.sh); setup.sh never adds a task to the run.
 for n in "${names[@]}"; do
     if grep -Eq '(^|[^_[:alnum:]])require_docker' "$ROOT/tasks/$n.sh"; then
-        assert_contains "TASK_NEEDS lists docker for '$n' (it calls require_docker)" "docker" "${TASK_NEEDS[$n]:-}"
+        fail "tasks/$n.sh calls require_docker; use container_require_docker, which installs Docker"
     fi
 done
-# plan NAME... - print PLAN; DOCKER_THERE=1 pretends Docker is installed.
-plan() { ( dep_installed() { [[ -n "${DOCKER_THERE:-}" ]]; }; plan_tasks "$@" >/dev/null; echo "${PLAN[*]}" ); }
+plan() { plan_tasks "$@"; echo "${PLAN[*]}"; }
 assert_eq "plan keeps the given order" "web samba pihole" "$(plan web samba pihole)"
 assert_eq "plan runs base first" "base web samba" "$(plan web samba base)"
-assert_eq "plan drops repeats" "web" "$(plan web web)"
-assert_eq "plan adds docker before netalertx" "docker netalertx web" "$(plan netalertx web)"
-assert_eq "plan adds docker once, before the first task that needs it" \
-    "web docker teamspeak netalertx" "$(plan web teamspeak netalertx)"
-assert_eq "plan moves a selected docker before teamspeak" "base docker teamspeak" "$(plan teamspeak docker base)"
-assert_eq "plan keeps a selected docker that is already first" "docker web netalertx" "$(plan docker web netalertx)"
-assert_eq "plan does not add an installed docker" "netalertx" "$(DOCKER_THERE=1 plan netalertx)"
-assert_contains "plan says why it adds docker" "Adding task 'docker' because 'netalertx' needs it." \
-    "$( (dep_installed() { return 1; }; plan_tasks netalertx) )"
+assert_eq "plan drops repeats" "web netalertx" "$(plan web netalertx web)"
+assert_eq "plan adds no task" "netalertx" "$(plan netalertx)"
 
 # --- Run: continue after a failure, summary --------------------------------------
 flow_tmp="$(mktemp -d)"
@@ -208,16 +196,11 @@ else
     pass "errexit still applies inside a task"
 fi
 assert_contains "the run goes on after a failed task" "ran-samba" "$out"
-assert_eq "finished tasks are recorded for autodeploy, failed or skipped ones are not" "base samba" \
+assert_eq "finished tasks are recorded for the runner, failed ones are not" "base netalertx samba" \
     "$(xargs <"$flow_tmp/tasks.done")"
-if [[ "$out" == *ran-netalertx* ]]; then
-    fail "a task whose dependency failed must not run"
-else
-    pass "a task whose dependency failed is skipped"
-fi
 assert_contains "summary: ok task" "  base           ok" "$out"
 assert_contains "summary: failed task" "  docker         failed" "$out"
-assert_contains "summary: skipped dependent" "  netalertx      skipped (docker did not finish)" "$out"
+assert_contains "summary: a task after a failed one runs" "  netalertx      ok" "$out"
 assert_contains "summary: a task that died is failed" "  web            failed" "$out"
 assert_contains "summary: task after the failures" "  samba          ok" "$out"
 assert_contains "a failed task makes the run fail" "RUN_FAILED=1" "$out"

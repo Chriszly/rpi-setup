@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Helpers for tasks that can run their service in a Docker container
-# (<TASK>_DOCKER=yes). Every container is its own compose project in
-# /opt/<task>/ with its data in bind-mounted folders next to the compose file.
+# Helpers for tasks that run their service in a Docker container: netalertx
+# and teamspeak always, the others with <TASK>_DOCKER=yes. Every container is
+# its own compose project in /opt/<task>/ with its data in bind-mounted
+# folders next to the compose file.
 #
 # Switching a task to its container keeps the native service until the
 # container is proven: the image is pulled first, the native units are then
@@ -14,13 +15,10 @@
 # more than once.
 set -euo pipefail
 
-# Folder of task $1's compose project. RPI_SETUP_CONTAINER_ROOT moves it (tests).
-container_dir() { printf '%s/%s\n' "${RPI_SETUP_CONTAINER_ROOT:-/opt}" "$1"; }
-
 # Make sure Docker and Compose are there; install them with the docker task
-# (and its DOCKER_* settings) if not, so "<TASK>_DOCKER=yes" just works.
+# (and its DOCKER_* settings) if not, so a container task just works.
 container_require_docker() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  if have docker && docker compose version >/dev/null 2>&1; then
     return 0
   fi
   [[ "$(type -t run_docker)" == function ]] || require_docker
@@ -41,25 +39,6 @@ container_require_64bit() {
   die "Containers need a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit), or set $1=no."
 }
 
-# Lines shared by every service: image, name, restart policy, no privilege
-# escalation, a process limit and no capabilities beyond those listed in the
-# remaining arguments. Prints YAML indented for a service under "services:".
-#   container_service_head <name> <image> [CAP ...]
-container_service_head() {
-  local name="$1" image="$2" cap
-  shift 2
-  printf '    image: "%s"\n' "$image"
-  printf '    container_name: %s\n' "$name"
-  printf '    restart: unless-stopped\n'
-  printf '    pids_limit: 512\n'
-  printf '    security_opt:\n      - no-new-privileges:true\n'
-  printf '    cap_drop:\n      - ALL\n'
-  if [[ $# -gt 0 ]]; then
-    printf '    cap_add:\n'
-    for cap in "$@"; do printf '      - %s\n' "$cap"; done
-  fi
-}
-
 # Write NAME=value lines (the remaining arguments) to $1/secrets.env, root
 # only. Compose passes it with env_file, so passwords never sit in the compose
 # file. Returns 0 if the file changed.
@@ -74,11 +53,6 @@ container_write_secrets() {
   printf '%s\n' "$@" | write_if_changed "$dir/secrets.env" 0600
 }
 
-# True if systemd unit $1 exists on this system.
-container_unit_exists() {
-  [[ -n "$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null)" ]]
-}
-
 # Stop and disable native units $2... so the container can take their ports,
 # and remember them in $1/.native-units for container_restore_native. Units
 # that are not installed are skipped.
@@ -87,7 +61,7 @@ container_stop_native() {
   shift
   install -m 0755 -d "$dir"
   for unit in "$@"; do
-    container_unit_exists "$unit" || continue
+    unit_exists "$unit" || continue
     if systemctl is-enabled --quiet "$unit" 2>/dev/null || systemctl is-active --quiet "$unit" 2>/dev/null; then
       info "Stopping the native $unit service (the container takes over; packages stay installed)"
       systemctl disable --now "$unit" >/dev/null 2>&1 || warn "Could not stop $unit"
@@ -102,7 +76,7 @@ container_restore_native() {
   [[ -f "$dir/.native-units" ]] || return 0
   while IFS= read -r unit; do
     [[ -n "$unit" ]] || continue
-    container_unit_exists "$unit" || continue
+    unit_exists "$unit" || continue
     info "Starting the native $unit service again"
     systemctl enable --now "$unit" >/dev/null 2>&1 || warn "Could not start $unit; start it with: sudo systemctl enable --now $unit"
   done <"$dir/.native-units"
@@ -169,11 +143,14 @@ container_pull() {
 }
 
 # Start (or update) the compose project in $1 and wait until container $2 is
-# stable. If it is not, show its last log lines, take it down, start the
-# native units again and stop the run.
+# stable. $3=1 says the task changed its files: the container is then
+# recreated, since Compose does not notice a changed bind-mounted config or
+# secrets.env. If it is not stable, show its last log lines, take it down,
+# start the native units again and stop the run.
 container_up() {
-  local dir="$1" name="$2" file="$1/docker-compose.yml"
-  docker compose -f "$file" up -d --remove-orphans ||
+  local dir="$1" name="$2" file="$1/docker-compose.yml" recreate=()
+  if [[ "${3:-0}" -eq 1 ]]; then recreate=(--force-recreate); fi
+  docker compose -f "$file" up -d --remove-orphans "${recreate[@]}" ||
     container_fail "$dir" "$name" "docker compose could not start $file"
   container_wait_stable "$name" ||
     container_fail "$dir" "$name" "The $name container does not stay up"

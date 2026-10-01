@@ -16,16 +16,10 @@ run_monitoring() {
   if setting_on MONITORING_DOCKER; then run_monitoring_container; return; fi
   container_leave monitoring
 
-  # Netdata's documented opt-out of anonymous usage statistics. Written
-  # before the install, so a fresh Netdata never reports and needs no restart.
-  local optout=/etc/netdata/.opt-out-from-anonymous-statistics changed=0
-  if setting_on MONITORING_TELEMETRY; then
-    if [[ -e "$optout" ]]; then rm -f "$optout"; changed=1; fi
-  elif [[ ! -e "$optout" ]]; then
-    install -m 0755 -d /etc/netdata
-    touch "$optout"
-    if apt_installed netdata; then changed=1; fi
-  fi
+  # Written before the install, so a fresh Netdata never reports and needs
+  # no restart.
+  local changed=0
+  if monitoring_optout /etc/netdata && apt_installed netdata; then changed=1; fi
 
   if ! apt_installed netdata; then
     apt_update
@@ -55,12 +49,19 @@ run_monitoring() {
     systemctl restart netdata
   fi
 
-  local ip=""
-  ip="$(pi_ip)" || true
-  if [[ "$MONITORING_BIND" == 127.0.0.1 || "$MONITORING_BIND" == localhost ]]; then
-    say "Netdata dashboard (this Pi only): http://localhost:${MONITORING_PORT}"
+  say "Netdata dashboard: $(service_url "$MONITORING_PORT" "$MONITORING_BIND")"
+}
+
+# Netdata's documented opt-out of anonymous usage statistics in its config
+# folder $1, present unless MONITORING_TELEMETRY is on. Returns 0 if it changed.
+monitoring_optout() {
+  local f="$1/.opt-out-from-anonymous-statistics"
+  if setting_on MONITORING_TELEMETRY; then
+    [[ -e "$f" ]] || return 1
+    rm -f "$f" || die "Could not remove $f"
   else
-    say "Netdata dashboard: http://${ip:-$(hostname)}:${MONITORING_PORT}"
+    [[ ! -e "$f" ]] || return 1
+    { install -m 0755 -d "$1" && touch "$f"; } || die "Could not create $f"
   fi
 }
 
@@ -88,10 +89,6 @@ netdata_set_port() {
   [[ "${cur:-19999}" != "$port" ]] || return 1
   ini_set "$conf" web 'default port' "$port"
 }
-
-# Rewrite a localhost-only bind in netdata.conf to 0.0.0.0. Returns 0 if the
-# file was changed, 1 if there was nothing to change.
-netdata_listen_on_lan() { netdata_set_bind "$1" 0.0.0.0; }
 
 # True if apt can install package $1 from a configured source.
 apt_has_candidate() {
@@ -134,30 +131,15 @@ run_monitoring_container() {
   install -m 0755 -d "$dir" "$dir/config" "$dir/lib" "$dir/cache"
   if monitoring_container_compose "$dir" "$name" | write_if_changed "$dir/docker-compose.yml" 0644; then changed=1; fi
   # The same netdata.conf settings as the native install, in the mounted /etc/netdata.
-  local conf="$dir/config/netdata.conf" optout="$dir/config/.opt-out-from-anonymous-statistics"
+  local conf="$dir/config/netdata.conf"
   if netdata_set_bind "$conf" "$MONITORING_BIND"; then changed=1; fi
   if netdata_set_port "$conf" "$MONITORING_PORT"; then changed=1; fi
-  if setting_on MONITORING_TELEMETRY; then
-    if [[ -e "$optout" ]]; then rm -f "$optout"; changed=1; fi
-  elif [[ ! -e "$optout" ]]; then
-    touch "$optout"
-    changed=1
-  fi
+  if monitoring_optout "$dir/config"; then changed=1; fi
   container_pull "$dir"
   container_stop_native "$dir" netdata
 
-  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
-    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
-  fi
-  container_up "$dir" "$name"
-
-  local ip=""
-  ip="$(pi_ip)" || true
-  if [[ "$MONITORING_BIND" == 127.0.0.1 || "$MONITORING_BIND" == localhost ]]; then
-    say "Netdata container running (this Pi only): http://localhost:${MONITORING_PORT}"
-  else
-    say "Netdata container running: http://${ip:-$(hostname)}:${MONITORING_PORT}"
-  fi
+  container_up "$dir" "$name" "$changed"
+  say "Netdata container running: $(service_url "$MONITORING_PORT" "$MONITORING_BIND")"
 }
 
 # Compose file of the Netdata container in folder $1, container name $2.

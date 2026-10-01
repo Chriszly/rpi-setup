@@ -8,8 +8,9 @@ device appears or disappears.
 sudo bash setup.sh netalertx
 ```
 
-Needs `docker`: `setup.sh` adds the `docker` task automatically when Docker
-is missing. The first scan takes 5-10 minutes.
+Needs Docker: the task runs the `docker` task first when Docker is missing.
+If the container does not stay up, its last log lines are shown and it is
+taken down again. The first scan takes 5-10 minutes.
 
 ## Settings
 

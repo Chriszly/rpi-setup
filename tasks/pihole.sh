@@ -4,19 +4,21 @@
 set -euo pipefail
 . "$RPI_SETUP_ROOT/lib/containers.sh"
 
-TASKS+=("pihole|Pi-hole ad blocker (official installer, unattended by default)")
+TASKS+=("pihole|Pi-hole ad blocker (official installer, unattended)")
 
 run_pihole() {
-  : "${PIHOLE_UNATTENDED:=yes}" "${PIHOLE_DNS:=1.1.1.1,1.0.0.1}" "${PIHOLE_QUERY_LOGGING:=yes}"
-  : "${PIHOLE_DOCKER:=no}" "${PIHOLE_CONFIRM:=yes}"
-  setting_on PIHOLE_CONFIRM || true
-  setting_on PIHOLE_UNATTENDED || true
+  : "${PIHOLE_DNS:=1.1.1.1,1.0.0.1}" "${PIHOLE_QUERY_LOGGING:=yes}" "${PIHOLE_DOCKER:=no}"
   setting_on PIHOLE_QUERY_LOGGING || true
   [[ -z "${PIHOLE_LISTEN_ALL:-}" ]] || setting_on PIHOLE_LISTEN_ALL || true
   [[ -z "${PIHOLE_WEB_PORT:-}" ]] || require_port PIHOLE_WEB_PORT
   local -a dns=()
   pihole_dns_list dns
-  if setting_on PIHOLE_DOCKER; then run_pihole_container "${dns[@]}"; return; fi
+  local iface
+  if setting_on PIHOLE_DOCKER; then
+    iface="$(pihole_iface)"
+    run_pihole_container "$iface" "${dns[@]}"
+    return
+  fi
   container_leave pihole
 
   if command -v pihole >/dev/null 2>&1; then
@@ -30,21 +32,18 @@ run_pihole() {
     say "Web admin: $(pihole_admin_url)"
     return
   fi
-  pihole_confirm_installer
+  warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
+  warn 'Review the script at https://install.pi-hole.net before proceeding.'
 
   if in_container; then
     warn 'Pi-hole needs port 53 and is not supported in container environments; skipping'
     return
   fi
 
-  if setting_on PIHOLE_UNATTENDED; then
-    pihole_preseed "${dns[@]}"
-    info 'Running the official Pi-hole installer unattended (settings from config/rpi-setup.env)'
-    curl -fsSL https://install.pi-hole.net | bash /dev/stdin --unattended
-  else
-    info 'Running the official Pi-hole installer - follow its on-screen prompts'
-    curl -fsSL https://install.pi-hole.net | bash
-  fi
+  iface="$(pihole_iface)"
+  pihole_preseed "$iface" "${dns[@]}"
+  info 'Running the official Pi-hole installer unattended (settings from config/rpi-setup.env)'
+  curl -fsSL https://install.pi-hole.net | bash /dev/stdin --unattended
 
   if ! command -v pihole >/dev/null 2>&1; then
     warn 'Pi-hole installer did not complete'
@@ -54,24 +53,19 @@ run_pihole() {
   pihole_apply_listening
 
   local pw="${PIHOLE_PASSWORD:-}"
-  if [[ -z "$pw" ]]; then
-    pw="$(gen_secret 16)"
-    save_secret pihole PIHOLE_PASSWORD "$pw"
-    say "Generated web admin password: $pw"
-    info 'Saved in /var/lib/rpi-setup/secrets/pihole.env; set PIHOLE_PASSWORD to choose your own.'
-  fi
+  if [[ -z "$pw" ]]; then new_secret pw pihole PIHOLE_PASSWORD 'web admin password' 16; fi
   pihole setpassword "$pw" >/dev/null
   say "Pi-hole installed - web admin: $(pihole_admin_url)"
 }
 
-# Warn about the "curl | bash" installer, then go on only with PIHOLE_CONFIRM
-# on (the default). No question is asked: PIHOLE_CONFIRM=no fails the task,
-# so the run's summary shows that Pi-hole was not installed.
-pihole_confirm_installer() {
-  warn 'The Pi-hole installer uses "curl ... | bash" which has security implications.'
-  warn 'Review the script at https://install.pi-hole.net before proceeding.'
-  setting_on PIHOLE_CONFIRM ||
-    die 'PIHOLE_CONFIRM=no: not running the Pi-hole installer; set PIHOLE_CONFIRM=yes (or leave it empty) to install'
+# Interface Pi-hole listens on: PIHOLE_INTERFACE, else the default route's.
+pihole_iface() {
+  local iface="${PIHOLE_INTERFACE:-}"
+  if [[ -z "$iface" ]]; then
+    iface="$(default_iface)" || die 'Could not detect the network interface; set PIHOLE_INTERFACE (e.g. eth0)'
+  fi
+  [[ -d "/sys/class/net/$iface" ]] || die "PIHOLE_INTERFACE: no network interface '$iface' on this Pi"
+  printf '%s\n' "$iface"
 }
 
 # Split PIHOLE_DNS ("1.1.1.1,1.0.0.1", commas or spaces) into array $1.
@@ -88,12 +82,10 @@ pihole_dns_list() {
 
 # A pihole.toml before installing makes the installer run without dialogs
 # ("unattended" needs an existing config); Pi-hole fills in everything else.
+# Arguments: the interface, then the upstream DNS servers.
 pihole_preseed() {
-  local iface="${PIHOLE_INTERFACE:-}" ups="" d log=false port="${PIHOLE_WEB_PORT:-}"
-  if [[ -z "$iface" ]]; then
-    iface="$(default_iface)" || die 'Could not detect the network interface; set PIHOLE_INTERFACE (e.g. eth0)'
-  fi
-  [[ -d "/sys/class/net/$iface" ]] || die "PIHOLE_INTERFACE: no network interface '$iface' on this Pi"
+  local iface="$1" ups="" d log=false port="${PIHOLE_WEB_PORT:-}"
+  shift
   for d in "$@"; do ups+="${ups:+, }\"$d\""; done
   if setting_on PIHOLE_QUERY_LOGGING; then log=true; fi
   if [[ -z "$port" ]] && port_owner 80 >/dev/null; then port=8080; fi
@@ -117,7 +109,7 @@ pihole_preseed() {
 pihole_apply_web_port() {
   local want="${PIHOLE_WEB_PORT:-}" cur owner
   [[ -n "$want" ]] || return 0
-  cur="$(pihole_web_port)"
+  cur="$(pihole_web_ports | head -n1)"
   [[ "$cur" != "$want" ]] || return 0
   owner="$(port_owner "$want")" || owner=""
   if [[ -n "$owner" && "$owner" != pihole-FTL ]]; then
@@ -146,38 +138,22 @@ pihole_apply_listening() {
   say "Pi-hole now answers DNS queries from: $([[ $want == ALL ]] && echo 'any network' || echo 'local subnets only')"
 }
 
-# First port of Pi-hole v6's admin UI (served by pihole-FTL).
-pihole_web_port() {
-  pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9' || true
-}
-
 # Pi-hole v6 serves its admin UI from pihole-FTL, on port 80 unless another
 # web server (e.g. the "web" task's nginx) holds it, then on 8080.
-pihole_admin_url() {
-  local port=""
-  port="$(pihole_web_port)"
-  if [[ -z "$port" || "$port" == 80 ]]; then
-    printf 'http://%s/admin\n' "$(hostname)"
-  else
-    printf 'http://%s:%s/admin\n' "$(hostname)" "$port"
-  fi
-}
+pihole_admin_url() { printf '%s/admin\n' "$(service_url "$(pihole_web_ports | head -n1)")"; }
 
 # PIHOLE_DOCKER=yes: Pi-hole's official image on the host network (port 53
 # and the real client addresses), with /etc/pihole in /opt/pihole/etc-pihole.
 # The PIHOLE_* settings are passed as FTLCONF_* variables, so they apply on
 # every run (Pi-hole shows them read-only in its web UI). A native Pi-hole is
 # stopped and its /etc/pihole (lists, settings, password) copied once.
-# Arguments: the upstream DNS servers.
+# Arguments: the interface, then the upstream DNS servers.
 run_pihole_container() {
   : "${PIHOLE_IMAGE:=pihole/pihole:latest}"
   require_image_ref PIHOLE_IMAGE
   container_require_64bit PIHOLE_DOCKER
-  local iface="${PIHOLE_INTERFACE:-}" port="${PIHOLE_WEB_PORT:-}" name=pihole dir owner="" changed=0 p
-  if [[ -z "$iface" ]]; then
-    iface="$(default_iface)" || die 'Could not detect the network interface; set PIHOLE_INTERFACE (e.g. eth0)'
-  fi
-  [[ -d "/sys/class/net/$iface" ]] || die "PIHOLE_INTERFACE: no network interface '$iface' on this Pi"
+  local iface="$1" port="${PIHOLE_WEB_PORT:-}" name=pihole dir owner="" changed=0 p
+  shift
   container_require_docker
   dir="$(container_dir pihole)"
 
@@ -185,7 +161,7 @@ run_pihole_container() {
   # when another web server (the web task's nginx) holds 80.
   if [[ -z "$port" ]]; then
     port="$(sed -nE 's/^ *FTLCONF_webserver_port: "([0-9]+)o.*/\1/p' "$dir/docker-compose.yml" 2>/dev/null || true)"
-    if [[ -z "$port" ]] && command -v pihole-FTL >/dev/null 2>&1; then port="$(pihole_web_port)"; fi
+    if [[ -z "$port" ]] && have pihole-FTL; then port="$(pihole_web_ports | head -n1)"; fi
     if [[ -z "$port" ]]; then
       port=80
       owner="$(port_owner 80)" || owner=""
@@ -205,12 +181,9 @@ run_pihole_container() {
   # No password set: keep the one Pi-hole already has (copied from the native
   # install or set by an earlier run), else generate one.
   if [[ -z "$pw" ]] && ! grep -Eq '^[[:space:]]*pwhash[[:space:]]*=[[:space:]]*"[^"]+' "$dir/etc-pihole/pihole.toml" 2>/dev/null; then
-    pw="$(gen_secret 16)"
     # Print and save it now: once the container has started, pihole.toml
     # holds its hash and a later run would not show it again.
-    save_secret pihole PIHOLE_PASSWORD "$pw"
-    say "Generated web admin password: $pw"
-    info 'Saved in /var/lib/rpi-setup/secrets/pihole.env; set PIHOLE_PASSWORD to choose your own.'
+    new_secret pw pihole PIHOLE_PASSWORD 'web admin password' 16
   fi
   if [[ -n "$pw" ]]; then
     if container_write_secrets "$dir" "FTLCONF_webserver_api_password=$pw"; then changed=1; fi
@@ -221,14 +194,8 @@ run_pihole_container() {
   container_pull "$dir"
   container_stop_native "$dir" pihole-FTL
 
-  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
-    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
-  fi
-  container_up "$dir" "$name"
-  local url
-  url="http://$(hostname)"
-  [[ "$port" == 80 ]] || url="$url:$port"
-  say "Pi-hole container running - web admin: $url/admin (DNS on port 53, interface $iface)"
+  container_up "$dir" "$name" "$changed"
+  say "Pi-hole container running - web admin: $(service_url "$port")/admin (DNS on port 53, interface $iface)"
 }
 
 # Compose file of the Pi-hole container: folder $1, container name $2,

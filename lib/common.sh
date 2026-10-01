@@ -64,6 +64,14 @@ in_container() { [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/
 
 need_root() { [[ $EUID -eq 0 ]] || die 'Please run as root: sudo bash setup.sh [task ...]'; }
 
+# True if command $1 is available.
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# True if systemd unit $1 exists on this system (installed, whatever its state).
+unit_exists() {
+  [[ -n "$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null)" ]]
+}
+
 # Refresh apt lists at most once an hour per run.
 apt_update() {
   if [[ ! -f /var/lib/rpi-setup/apt-updated ]] ||
@@ -102,6 +110,23 @@ pi_ip() {
   printf '%s\n' "$ip" | awk '{print $1}'
 }
 
+# URL of a web UI on this Pi at TCP port $1 ("" or 80 is left out of the
+# URL): on the LAN address (else the host name), or on localhost when its
+# bind address $2 is 127.0.0.1 or localhost.
+service_url() {
+  local port="$1" bind="${2:-}" host
+  if [[ "$bind" == 127.0.0.1 || "$bind" == localhost ]]; then
+    host=localhost
+  else
+    host="$(pi_ip)" || host="$(hostname)"
+  fi
+  if [[ -z "$port" || "$port" == 80 ]]; then
+    printf 'http://%s\n' "$host"
+  else
+    printf 'http://%s:%s\n' "$host" "$port"
+  fi
+}
+
 # Name of the process listening on TCP $1 (e.g. "nginx", "pihole-FTL"), or
 # non-zero exit if nothing listens there.
 port_owner() {
@@ -115,23 +140,6 @@ port_owner() {
   fi
 }
 
-# Convert an "ip/prefix" to its network address, e.g. "192.168.1.50/24" -> "192.168.1.0/24".
-net_base() {
-  local cidr="$1" ip="${1%/*}" prefix="${1##*/}" net
-  [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
-  (( prefix >= 1 && prefix <= 32 )) || return 1
-  net="$(awk -v ip="$ip" -v p="$prefix" 'BEGIN {
-    split(ip, a, ".");
-    val = a[1] * 16777216 + a[2] * 65536 + a[3] * 256 + a[4];
-    step = 2 ^ (32 - p);
-    net = val - (int(val) % step);
-    printf "%d.%d.%d.%d/%d\n",
-      int(net / 16777216) % 256, int(net / 65536) % 256,
-      int(net / 256) % 256, net % 256, p;
-  }')" || return 1
-  printf '%s\n' "$net"
-}
-
 # Interface of the default route, e.g. "eth0" or "wlan0".
 default_iface() {
   local iface
@@ -143,54 +151,64 @@ default_iface() {
 
 # Detect the LAN network + interface from the default route, e.g. "192.168.1.0/24 --interface=eth0".
 detect_subnet() {
-  local iface ifip cidr
+  local iface cidr
   iface="$(default_iface)" || return 1
-  ifip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4; exit}')"
-  [[ -n "$ifip" ]] || return 1
-  cidr="$(net_base "$ifip")" || return 1
+  # The kernel's own route for the interface's network (e.g. 192.168.1.0/24).
+  cidr="$(ip -4 -o route show dev "$iface" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')"
+  [[ -n "$cidr" ]] || return 1
   printf '%s --interface=%s' "$cidr" "$iface"
+}
+
+# True if $1 is a dotted IPv4 address: four numbers 0-255 without leading
+# zeros (tools disagree whether 010 means 8 or 10).
+valid_ipv4() {
+  local ip="$1" o
+  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  for o in ${ip//./ }; do
+    [[ "$o" == 0 || "$o" != 0* ]] || return 1
+    (( o <= 255 )) || return 1
+  done
 }
 
 # --- Docker task helpers -----------------------------------------------
 
 # Die with a helpful message if Docker and the Compose plugin are missing.
 require_docker() {
-  command -v docker >/dev/null 2>&1 || die 'Docker is required. Run first: sudo bash setup.sh docker'
+  have docker || die 'Docker is required. Run first: sudo bash setup.sh docker'
   docker compose version >/dev/null 2>&1 || die 'Docker Compose is required. Run first: sudo bash setup.sh docker'
 }
 
-# True if a container with this exact name is currently running.
-compose_is_up() {
-  local name="$1"
-  # 'docker ps' exits 0 even when nothing matches, so test the output, not the status.
-  [[ -n "$(docker ps -q --filter "name=^${name}\$" --filter status=running 2>/dev/null)" ]]
-}
+# Folder of task $1's compose project. RPI_SETUP_CONTAINER_ROOT moves it (tests).
+container_dir() { printf '%s/%s\n' "${RPI_SETUP_CONTAINER_ROOT:-/opt}" "$1"; }
 
 # True if task $1 runs in its own container (<TASK>_DOCKER=yes): it has a
 # compose file in /opt/<task> and Docker knows container $2 (default: $1).
 # Switching the task back to native removes the container, so this turns false.
 task_in_container() {
-  [[ -f "${RPI_SETUP_CONTAINER_ROOT:-/opt}/$1/docker-compose.yml" ]] || return 1
-  command -v docker >/dev/null 2>&1 || return 1
+  [[ -f "$(container_dir "$1")/docker-compose.yml" ]] || return 1
+  have docker || return 1
   docker inspect --type container "${2:-$1}" >/dev/null 2>&1
 }
 
-# Create $dir and $dir/data, with data owned (numerically) by $uid.
-ensure_container_dir() {
-  local dir="$1" uid="$2"
-  install -m 0755 -d "$dir"
-  install -m 0755 -d "$dir/data"
-  chown "$uid:$uid" "$dir/data"
+# Run pihole-FTL with arguments "$@" where Pi-hole runs: in its container
+# (PIHOLE_DOCKER=yes) or on the host.
+pihole_ftl() {
+  if task_in_container pihole; then docker exec pihole pihole-FTL "$@"
+  else pihole-FTL "$@"
+  fi
 }
 
-# Start the compose project at $dir/docker-compose.yml, always pulling images.
-# Dies if no service is running afterwards: 'up -d' can print a daemon error
-# for a container that failed to start and still exit 0.
-compose_up() {
-  local dir="$1" file="$1/docker-compose.yml"
-  docker compose -f "$file" up -d --pull always
-  [[ -n "$(docker compose -f "$file" ps -q --status running 2>/dev/null)" ]] ||
-    die "No container from $file is running. Inspect with: docker compose -f $file logs"
+# Ports of Pi-hole's admin web server in the order configured, one per line,
+# from its "80o,443os,[::]:80o" style setting. Prints nothing when Pi-hole
+# cannot be asked.
+pihole_web_ports() {
+  local cfg e
+  cfg="$(pihole_ftl --config webserver.port 2>/dev/null)" || return 0
+  for e in ${cfg//,/ }; do
+    e="${e##*:}"
+    e="${e%%[!0-9]*}"
+    [[ -z "$e" ]] || printf '%s\n' "$e"
+  done | awk '!seen[$0]++'
 }
 
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).
@@ -506,6 +524,27 @@ save_secret() {
   { grep -v "^${key}=" "$file" || true; printf '%s=%s\n' "$key" "$value"; } >"$file.new"
   chmod 0600 "$file.new"
   mv -f "$file.new" "$file"
+}
+
+# Print the value of KEY ($2) that save_secret recorded for task $1; false if
+# there is none (or it is empty).
+load_secret() {
+  local v
+  v="$(sed -nE "s/^$2=//p" "/var/lib/rpi-setup/secrets/$1.env" 2>/dev/null | head -n1)" || v=""
+  [[ -n "$v" ]] || return 1
+  printf '%s\n' "$v"
+}
+
+# Generate a password of $5 characters (default 20) into variable $1 for
+# setting $3 of task $2, record it with save_secret and print it once as
+# "Generated <$4>: <password>".
+new_secret() {
+  local -n _new_secret="$1"
+  local task="$2" key="$3" label="$4"
+  _new_secret="$(gen_secret "${5:-20}")"
+  save_secret "$task" "$key" "$_new_secret"
+  say "Generated $label: $_new_secret"
+  info "Saved in /var/lib/rpi-setup/secrets/$task.env; set $key to choose your own."
 }
 
 # Write stdin to $1 (mode $2, default 0644) only if the content differs.
