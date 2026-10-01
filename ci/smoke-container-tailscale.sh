@@ -7,8 +7,7 @@
 # Run: sudo bash ci/smoke-container-tailscale.sh   (installs tailscale; CI runners only)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 setup() { env "$@" bash "$ROOT/setup.sh" tailscale; }
 # Native "tailscale up" waits for a login that never comes here; give it a minute.

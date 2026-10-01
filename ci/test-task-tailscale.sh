@@ -4,8 +4,7 @@
 # Run: bash ci/test-task-tailscale.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 declare -a TASKS=()
 . "$ROOT/tasks/tailscale.sh"
@@ -37,5 +36,8 @@ assert_eq "hostname and ssh" "--hostname=homepi --ssh=true" \
   "$(TAILSCALE_HOSTNAME=homepi TAILSCALE_SSH=yes opts_for)"
 assert_eq "routes after dns flag" "--accept-dns=false --advertise-routes=192.168.1.0/24" \
   "$(TAILSCALE_ACCEPT_DNS=no TAILSCALE_ADVERTISE_ROUTES='192.168.1.0/24' opts_for)"
+assert_eq "ssh off and a comma-separated route list" "--ssh=false --advertise-routes=192.168.1.0/24,10.0.0.0/8" \
+  "$(TAILSCALE_SSH=no TAILSCALE_ADVERTISE_ROUTES='192.168.1.0/24, 10.0.0.0/8' opts_for)"
+assert_fails "a bad route dies" eval "TAILSCALE_ADVERTISE_ROUTES=lan; o=(); tailscale_options o"
 
 finish_tests

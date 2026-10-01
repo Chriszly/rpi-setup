@@ -6,8 +6,7 @@
 # Run: bash ci/test-task-check.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/check.sh"
 
 # --- throttle_status ----------------------------------------------------------
@@ -29,8 +28,7 @@ assert_contains "throttle 0x50000 lists both flags" "under-voltage since boot, t
 t="$(throttle_status throttled=0x80008)"
 assert_eq "throttle 0x80008 (soft temp limit now) is WARN" "WARN" "${t%%|*}"
 assert_contains "throttle 0x80008 names the soft limit" "soft temperature limit now" "$t"
-if [[ "$t" == *"power supply"* ]]; then fail "temperature-only throttling blames the power supply"
-else pass "temperature-only throttling does not blame the power supply"; fi
+assert_lacks "temperature-only throttling does not blame the power supply" "power supply" "$t"
 
 t="$(throttle_status throttled=0x4)"
 assert_eq "throttle 0x4 (throttled now) is FAIL" "FAIL" "${t%%|*}"
@@ -128,19 +126,15 @@ assert_contains "container mode: web port from the container's site" ":8088/" "$
 assert_contains "container mode: Pi-hole port from FTL in the container" ":8089/admin/" "$out"
 assert_contains "container mode: samba share from config.yml" "[nas-share] in the container's config.yml" "$out"
 assert_contains "container mode: tailscale login through the container" "logged in" "$out"
-if [[ "$out" == *"service nginx"* || "$out" == *"service smbd"* ]]; then
-  fail "container mode: no native service checks"
-else
-  pass "container mode: no native service checks"
-fi
+assert_lacks "container mode: no native nginx check" "service nginx" "$out"
+assert_lacks "container mode: no native smbd check" "service smbd" "$out"
 unset -f docker curl ss unit_exists apt_installed
 rm -rf "$ctr"
 
 # --- whole script ---------------------------------------------------------------
 # Runs on any machine (CI runner, container): it may report FAILs there, but
 # it must finish with a summary and exit 0 or 1, and must not print secrets.
-cfg="$(mktemp -d)"
-trap 'rm -rf "$cfg"' EXIT
+cfg="$TMP/cfg"
 install -d "$cfg/local"
 printf "SAMBA_PASSWORD='citest-secret-%s'\n" "$$" >"$cfg/local/samba.env"
 printf "TEAMSPEAK_QUERY_ADMIN_PASSWORD='citest-secret-%s'\n" "$$" >"$cfg/local/teamspeak.env"
@@ -149,7 +143,7 @@ rc=0
 out="$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/check.sh" 2>&1)" || rc=$?
 if [[ $rc -eq 0 || $rc -eq 1 ]]; then pass "check.sh exits 0 or 1 (got $rc)"; else fail "check.sh exited $rc"; printf '%s\n' "$out" >&2; fi
 assert_contains "check.sh prints a summary line" "Summary: " "$(tail -n1 <<<"$out")"
-if [[ "$out" == *"citest-secret"* ]]; then fail "check.sh printed a secret"; else pass "check.sh prints no secret"; fi
+assert_lacks "check.sh prints no secret" "citest-secret" "$out"
 bad="$(grep -vE '^(OK|WARN|FAIL) |^Summary: |^rpi-setup health check - ' <<<"$out" || true)"
 assert_eq "every check.sh line is a check, the header or the summary" "" "$bad"
 assert_contains "check.sh --help shows usage" "sudo bash check.sh" "$(bash "$ROOT/check.sh" --help)"

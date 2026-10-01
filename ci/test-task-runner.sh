@@ -8,16 +8,14 @@
 # shellcheck disable=SC2016,SC2153
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 declare -a TASKS=()
 . "$ROOT/tasks/runner.sh"
 
 # CI runs this under sudo; the deploy command's SUDO_USER check has its own case.
 unset SUDO_USER
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$TMP"
 
 assert_contains "runner registers its task" "runner|" "${TASKS[*]}"
 
@@ -146,11 +144,7 @@ assert_eq "the settings are private" "600" "$(stat -c %a "$tmp/etc/rpi-setup.env
 assert_eq "setup.sh runs the tasks with the installed settings" "base pihole cfg=$tmp/etc" "$(cat "$tmp/ran")"
 assert_eq "setup.sh acts for the checkout owner, not the runner" "$DEPLOY_OWNER" "$(cat "$tmp/ran-user")"
 assert_contains "the summary reaches the workflow log" "base ok" "$out"
-if [[ "$out" == *hunter2* ]]; then
-    fail "setup.sh's full output must stay on the Pi"
-else
-    pass "setup.sh's full output (passwords) stays out of the workflow log"
-fi
+assert_lacks "setup.sh's full output (passwords) stays out of the workflow log" "hunter2" "$out"
 assert_contains "the full output is kept on the Pi" "hunter2" "$(cat "$tmp"/log/deploy-*.log)"
 
 out="$(deploy)"

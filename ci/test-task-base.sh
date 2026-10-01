@@ -9,14 +9,12 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 TASKS=()
 . "$ROOT/tasks/base.sh"
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$TMP"
 
 # Defaults as run_base sets them.
 set_defaults() {
@@ -127,11 +125,7 @@ assert_contains "unattended: Debian-Security origin" \
   '"origin=Debian,codename=${distro_codename}-security,label=Debian-Security";' "$uu"
 assert_contains "unattended: no reboot by default" 'Unattended-Upgrade::Automatic-Reboot "false";' "$uu"
 assert_contains "unattended: reboot time" 'Unattended-Upgrade::Automatic-Reboot-Time "03:30";' "$uu"
-if [[ "$uu" == *'label=Debian";'* ]]; then
-  fail "unattended: must not include the non-security Debian origin"
-else
-  pass "unattended: security origins only"
-fi
+assert_lacks "unattended: security origins only" 'label=Debian";' "$uu"
 uu="$(BASE_AUTO_REBOOT=yes BASE_AUTO_REBOOT_TIME=04:15; base_unattended_conf)"
 assert_contains "unattended: reboot on" 'Unattended-Upgrade::Automatic-Reboot "true";' "$uu"
 assert_contains "unattended: custom reboot time" 'Unattended-Upgrade::Automatic-Reboot-Time "04:15";' "$uu"

@@ -10,12 +10,9 @@
 # Run: bash ci/test-task-update.sh   (sudo bash ci/test-task-update.sh for all cases)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 BASH_BIN="$(command -v bash)"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 LOG="$TMP/calls.log"
 
 # Base tools update.sh and lib/common.sh use, linked into a dir of their own.
@@ -61,11 +58,6 @@ upd() {
         RPI_SETUP_OPT_DIR="$OPT" RPI_SETUP_MODEL_FILE="$TMP/model-$model" \
         RPI_SETUP_REBOOT_FILE="$TMP/reboot-required" \
         "$BASH_BIN" "$ROOT/update.sh" "$@" 2>&1)" || RC=$?
-}
-
-# assert_lacks NAME NEEDLE HAYSTACK
-assert_lacks() {
-    if [[ "$3" == *"$2"* ]]; then fail "$1 (did not expect '$2')"; else pass "$1"; fi
 }
 
 # --- Options ---------------------------------------------------------------

@@ -4,17 +4,16 @@
 # Everything runs in temporary folders; nothing on the system is touched.
 #
 # Run: bash ci/test-task-backup.sh
-# shellcheck disable=SC2016
+# ROOT comes from test-helpers.sh (SC2153 mistakes it for $root).
+# shellcheck disable=SC2016,SC2153
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 declare -a TASKS=()
 . "$ROOT/tasks/backup.sh"
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$TMP"
 
 assert_contains "backup registers its task" "backup|" "${TASKS[*]}"
 
@@ -34,16 +33,8 @@ assert_eq "backup_run_paths picks what exists (no share)" \
     "$(paths no)"
 assert_contains "backup_run_paths adds the rpi-setup share when asked" \
     "srv/repo/config home/pi/nas-share" "$(paths yes)"
-if [[ "$(paths yes)" == *srv/other* ]]; then
-    fail "backup_run_paths must skip shares rpi-setup does not manage"
-else
-    pass "backup_run_paths skips shares rpi-setup does not manage"
-fi
-if [[ "$(paths no)" == *opt/other* ]]; then
-    fail "backup_run_paths must skip /opt folders without a compose file"
-else
-    pass "backup_run_paths skips /opt folders without a compose file"
-fi
+assert_lacks "backup_run_paths skips shares rpi-setup does not manage" "srv/other" "$(paths yes)"
+assert_lacks "backup_run_paths skips /opt folders without a compose file" "opt/other" "$(paths no)"
 assert_eq "backup_run_shares reads the managed share's path" "home/pi/nas-share" \
     "$(backup_run_shares "$r/etc/samba/smb.conf")"
 install -d "$r/opt/samba" "$r/srv/container-share"
@@ -52,18 +43,10 @@ printf 'services:\n  samba:\n    volumes:\n      - type: bind\n        source: /
 assert_eq "backup_run_container_share reads the Samba container's share" "srv/container-share" \
     "$(backup_run_container_share "$r/opt/samba/docker-compose.yml")"
 assert_contains "backup_run_paths adds the Samba container's share when asked" "srv/container-share" "$(paths yes)"
-if [[ "$(paths no)" == *container-share* ]]; then
-    fail "backup_run_paths leaves the container share out unless asked"
-else
-    pass "backup_run_paths leaves the container share out unless asked"
-fi
+assert_lacks "backup_run_paths leaves the container share out unless asked" "container-share" "$(paths no)"
 mv "$r/opt/samba/docker-compose.yml" "$r/opt/samba/docker-compose.yml.disabled"
 assert_contains "backup_run_paths keeps a task switched back to native" "opt/samba" "$(paths no)"
-if [[ "$(paths yes)" == *container-share* ]]; then
-    fail "backup_run_paths skips the share of a disabled Samba container"
-else
-    pass "backup_run_paths skips the share of a disabled Samba container"
-fi
+assert_lacks "backup_run_paths skips the share of a disabled Samba container" "container-share" "$(paths yes)"
 rm -rf "$r/opt/samba" "$r/srv/container-share"
 assert_eq "backup_run_shares tolerates a missing smb.conf" "" "$(backup_run_shares "$tmp/nope.conf")"
 assert_eq "backup_run_paths on an empty system prints nothing" "" \
@@ -94,8 +77,8 @@ listing="$(tar -tzf "$out")"
 assert_contains "archive holds rpi-setup state" "var/lib/rpi-setup/secret.env" "$listing"
 assert_contains "archive holds compose folders" "opt/teamspeak/docker-compose.yml" "$listing"
 assert_contains "archive holds the Netdata container's settings" "opt/monitoring/config/netdata.conf" "$listing"
-if [[ "$listing" == *metrics.db* ]]; then fail "archive must leave Netdata's metrics database out"; else pass "archive leaves Netdata's metrics database out"; fi
-if [[ "$listing" == *nas-share* ]]; then fail "archive must not hold the share by default"; else pass "archive leaves the share out by default"; fi
+assert_lacks "archive leaves Netdata's metrics database out" "metrics.db" "$listing"
+assert_lacks "archive leaves the share out by default" "nas-share" "$listing"
 # Destination inside the backed-up tree is never archived into itself.
 inner="$r/var/lib/rpi-setup/backups"
 out2="$(BK_ROOT="$r" BK_DEST="$inner" BK_KEEP=2 BK_INCLUDE_SHARE=no BK_CONFIG_DIRS=(); backup_run 2>/dev/null)"

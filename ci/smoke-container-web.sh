@@ -7,8 +7,7 @@
 # Run: sudo bash ci/smoke-container-web.sh   (installs nginx; CI runners only)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 PORT=8090
 setup() { env "$@" bash "$ROOT/setup.sh" web; }
