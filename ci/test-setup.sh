@@ -147,6 +147,100 @@ for n in "${names[@]}"; do
 done
 assert_eq "every name in the example belongs to a task" "$example_names" "$(grep -v '^$' <<<"$all_names" | sort)"
 
+# --- Run plan: dependencies and order -----------------------------------------
+for n in "${names[@]}"; do
+    if grep -q 'require_docker' "$ROOT/tasks/$n.sh"; then
+        assert_contains "TASK_NEEDS lists docker for '$n' (it calls require_docker)" "docker" "${TASK_NEEDS[$n]:-}"
+    fi
+done
+# plan NAME... - print PLAN; DOCKER_THERE=1 pretends Docker is installed.
+plan() { ( dep_installed() { [[ -n "${DOCKER_THERE:-}" ]]; }; plan_tasks "$@" >/dev/null; echo "${PLAN[*]}" ); }
+assert_eq "plan keeps the given order" "web samba pihole" "$(plan web samba pihole)"
+assert_eq "plan runs base first" "base web samba" "$(plan web samba base)"
+assert_eq "plan drops repeats" "web" "$(plan web web)"
+assert_eq "plan adds docker before netalertx" "docker netalertx web" "$(plan netalertx web)"
+assert_eq "plan adds docker once, before the first task that needs it" \
+    "web docker teamspeak netalertx" "$(plan web teamspeak netalertx)"
+assert_eq "plan moves a selected docker before teamspeak" "base docker teamspeak" "$(plan teamspeak docker base)"
+assert_eq "plan keeps a selected docker that is already first" "docker web netalertx" "$(plan docker web netalertx)"
+assert_eq "plan does not add an installed docker" "netalertx" "$(DOCKER_THERE=1 plan netalertx)"
+assert_contains "plan says why it adds docker" "Adding task 'docker' because 'netalertx' needs it." \
+    "$( (dep_installed() { return 1; }; plan_tasks netalertx) )"
+
+# --- Run: continue after a failure, summary --------------------------------------
+flow_tmp="$(mktemp -d)"
+# flow NAME... - run stub tasks in a subshell, then print the summary and RUN_FAILED.
+# docker fails through errexit, web through die; the others succeed.
+# The run_* stubs are called by name from run_tasks.
+# shellcheck disable=SC2329
+flow() {
+    (
+        export RPI_SETUP_CONFIG_DIR="$flow_tmp/cfg"
+        export RPI_SETUP_REBOOT_FILE="${REBOOT_FILE:-$flow_tmp/no-reboot}"
+        export RPI_SETUP_MODEL_FILE="${MODEL_FILE:-$flow_tmp/no-model}"
+        run_base()      { echo "ran-base"; }
+        run_docker()    { echo "ran-docker"; false; echo "docker-went-on"; }
+        run_netalertx() { echo "ran-netalertx"; }
+        run_web()       { echo "ran-web"; die "web broke"; }
+        run_samba()     { echo "ran-samba"; }
+        run_tasks "$@"
+        print_summary "$@"
+        echo "RUN_FAILED=$RUN_FAILED"
+    ) 2>&1
+}
+out="$(flow base docker netalertx web samba)"
+assert_contains "a failing command ends its task" "ran-docker" "$out"
+if [[ "$out" == *docker-went-on* ]]; then
+    fail "errexit must still apply inside a task"
+else
+    pass "errexit still applies inside a task"
+fi
+assert_contains "the run goes on after a failed task" "ran-samba" "$out"
+if [[ "$out" == *ran-netalertx* ]]; then
+    fail "a task whose dependency failed must not run"
+else
+    pass "a task whose dependency failed is skipped"
+fi
+assert_contains "summary: ok task" "  base           ok" "$out"
+assert_contains "summary: failed task" "  docker         failed" "$out"
+assert_contains "summary: skipped dependent" "  netalertx      skipped (docker did not finish)" "$out"
+assert_contains "summary: a task that died is failed" "  web            failed" "$out"
+assert_contains "summary: task after the failures" "  samba          ok" "$out"
+assert_contains "a failed task makes the run fail" "RUN_FAILED=1" "$out"
+out="$(flow base samba)"
+assert_contains "an all-ok run succeeds" "RUN_FAILED=0" "$out"
+if [[ "$out" == *"Reboot recommended"* ]]; then
+    fail "no reboot hint off a Pi without /run/reboot-required"
+else
+    pass "no reboot hint off a Pi without /run/reboot-required"
+fi
+touch "$flow_tmp/reboot-required"
+assert_contains "reboot hint when /run/reboot-required exists" "Reboot recommended" \
+    "$(REBOOT_FILE="$flow_tmp/reboot-required" flow samba)"
+printf 'Raspberry Pi 5 Model B Rev 1.0\0' >"$flow_tmp/model"
+assert_contains "reboot hint after base on a Pi" "Reboot recommended" "$(MODEL_FILE="$flow_tmp/model" flow base)"
+
+# The log gets stdout, stderr and a header; it is private and appended to.
+log_out="$(
+    RPI_SETUP_LOG="$flow_tmp/run.log"
+    start_log web samba
+    echo "to-stdout"
+    echo "to-stderr" >&2
+    print_summary
+)"
+assert_contains "the run still prints to the terminal" "to-stdout" "$log_out"
+assert_contains "the summary names the log" "Full log of this run: $flow_tmp/run.log" "$log_out"
+assert_contains "the log has a header per run" "===== rpi-setup run " "$(cat "$flow_tmp/run.log")"
+assert_contains "the log header names the tasks" ": web samba =====" "$(cat "$flow_tmp/run.log")"
+assert_contains "the log gets stdout" "to-stdout" "$(cat "$flow_tmp/run.log")"
+assert_contains "the log gets stderr" "to-stderr" "$(cat "$flow_tmp/run.log")"
+assert_eq "the log is private" "600" "$(stat -c %a "$flow_tmp/run.log")"
+( RPI_SETUP_LOG="$flow_tmp/run.log"; start_log samba; echo "second-run" ) >/dev/null 2>&1
+assert_eq "the log is appended to" "2" "$(grep -c '===== rpi-setup run ' "$flow_tmp/run.log")"
+assert_eq "the log leaves stdin to the tasks" "stdin-kept" \
+    "$(echo stdin-kept | ( RPI_SETUP_LOG="$flow_tmp/run.log"; start_log samba; read -r l; echo "$l" >&"$_LOG_OUT" ) 2>/dev/null | grep -x stdin-kept)"
+rm -rf "$flow_tmp"
+
 # --- CLI: --list works without root -------------------------------------------
 listing="$(bash "$ROOT/setup.sh" --list)"
 for n in "${names[@]}"; do
