@@ -53,7 +53,9 @@ run_firewall() {
   [[ -z "$extra" ]] || info "Allowing FIREWALL_EXTRA_PORTS: $extra"
   open+=" $extra"
 
-  install -m 0755 -d "$(dirname "$FW_NFT_FILE")"
+  # /etc/rpi-setup also holds the root-only settings (0700): create it only
+  # when missing, so an existing folder's mode is never loosened.
+  [[ -d "$(dirname "$FW_NFT_FILE")" ]] || install -m 0700 -d "$(dirname "$FW_NFT_FILE")"
   local tmp out
   tmp="$(mktemp)"
   firewall_ruleset "$ssh" "$open" "$web" "$allow" >"$tmp"

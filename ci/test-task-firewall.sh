@@ -166,11 +166,13 @@ if [[ $EUID -eq 0 ]] && command -v nft >/dev/null 2>&1 &&
   assert_contains "run_firewall: sshd's real port kept" 'tcp dport { 22, 2222 }' "$gen"
   assert_contains "run_firewall: extra port" "8123" "$gen"
   assert_contains "run_firewall: web port limited" 'ip saddr { 192.168.1.0/24 } tcp dport { 80 }' "$gen"
+  assert_eq "run_firewall: creates its folder root-only" "700" "$(stat -c %a "$TMP/etc")"
   assert_contains "run_firewall: unit loads the file" "ExecStart=/usr/sbin/nft -f $FW_NFT_FILE" \
     "$(cat "$TMP/rpi-setup-firewall.service")"
   before="$(stat -c %Y "$FW_NFT_FILE")"
   (FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall) >/dev/null 2>&1
   assert_eq "run_firewall: re-run leaves the file alone" "$before" "$(stat -c %Y "$FW_NFT_FILE")"
+  assert_eq "run_firewall: re-run keeps the folder root-only" "700" "$(stat -c %a "$TMP/etc")"
   assert_fails "run_firewall: bad FIREWALL_SSH_PORT" env_run FIREWALL_SSH_PORT=0
   assert_fails "run_firewall: bad FIREWALL_EXTRA_PORTS" env_run FIREWALL_EXTRA_PORTS=http
   assert_fails "run_firewall: bad FIREWALL_ALLOW_FROM" env_run FIREWALL_ALLOW_FROM=lan
