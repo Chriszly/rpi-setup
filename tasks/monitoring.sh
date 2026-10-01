@@ -2,15 +2,19 @@
 # Task: monitoring - Netdata for real-time system dashboards.
 # Settings: MONITORING_* in config/rpi-setup.env (names in config/tasks/monitoring.env).
 set -euo pipefail
+. "$RPI_SETUP_ROOT/lib/containers.sh"
 
 TASKS+=("monitoring|Netdata monitoring dashboard (web UI :19999)")
 
 run_monitoring() {
   : "${MONITORING_PORT:=19999}" "${MONITORING_BIND:=0.0.0.0}" "${MONITORING_TELEMETRY:=no}"
+  : "${MONITORING_DOCKER:=no}"
   require_port MONITORING_PORT
   [[ "$MONITORING_BIND" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}|localhost|\*)$ ]] ||
     die "MONITORING_BIND must be an IPv4 address such as 0.0.0.0 (all) or 127.0.0.1 (got '$MONITORING_BIND')"
   setting_on MONITORING_TELEMETRY || true
+  if setting_on MONITORING_DOCKER; then run_monitoring_container; return; fi
+  container_leave monitoring
 
   # Netdata's documented opt-out of anonymous usage statistics. Written
   # before the install, so a fresh Netdata never reports and needs no restart.
@@ -110,4 +114,92 @@ add_netdata_repo() {
     >/etc/apt/sources.list.d/netdata.list
   apt_update_now
   apt_has_candidate netdata || die "Netdata publishes no package for '${codename}' on this architecture; skip the monitoring task."
+}
+
+# MONITORING_DOCKER=yes: Netdata's official image, set up as Netdata
+# documents it (host network and PID namespace, the host's /proc, /sys and
+# / read-only), with its config, database and cache in /opt/monitoring. A
+# native netdata is stopped; its metric history is not carried over.
+run_monitoring_container() {
+  : "${MONITORING_IMAGE:=netdata/netdata:stable}"
+  require_image_ref MONITORING_IMAGE
+  container_require_64bit MONITORING_DOCKER
+  container_require_docker
+  local dir name=netdata owner="" changed=0
+  dir="$(container_dir monitoring)"
+  owner="$(port_owner "$MONITORING_PORT")" || owner=""
+  [[ -z "$owner" || "$owner" == netdata ]] ||
+    die "MONITORING_PORT=$MONITORING_PORT is already used by '$owner'; pick another port"
+
+  install -m 0755 -d "$dir" "$dir/config" "$dir/lib" "$dir/cache"
+  if monitoring_container_compose "$dir" "$name" | write_if_changed "$dir/docker-compose.yml" 0644; then changed=1; fi
+  # The same netdata.conf settings as the native install, in the mounted /etc/netdata.
+  local conf="$dir/config/netdata.conf" optout="$dir/config/.opt-out-from-anonymous-statistics"
+  if netdata_set_bind "$conf" "$MONITORING_BIND"; then changed=1; fi
+  if netdata_set_port "$conf" "$MONITORING_PORT"; then changed=1; fi
+  if setting_on MONITORING_TELEMETRY; then
+    if [[ -e "$optout" ]]; then rm -f "$optout"; changed=1; fi
+  elif [[ ! -e "$optout" ]]; then
+    touch "$optout"
+    changed=1
+  fi
+  container_pull "$dir"
+  container_stop_native "$dir" netdata
+
+  if [[ $changed -eq 1 && -n "$(container_state "$name")" ]]; then
+    docker compose -f "$dir/docker-compose.yml" up -d --force-recreate >/dev/null
+  fi
+  container_up "$dir" "$name"
+
+  local ip=""
+  ip="$(pi_ip)" || true
+  if [[ "$MONITORING_BIND" == 127.0.0.1 || "$MONITORING_BIND" == localhost ]]; then
+    say "Netdata container running (this Pi only): http://localhost:${MONITORING_PORT}"
+  else
+    say "Netdata container running: http://${ip:-$(hostname)}:${MONITORING_PORT}"
+  fi
+}
+
+# Compose file of the Netdata container in folder $1, container name $2.
+# Netdata's collectors start as root and need ptrace and their setuid/caps
+# plugins, so unlike the other containers it keeps Docker's default
+# capabilities and may gain privileges. The Docker socket is not mounted
+# (it would give the container root on the Pi); containers show up by ID.
+monitoring_container_compose() {
+  local dir="$1" name="$2" track="" root=ro
+  setting_on MONITORING_TELEMETRY || track='      DO_NOT_TRACK: "1"'
+  # rslave (see mounts made later, e.g. a USB disk) needs / to be a shared
+  # mount, as systemd makes it; plain read-only elsewhere.
+  [[ "$(findmnt -no PROPAGATION / 2>/dev/null)" != shared* ]] || root=ro,rslave
+  cat <<EOF
+services:
+  netdata:
+    image: "$MONITORING_IMAGE"
+    container_name: $name
+    hostname: $(hostname)
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      NETDATA_LISTENER_PORT: "$MONITORING_PORT"
+${track}
+    volumes:
+      - $dir/config:/etc/netdata
+      - $dir/lib:/var/lib/netdata
+      - $dir/cache:/var/cache/netdata
+      - /:/host/root:${root}
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /etc/hostname:/host/etc/hostname:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/log:/host/var/log:ro
+EOF
 }
