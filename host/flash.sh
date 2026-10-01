@@ -12,7 +12,8 @@
 # from the FLASH_* lines of config/rpi-setup.env (nothing else in it is read).
 #
 # Requires: root, curl, xz, dd, mount, openssl, partprobe (from parted).
-# A cached download is re-verified on every run, so interrupted runs are safe.
+# Downloads land in a .part file first, and a cached image is re-verified on
+# every run (and downloaded again if it fails), so interrupted runs are safe.
 #
 # Example:
 #   sudo ./host/flash.sh                                # interactive
@@ -98,6 +99,21 @@ latest_release() {
   echo "$latest"
 }
 
+# Download URL $1 to $2 through a temporary $2.part that is moved into place
+# only when the transfer completed, so an interrupted download never leaves a
+# file that looks finished. $3 is curl's progress option (-sS or --progress-bar).
+download() {
+  local url="$1" dest="$2" progress="${3:--sS}"
+  rm -f "$dest.part"
+  if ! curl -fL "$progress" -o "$dest.part" "$url"; then
+    rm -f "$dest.part"
+    die "Download failed: $url. Check network connectivity and run the script again."
+  fi
+  mv -f "$dest.part" "$dest"
+}
+
+# Print the path of the downloaded, verified image on stdout (progress goes
+# to stderr, since callers capture stdout).
 fetch_image() {
   local release="$1" img sha
   img="$(curl -fsSL "$BASE_URI/images/$release/" | grep -oE 'href="[^"]+\.img\.xz"' | head -n1 | sed 's/href="//; s/"$//')"
@@ -109,35 +125,53 @@ fetch_image() {
   mkdir -p "$DOWNLOAD_DIR"
   local img_path="$DOWNLOAD_DIR/$img"
   local sha_path="$DOWNLOAD_DIR/$sha"
+  local url="$BASE_URI/images/$release"
 
-  if [[ ! -f "$img_path" ]]; then
-    info "Downloading $img ($release)"
-    curl -fL --progress-bar -o "$img_path" "$BASE_URI/images/$release/$img"
-  else
-    info "Using cached image: $img_path"
-  fi
-  if [[ ! -f "$sha_path" ]]; then
-    curl -fsSL -o "$sha_path" "$BASE_URI/images/$release/$sha"
+  # The checksum file is tiny: fetch it fresh on every run, so a truncated or
+  # stale copy can never fail the check forever.
+  download "$url/$sha" "$sha_path" -sS
+  local expected actual cached
+  expected="$(awk '{print $1; exit}' "$sha_path")"
+  if [[ ! "$expected" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    rm -f "$sha_path"
+    die "$url/$sha is not a SHA-256 checksum file. Run the script again later or use -i."
   fi
 
-  local expected actual
-  expected="$(awk '{print $1}' "$sha_path")"
-  say "Verifying SHA-256 of $img"
-  actual="$(sha256sum "$img_path" | awk '{print $1}')"
-  if [[ "$expected" != "$actual" ]]; then
-    die "SHA-256 mismatch for $img_path
+  # A cached image that fails the check (e.g. left by an older version of this
+  # script after an interrupted download) is deleted and downloaded once more.
+  for cached in 1 0; do
+    if [[ "$cached" -eq 1 ]]; then
+      [[ -f "$img_path" ]] || continue
+      info "Using cached image: $img_path" >&2
+    else
+      info "Downloading $img ($release)" >&2
+      download "$url/$img" "$img_path" --progress-bar
+    fi
+    say "Verifying SHA-256 of $img" >&2
+    actual="$(sha256sum "$img_path" | awk '{print $1}')"
+    if [[ "${expected,,}" == "$actual" ]]; then
+      echo "$img_path"
+      return 0
+    fi
+    rm -f "$img_path"
+    if [[ "$cached" -eq 1 ]]; then
+      warn "Cached image failed the SHA-256 check (interrupted download?); deleted it, downloading again."
+    fi
+  done
+  rm -f "$sha_path"
+  die "SHA-256 mismatch for $img (deleted the download)
   expected: $expected
-  actual:   $actual"
-  fi
-  echo "$img_path"
+  actual:   $actual
+Run the script again to download it afresh."
 }
 
 pick_device() {
   local line count=0 sel dev
-  info 'Detected candidate disks:'
+  # The menu goes to stderr: stdout is the chosen device.
+  info 'Detected candidate disks:' >&2
   while read -r line; do
     count=$((count + 1))
-    printf '  %d) %s\n' "$count" "$line"
+    printf '  %d) %s\n' "$count" "$line" >&2
   done < <(list_candidates)
   if [[ "$count" -eq 0 ]]; then
     warn 'No removable SD/USB disks detected. Is your card reader plugged in?'
@@ -179,15 +213,16 @@ generate_hash() {
 
 ask_credentials() {
   if [[ -z "$USER" ]]; then
-    read -rp 'Username to create on the Pi: ' USER
-    [[ -n "$USER" ]] || die 'Username required.'
+    # '|| true': without a terminal (EOF) say what is missing instead of exiting silently.
+    read -rp 'Username to create on the Pi: ' USER || true
+    [[ -n "$USER" ]] || die 'Username required (-u).'
   fi
   [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "Invalid username '$USER'. Use lowercase letters/digits/_/-."
   if [[ -z "$PASS" ]]; then
-    read -r -s -p 'Password for the Pi user (hidden): ' PASS; echo
-    [[ -n "$PASS" ]] || die 'Password required.'
-    local pass2
-    read -rs -p 'Repeat password: ' pass2; echo
+    read -r -s -p 'Password for the Pi user (hidden): ' PASS || true; echo
+    [[ -n "$PASS" ]] || die 'Password required (-p).'
+    local pass2=""
+    read -rs -p 'Repeat password: ' pass2 || true; echo
     [[ "$PASS" == "$pass2" ]] || die 'Passwords do not match.'
   fi
   [[ "$PASS" != *:* ]] || die 'Password must not contain a colon (":").'
@@ -523,6 +558,13 @@ main() {
   fi
   validate_flash_options
   ask_wifi_password
+  # Ask for (and check) the login user before the card is wiped, so a typo
+  # cannot leave a freshly written card without 'ssh' and 'userconf.txt'.
+  local pass_hash=""
+  if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
+    ask_credentials
+    pass_hash="$(generate_hash "$PASS")"
+  fi
 
   if [[ -n "$IMAGE" ]]; then
     [[ -f "$IMAGE" ]] || die "Image not found: $IMAGE"
@@ -564,14 +606,13 @@ main() {
 
   if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
     [[ -b "$PART" ]] || die "Could not detect boot partition $PART. Run: sudo partprobe $DEV"
-    ask_credentials
     say 'Enabling SSH and creating the login user for headless first boot'
     mkdir -p "$MOUNT_DIR"
     mountpoint -q "$MOUNT_DIR" || mount -o umask=022 "$PART" "$MOUNT_DIR" 2>/dev/null \
         || mount "$PART" "$MOUNT_DIR" || die "Mounting $PART failed."
 
     : > "$MOUNT_DIR/ssh"
-    printf '%s:%s\n' "$USER" "$(generate_hash "$PASS")" > "$MOUNT_DIR/userconf.txt"
+    printf '%s:%s\n' "$USER" "$pass_hash" >"$MOUNT_DIR/userconf.txt"
     write_firstboot_config "$MOUNT_DIR" "$USER"
     sync
     umount "$MOUNT_DIR"
