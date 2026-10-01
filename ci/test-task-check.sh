@@ -101,6 +101,41 @@ assert_contains "check_service active+disabled warns about reboot" "will not sta
 assert_eq "check_service failed is FAIL" "FAIL" "$(check_service down | cut -c1-4 | tr -d ' ')"
 unset -f systemctl
 
+# --- check_tasks in container mode (<TASK>_DOCKER=yes, docker stubbed) ----------
+ctr="$(mktemp -d)"
+for t in web monitoring pihole samba tailscale; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compose.yml"; done
+install -d "$ctr/web/conf" "$ctr/samba/data"
+printf 'server {\n    listen 8088;\n}\n' >"$ctr/web/conf/default.conf"
+printf 'share:\n  - name: "nas-share"\n' >"$ctr/samba/data/config.yml"
+docker() {
+  case "$1 ${2:-}" in
+    "inspect --type") [[ " web netdata pihole samba tailscale " == *" ${4:-} "* ]] ;;
+    "inspect -f") echo running ;;
+    "exec pihole") echo '8089o,[::]:8089o' ;;
+    "exec tailscale") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+curl() { printf '200'; }
+ss() { echo 'LISTEN 0 0 *:x *:*'; }
+unit_exists() { return 1; }
+apt_installed() { return 1; }
+out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" RPI_SETUP_CONFIG_DIR="$ctr/cfg" check_tasks 2>&1)"
+for c in web netdata pihole samba tailscale; do
+  assert_contains "container mode: $c is checked as a container" "container $c" "$out"
+done
+assert_contains "container mode: web port from the container's site" ":8088/" "$out"
+assert_contains "container mode: Pi-hole port from FTL in the container" ":8089/admin/" "$out"
+assert_contains "container mode: samba share from config.yml" "[nas-share] in the container's config.yml" "$out"
+assert_contains "container mode: tailscale login through the container" "logged in" "$out"
+if [[ "$out" == *"service nginx"* || "$out" == *"service smbd"* ]]; then
+  fail "container mode: no native service checks"
+else
+  pass "container mode: no native service checks"
+fi
+unset -f docker curl ss unit_exists apt_installed
+rm -rf "$ctr"
+
 # --- whole script ---------------------------------------------------------------
 # Runs on any machine (CI runner, container): it may report FAILs there, but
 # it must finish with a summary and exit 0 or 1, and must not print secrets.

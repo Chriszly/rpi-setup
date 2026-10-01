@@ -97,6 +97,20 @@ assert_eq "port_owner says 'unknown' without process info" "unknown" "$(port_own
 assert_fails "port_owner fails when nothing listens" port_owner 82
 unset -f ss
 
+# --- lib/common.sh: task_in_container (docker mocked) -------------------------
+ctr="$(mktemp -d)"
+install -d "$ctr/web" "$ctr/monitoring" "$ctr/samba"
+touch "$ctr/web/docker-compose.yml" "$ctr/monitoring/docker-compose.yml"
+docker() { [[ "$1 $2 $3" == "inspect --type container" && " web netdata " == *" $4 "* ]]; }
+RPI_SETUP_CONTAINER_ROOT="$ctr"
+assert_ok "task_in_container: compose file and container" task_in_container web
+assert_ok "task_in_container: container named differently" task_in_container monitoring netdata
+assert_fails "task_in_container: container removed (back to native)" task_in_container monitoring
+assert_fails "task_in_container: no compose file" task_in_container samba
+unset RPI_SETUP_CONTAINER_ROOT
+unset -f docker
+rm -rf "$ctr"
+
 # --- lib/common.sh: apt_install / apt_update_now (apt-get mocked, root only) --
 if [[ $EUID -eq 0 ]]; then
     apt_log="$(mktemp)"
