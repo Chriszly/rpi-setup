@@ -26,6 +26,7 @@ vim
 htop
 tmux
 fail2ban
+python3-systemd
 
 # --- tasks/docker.sh: Docker Engine + Compose plugin ---
 docker-ce
