@@ -72,6 +72,20 @@ assert_ok "guard accepts a user with a key" base_ssh_key_guard pi "$tmp/good"
 msg="$( (base_ssh_key_guard pi "$tmp/empty") 2>&1 || true)"
 assert_contains "guard names the keys file" "$tmp/empty/.ssh/authorized_keys" "$msg"
 assert_contains "guard says how to fix it" "ssh-copy-id pi@" "$msg"
+# A card flashed with an SSH key: the key sits in /etc/ssh/authorized_keys/<user>
+# and the flasher's drop-in adds that path to AuthorizedKeysFile.
+flashed='.ssh/authorized_keys .ssh/authorized_keys2 '"$tmp"'/etc-keys/%u'
+mkdir -p "$tmp/etc-keys"; printf '%s\n' "$key" >"$tmp/etc-keys/pi"
+assert_ok "guard accepts a key the flasher put in /etc/ssh/authorized_keys/<user>" \
+  base_ssh_key_guard pi "$tmp/empty" "$flashed"
+assert_fails "guard ignores that file when sshd does not read it" \
+  base_ssh_key_guard pi "$tmp/empty" '.ssh/authorized_keys .ssh/authorized_keys2'
+assert_fails "guard: the flashed key of another user does not count" \
+  base_ssh_key_guard bob "$tmp/empty" "$flashed"
+assert_ok "guard checks every listed file" base_ssh_key_guard pi "$tmp/good" '.ssh/nothing .ssh/authorized_keys'
+assert_eq "key file tokens are expanded" \
+  $'/home/pi/.ssh/authorized_keys\n/etc/ssh/authorized_keys/pi\n/home/pi/keys/%u' \
+  "$(base_authorized_keys_files pi /home/pi '.ssh/authorized_keys /etc/ssh/authorized_keys/%u %h/keys/%%u none')"
 assert_fails "guard refuses an unknown user" base_ssh_key_guard "no-such-user-$$"
 
 # --- generated files ----------------------------------------------------------

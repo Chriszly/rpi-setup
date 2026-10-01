@@ -166,6 +166,15 @@ compose_is_up() {
   [[ -n "$(docker ps -q --filter "name=^${name}\$" --filter status=running 2>/dev/null)" ]]
 }
 
+# True if task $1 runs in its own container (<TASK>_DOCKER=yes): it has a
+# compose file in /opt/<task> and Docker knows container $2 (default: $1).
+# Switching the task back to native removes the container, so this turns false.
+task_in_container() {
+  [[ -f "${RPI_SETUP_CONTAINER_ROOT:-/opt}/$1/docker-compose.yml" ]] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  docker inspect --type container "${2:-$1}" >/dev/null 2>&1
+}
+
 # Create $dir and $dir/data, with data owned (numerically) by $uid.
 ensure_container_dir() {
   local dir="$1" uid="$2"
@@ -236,10 +245,27 @@ assign_uid() {
 # config/rpi-setup.env          your copy with your values (git-ignored)
 # config/tasks/<task>.env       names of the settings each task reads (committed)
 # config/local/<task>.env       split_config's output, read by setup.sh (git-ignored)
+#
+# On the Pi the two files can live in /etc/rpi-setup instead (root only,
+# outside the git checkout); setup.sh --move-config puts them there.
 
-# Folder holding rpi-setup.env and local/. RPI_SETUP_CONFIG_DIR points
-# elsewhere, e.g. at a folder kept outside the git checkout.
-config_dir() { printf '%s\n' "${RPI_SETUP_CONFIG_DIR:-$RPI_SETUP_ROOT/config}"; }
+# The system settings folder; RPI_SETUP_SYSTEM_CONFIG_DIR only exists for tests.
+system_config_dir() { printf '%s\n' "${RPI_SETUP_SYSTEM_CONFIG_DIR:-/etc/rpi-setup}"; }
+
+# Folder holding rpi-setup.env and local/: RPI_SETUP_CONFIG_DIR if set, else
+# /etc/rpi-setup once it holds rpi-setup.env, else config/ in the checkout.
+config_dir() {
+  if [[ -n "${RPI_SETUP_CONFIG_DIR:-}" ]]; then
+    printf '%s\n' "$RPI_SETUP_CONFIG_DIR"
+  elif [[ -f "$(system_config_dir)/rpi-setup.env" ]]; then
+    system_config_dir
+  else
+    printf '%s\n' "$RPI_SETUP_ROOT/config"
+  fi
+}
+
+# True when the settings live in the root-only system folder.
+config_is_system() { [[ "$(config_dir)" == "$(system_config_dir)" ]]; }
 
 # The central settings file.
 central_config() { printf '%s/rpi-setup.env\n' "$(config_dir)"; }
@@ -348,6 +374,7 @@ split_config() {
   config_each "$central" _split_setting
 
   u="$(real_user)"
+  config_is_system && u=root
   install -m 0700 -d "$out"
   for tpl in "$RPI_SETUP_ROOT"/config/tasks/*.env; do
     [[ -f "$tpl" ]] || continue
@@ -381,7 +408,12 @@ init_config() {
   if [[ -e "$dst" ]]; then
     info "Keeping existing $dst"
   else
-    install -m 0755 -d "$(dirname "$dst")"
+    if config_is_system; then
+      u=root
+      install -m 0700 -d "$(dirname "$dst")"
+    else
+      install -m 0755 -d "$(dirname "$dst")"
+    fi
     install -m 0600 "$RPI_SETUP_ROOT/config/rpi-setup.env.example" "$dst"
     if [[ $EUID -eq 0 && "$u" != root ]] && id "$u" >/dev/null 2>&1; then
       chown "$u:$(id -gn "$u")" "$dst"
@@ -389,6 +421,33 @@ init_config() {
     say "Created $dst"
   fi
   say "Fill in $dst, then run: sudo bash setup.sh <task ...>"
+}
+
+# Move config/rpi-setup.env out of the git checkout into /etc/rpi-setup
+# (root, 0600) and drop the split files next to it; setup.sh, update.sh and
+# check.sh find it there from then on. Refuses to overwrite a file already
+# in /etc/rpi-setup.
+move_config() {
+  local src="$RPI_SETUP_ROOT/config/rpi-setup.env" dir
+  dir="$(system_config_dir)"
+  [[ -z "${RPI_SETUP_CONFIG_DIR:-}" ]] || die 'RPI_SETUP_CONFIG_DIR is set; unset it to use the system folder.'
+  [[ -f "$src" ]] || die "$src not found; nothing to move."
+  [[ ! -e "$dir/rpi-setup.env" ]] || die "$dir/rpi-setup.env already exists; merge $src into it by hand, then delete $src."
+  install -m 0700 -o root -g root -d "$dir"
+  install -m 0600 -o root -g root "$src" "$dir/rpi-setup.env"
+  rm -f "$src"
+  rm -rf "$RPI_SETUP_ROOT/config/local"
+  say "Moved your settings to $dir/rpi-setup.env (only root can read it)."
+  say "Edit it with: sudo nano $dir/rpi-setup.env"
+}
+
+# Warn when config/rpi-setup.env sits in the checkout but /etc/rpi-setup wins.
+warn_shadowed_config() {
+  local repo="$RPI_SETUP_ROOT/config/rpi-setup.env"
+  if config_is_system && [[ -f "$repo" ]]; then
+    warn "$repo is ignored: settings are read from $(central_config). Delete $repo to avoid confusion."
+  fi
+  return 0
 }
 
 # True for yes/true/on/1, false for no/false/off/0 (any case). Dies naming the

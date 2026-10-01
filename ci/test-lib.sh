@@ -97,6 +97,20 @@ assert_eq "port_owner says 'unknown' without process info" "unknown" "$(port_own
 assert_fails "port_owner fails when nothing listens" port_owner 82
 unset -f ss
 
+# --- lib/common.sh: task_in_container (docker mocked) -------------------------
+ctr="$(mktemp -d)"
+install -d "$ctr/web" "$ctr/monitoring" "$ctr/samba"
+touch "$ctr/web/docker-compose.yml" "$ctr/monitoring/docker-compose.yml"
+docker() { [[ "$1 $2 $3" == "inspect --type container" && " web netdata " == *" $4 "* ]]; }
+RPI_SETUP_CONTAINER_ROOT="$ctr"
+assert_ok "task_in_container: compose file and container" task_in_container web
+assert_ok "task_in_container: container named differently" task_in_container monitoring netdata
+assert_fails "task_in_container: container removed (back to native)" task_in_container monitoring
+assert_fails "task_in_container: no compose file" task_in_container samba
+unset RPI_SETUP_CONTAINER_ROOT
+unset -f docker
+rm -rf "$ctr"
+
 # --- lib/common.sh: apt_install / apt_update_now (apt-get mocked, root only) --
 if [[ $EUID -eq 0 ]]; then
     apt_log="$(mktemp)"
@@ -171,6 +185,42 @@ assert_ok "split_config accepts the committed example" eval \
     'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$ROOT/config/rpi-setup.env.example" >/dev/null'
 assert_fails "split_config explains a missing central file" eval 'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/nope.env"'
 rm -rf "$cfg"
+
+# config_dir: RPI_SETUP_CONFIG_DIR, else /etc/rpi-setup once it has the file, else config/.
+sys="$(mktemp -d)"
+assert_eq "config_dir defaults to the checkout" "$ROOT/config" \
+    "$(unset RPI_SETUP_CONFIG_DIR; RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" config_dir)"
+touch "$sys/rpi-setup.env"
+assert_eq "config_dir prefers the system folder once it holds rpi-setup.env" "$sys" \
+    "$(unset RPI_SETUP_CONFIG_DIR; RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" config_dir)"
+assert_eq "RPI_SETUP_CONFIG_DIR still wins" "/x/cfg" \
+    "$(RPI_SETUP_CONFIG_DIR=/x/cfg RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" config_dir)"
+assert_ok "config_is_system in the system folder" \
+    env -u RPI_SETUP_CONFIG_DIR RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" bash -c '. "$1/lib/common.sh"; config_is_system' _ "$ROOT"
+assert_contains "a config/rpi-setup.env next to the system file is reported" "is ignored" \
+    "$(fake="$(mktemp -d)"; mkdir "$fake/config"; touch "$fake/config/rpi-setup.env"
+       (unset RPI_SETUP_CONFIG_DIR; RPI_SETUP_ROOT="$fake" RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" warn_shadowed_config) 2>&1; rm -rf "$fake")"
+rm -rf "$sys"
+
+# move_config (root only): moves the file out of the checkout, private to root.
+if [[ $EUID -eq 0 ]]; then
+    sys="$(mktemp -d)/etc" fake="$(mktemp -d)"
+    mkdir -p "$fake/config/local"
+    printf 'WEB_TITLE=Mine\n' >"$fake/config/rpi-setup.env"
+    ( unset RPI_SETUP_CONFIG_DIR; RPI_SETUP_ROOT="$fake" RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" move_config ) >/dev/null 2>&1
+    assert_eq "move_config moves the settings" "WEB_TITLE=Mine" "$(cat "$sys/rpi-setup.env" 2>/dev/null)"
+    assert_eq "move_config makes the file root-only" "600 root" "$(stat -c '%a %U' "$sys/rpi-setup.env" 2>/dev/null)"
+    assert_eq "move_config makes the folder root-only" "700" "$(stat -c %a "$sys" 2>/dev/null)"
+    assert_ok "move_config removes the checkout copy and its split files" \
+        test ! -e "$fake/config/rpi-setup.env" -a ! -e "$fake/config/local"
+    printf 'WEB_TITLE=Other\n' >"$fake/config/rpi-setup.env"
+    assert_fails "move_config never overwrites the system file" \
+        env -u RPI_SETUP_CONFIG_DIR RPI_SETUP_ROOT="$fake" RPI_SETUP_SYSTEM_CONFIG_DIR="$sys" bash -c '. "$1/lib/common.sh"; move_config' _ "$ROOT"
+    assert_eq "move_config left the system file alone" "WEB_TITLE=Mine" "$(cat "$sys/rpi-setup.env")"
+    rm -rf "$(dirname "$sys")" "$fake"
+else
+    skip "move_config tests (run with sudo to include them)"
+fi
 
 for v in yes YES true on 1; do assert_ok "setting_on: $v" eval "X=$v; setting_on X"; done
 for v in no False off 0; do assert_fails "setting_on: $v is off" eval "X=$v; setting_on X"; done
