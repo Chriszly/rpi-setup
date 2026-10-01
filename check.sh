@@ -176,6 +176,9 @@ check_container() {
   fi
 }
 
+# Folder that holds the containers' compose projects (/opt/<task>).
+container_root() { printf '%s\n' "${RPI_SETUP_CONTAINER_ROOT:-/opt}"; }
+
 # URL host for services on the LAN: the Pi's LAN address, else localhost.
 lan_host() { printf '%s\n' "${CHECK_LANIP:-localhost}"; }
 
@@ -276,37 +279,57 @@ check_tasks() {
     fi
   fi
 
-  if unit_exists netdata; then
+  if task_in_container monitoring netdata || unit_exists netdata; then
     found=1; check_config monitoring
     local mport mhost
     mport="$(port_setting MONITORING_PORT 19999)"
-    check_service netdata "monitoring"
+    if task_in_container monitoring netdata; then check_container netdata
+    else check_service netdata "monitoring"
+    fi
     mhost="$(lan_host)"
     case "${MONITORING_BIND:-0.0.0.0}" in 127.0.0.1|localhost) mhost=localhost ;; esac
     check_http "monitoring: web" "http://$mhost:$mport/"
   fi
 
-  if unit_exists nginx; then
+  if task_in_container web || unit_exists nginx; then
     found=1; check_config web
-    local wport
+    local wport site=/etc/nginx/sites-available/default
+    task_in_container web && site="$(container_root)/web/conf/default.conf"
     wport="$(sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)([[:space:];]).*/\1/p' \
-      /etc/nginx/sites-available/default 2>/dev/null | head -n1)" || wport=""
+      "$site" 2>/dev/null | head -n1)" || wport=""
     [[ -n "$wport" ]] || wport="$(port_setting WEB_PORT 80)"
-    check_service nginx "web"
+    if task_in_container web; then check_container web
+    else check_service nginx "web"
+    fi
     check_http "web: page" "http://$(lan_host):$wport/"
   fi
 
-  if have pihole-FTL || unit_exists pihole-FTL; then
+  if task_in_container pihole || have pihole-FTL || unit_exists pihole-FTL; then
     found=1; check_config pihole
     local pport
-    pport="$(pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || pport=""
+    if task_in_container pihole; then
+      pport="$(docker exec pihole pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || pport=""
+    else
+      pport="$(pihole-FTL --config webserver.port 2>/dev/null | cut -d, -f1 | tr -cd '0-9')" || pport=""
+    fi
     [[ -n "$pport" ]] || pport="$(port_setting PIHOLE_WEB_PORT 80)"
-    check_service pihole-FTL "pihole"
+    if task_in_container pihole; then check_container pihole
+    else check_service pihole-FTL "pihole"
+    fi
     check_listen "pihole: dns" 53 udp
     check_http "pihole: admin" "http://$(lan_host):$pport/admin/"
   fi
 
-  if unit_exists smbd; then
+  if task_in_container samba; then
+    found=1; check_config samba
+    check_container samba
+    check_listen "samba: smb" 445 tcp
+    local cshare="${SAMBA_SHARE_NAME:-nas-share}"
+    if grep -qF "name: \"$cshare\"" "$(container_root)/samba/data/config.yml" 2>/dev/null; then
+      report OK "samba: share" "[$cshare] in the container's config.yml"
+    else report WARN "samba: share" "[$cshare] not found in $(container_root)/samba/data/config.yml"
+    fi
+  elif unit_exists smbd; then
     found=1; check_config samba
     check_service smbd "samba"
     check_listen "samba: smb" 445 tcp
@@ -316,7 +339,13 @@ check_tasks() {
     fi
   fi
 
-  if have tailscale; then
+  if task_in_container tailscale; then
+    found=1
+    check_container tailscale
+    if docker exec tailscale tailscale status >/dev/null 2>&1; then report OK "tailscale: login" "logged in"
+    else report WARN "tailscale: login" "not logged in (sudo docker exec tailscale tailscale up)"
+    fi
+  elif have tailscale; then
     found=1
     check_service tailscaled "tailscale"
     if tailscale status >/dev/null 2>&1; then report OK "tailscale: login" "logged in"

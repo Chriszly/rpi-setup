@@ -115,6 +115,29 @@ else
   printf "MONITORING_PORT='99999'\n" >"$RPI_SETUP_CONFIG_DIR/local/monitoring.env"
   assert_fails "services: bad MONITORING_PORT dies" firewall_service_ports
   rm -f "$RPI_SETUP_CONFIG_DIR/local/monitoring.env"
+
+  # Tasks in their containers (<TASK>_DOCKER=yes): nothing installed natively.
+  ctr="$TMP/opt"
+  for t in web monitoring pihole samba; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compose.yml"; done
+  install -d "$ctr/web/conf"
+  printf 'server {\n    listen 8090;\n    listen [::]:8090;\n}\n' >"$ctr/web/conf/default.conf"
+  FAKE_PKGS=""
+  docker() {
+    case "$1 ${2:-}" in
+      "inspect --type") [[ " web netdata pihole samba " == *" ${4:-} "* ]] ;;
+      "exec pihole")
+        case "$5" in webserver.port) echo '8091o,[::]:8091o' ;; dhcp.active) echo true ;; dhcp.ipv6) echo false ;; esac ;;
+      *) return 1 ;;
+    esac
+  }
+  out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
+  assert_contains "containers: pihole dns" "53/udp open pihole-dns" "$out"
+  assert_contains "containers: pihole web port from FTL in the container" "8091/tcp web pihole-web" "$out"
+  assert_contains "containers: pihole DHCP from the container" "67/udp open pihole-dhcp" "$out"
+  assert_contains "containers: nginx port from the container's site" "8090/tcp web nginx" "$out"
+  assert_contains "containers: netdata" "19999/tcp web netdata" "$out"
+  assert_contains "containers: samba" "445/tcp open samba" "$out"
+  unset -f docker
 fi
 
 # --- nft -c on generated rules, and run_firewall in container mode (root) ---------

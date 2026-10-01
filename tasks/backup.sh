@@ -124,7 +124,7 @@ backup_script() {
   printf 'BK_CONFIG_DIRS=('
   printf ' %q' "$@"
   printf ' )\n'
-  declare -f backup_run_paths backup_run_shares backup_run_prune backup_run
+  declare -f backup_run_paths backup_run_shares backup_run_container_share backup_run_prune backup_run
   printf 'backup_run\n'
 }
 
@@ -147,6 +147,7 @@ backup_run_paths() {
     done
     if [[ "${BK_INCLUDE_SHARE:-no}" == yes ]]; then
       backup_run_shares "$root/etc/samba/smb.conf"
+      backup_run_container_share "$root/opt/samba/docker-compose.yml"
     fi
   } | while IFS= read -r p; do
     p="${p%/}"
@@ -162,6 +163,16 @@ backup_run_shares() {
     /Managed by rpi-setup/ { ours = 1 }
     /^[[:space:]]*path[[:space:]]*=/ { path = $0; sub(/^[^=]*=[[:space:]]*/, "", path); sub(/[[:space:]]+$/, "", path) }
     END { if (ours && path != "") print path }' "$1" | sed 's|^/||'
+}
+
+# Folder the Samba container (SAMBA_DOCKER=yes) shares, from its compose file
+# $1: the bind mount source whose target is /samba/share (no leading /).
+backup_run_container_share() {
+  [[ -f "$1" ]] || return 0
+  awk '
+    /^[[:space:]]*-[[:space:]]*type:/ { src = "" }
+    /^[[:space:]]*source:/ { src = $0; sub(/^[^:]*:[[:space:]]*/, "", src); sub(/[[:space:]]+$/, "", src) }
+    /^[[:space:]]*target:[[:space:]]*\/samba\/share[[:space:]]*$/ { if (src != "") print src }' "$1" | sed 's|^/||'
 }
 
 # Delete all but the newest $2 archives in folder $1, and leftovers of an
@@ -193,6 +204,9 @@ backup_run() {
   dest_rel="${dest_rel#"$(cd "$root" && pwd -P)"}"
   dest_rel="${dest_rel#/}"
   [[ -z "$dest_rel" ]] || exclude=(--exclude="$dest_rel")
+  # Netdata's metrics database (MONITORING_DOCKER=yes); like /var/cache/netdata
+  # of a native install it is large and rebuilt on its own.
+  exclude+=(--exclude=opt/monitoring/cache)
   printf 'rpi-setup-backup: %s\n' "${paths[@]}" >&2
   # Exit status 1 only means a file changed while it was read (a live
   # container writing); anything else is a real failure.
