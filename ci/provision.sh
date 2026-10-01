@@ -239,13 +239,14 @@ unsandbox_in_container() {
 }
 
 # Every package install ends in "systemctl daemon-reload", and on Trixie in the
-# nspawn gate each reload took ~16 s: systemd re-runs its generators (arm64
-# binaries and scripts under qemu-user) and restarts units that can never start
+# nspawn gate each reload took ~16 s (36 reloads, ~9.5 of the ~16 min of the
+# "system" half). Nearly all of it is rpi-swap-generator, which takes ~11 s
+# under qemu-user; the rest is other generators and units that can never start
 # in this container (getty: CREDENTIALS, logind: NAMESPACE, remount-fs and the
-# zram/swap units: no block devices), which loop for the whole run. In
-# containers only, mask those units and the cloud-init generator (first-boot
-# only, Python under emulation), and print each generator's run time so the
-# next slow one shows up in the log. Real Pis and the QEMU VM are untouched.
+# zram/swap units: no block devices) and restart for the whole run. In
+# containers only, mask those generators and units, and print each
+# generator's run time so the next slow one shows up in the log. Real Pis and
+# the QEMU VM are untouched.
 CONTAINER_MASK_UNITS=(
     console-getty.service
     systemd-logind.service
@@ -255,7 +256,7 @@ CONTAINER_MASK_UNITS=(
     rpi-resize-swap-file.service
     rpi-setup-loop@var-swap.service
 )
-CONTAINER_MASK_GENERATORS=(cloud-init-generator)
+CONTAINER_MASK_GENERATORS=(rpi-swap-generator zram-generator cloud-init-generator)
 
 time_daemon_reload() {
     local start end
@@ -284,11 +285,13 @@ quiet_container_systemd() {
     for name in "${CONTAINER_MASK_GENERATORS[@]}"; do
         ln -sfn /dev/null "/etc/systemd/system-generators/$name"
     done
+    # Plain symlinks instead of "systemctl mask", which reloads once per unit.
     for name in "${CONTAINER_MASK_UNITS[@]}"; do
-        systemctl mask --now "$name" >/dev/null 2>&1 || true
+        ln -sfn /dev/null "/etc/systemd/system/$name"
     done
-    systemctl reset-failed || true
     time_daemon_reload after
+    systemctl stop "${CONTAINER_MASK_UNITS[@]}" >/dev/null 2>&1 || true
+    systemctl reset-failed || true
 }
 
 main() {
