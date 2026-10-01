@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BASE_URI="https://downloads.raspberrypi.com/raspios_lite_arm64"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$SCRIPT_DIR/downloads}"
-MOUNT_DIR="${MOUNT_DIR:-/mnt/rpi-boot}"
+MOUNT_DIR=/mnt/rpi-boot
 
 DEV=""
 IMAGE=""
@@ -290,12 +290,6 @@ read_pubkeys() {
   FLASH_KEYS="$keys"
 }
 
-# Byte length of $1 (not characters: the SSID limit is 32 bytes).
-byte_len() {
-  local LC_ALL=C v="$1"
-  printf '%s' "${#v}"
-}
-
 # Check the FLASH_* settings before anything is written. Upper-cases the
 # country and reads the key file. Never prints the Wi-Fi password.
 validate_flash_options() {
@@ -309,7 +303,8 @@ validate_flash_options() {
   [[ "$FLASH_WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] ||
     die "Invalid Wi-Fi country '$FLASH_WIFI_COUNTRY'. Use a 2-letter code such as DE, AT, CH, GB or US."
   if [[ -n "$ssid" ]]; then
-    [[ "$(byte_len "$ssid")" -le 32 ]] || die 'Wi-Fi SSID is longer than 32 bytes.'
+    # Bytes, not characters: the SSID limit is 32 bytes.
+    [[ "$(printf %s "$ssid" | wc -c)" -le 32 ]] || die 'Wi-Fi SSID is longer than 32 bytes.'
     [[ "$ssid" != *[[:cntrl:]]* ]] || die 'Wi-Fi SSID must not contain control characters.'
     if [[ -n "$pass" ]]; then
       [[ "$pass" =~ ^[\ -~]{8,63}$ || "$pass" =~ ^[0-9A-Fa-f]{64}$ ]] ||
@@ -340,11 +335,6 @@ ask_wifi_password() {
 yaml_quote() {
   local v="$1"
   printf "'%s'" "${v//\'/\'\'}"
-}
-
-# True when the boot partition at $1 is seeded for cloud-init (Trixie images).
-bootfs_is_cloud_init() {
-  [[ -e "$1/user-data" || -e "$1/meta-data" ]]
 }
 
 # Set the Wi-Fi regulatory domain $2 on the kernel command line in
@@ -498,7 +488,6 @@ write_firstrun() {
     echo 'sed -i "s| systemd.run.*||g" "$BOOT/cmdline.txt"'
     echo 'exit 0'
   } >"$dir/firstrun.sh"
-  chmod 0755 "$dir/firstrun.sh" 2>/dev/null || true   # FAT ignores it; systemd.run execs it anyway
 
   line="$(head -n1 "$dir/cmdline.txt" | tr -d '\r\n')"
   if [[ "$line" != *systemd.run=* ]]; then
@@ -515,7 +504,8 @@ write_firstboot_config() {
   if [[ -n "${FLASH_WIFI_SSID:-}" ]]; then
     set_cmdline_regdom "$dir" "$FLASH_WIFI_COUNTRY"
   fi
-  if bootfs_is_cloud_init "$dir"; then
+  # A boot partition seeded for cloud-init (Trixie images).
+  if [[ -e "$dir/user-data" || -e "$dir/meta-data" ]]; then
     write_cloud_init "$dir" "$user"
     say "Wrote cloud-init settings to bootfs: 'user-data'${FLASH_WIFI_SSID:+ and 'network-config'}"
   else
