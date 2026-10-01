@@ -61,6 +61,9 @@ jobs:
       - name: Verify task registry loads
         run: bash setup.sh --list
 
+      - name: No settings, keys or passwords committed
+        run: bash ci/check-no-secrets.sh
+
   unit:
     name: Unit tests (lib, setup.sh, flash.sh)
     runs-on: ubuntu-latest
@@ -72,6 +75,9 @@ jobs:
 
       - name: Test setup.sh CLI and menu
         run: sudo bash ci/test-setup.sh
+
+      - name: Test the secrets check
+        run: bash ci/test-no-secrets.sh
 
       - name: Test task helpers (ci/test-task-*.sh)
         run: for t in ci/test-task-*.sh; do [ -e "$t" ] || continue; echo "== $t"; sudo bash "$t"; done
