@@ -53,7 +53,7 @@ firmware updates take effect.
 
 | Task         | What you get                                                        | Settings you will most likely set |
 |--------------|---------------------------------------------------------------------|-----------------------------------|
-| `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban  | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
+| `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban, daily security updates, optional key-only SSH, journal size limit | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
 | `docker`     | Docker Engine, buildx and Compose (apt), log rotation               | none needed |
 | `network`    | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
 | `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
