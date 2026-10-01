@@ -1,0 +1,65 @@
+name: Container tasks
+
+# Tests the <TASK>_DOCKER=yes mode on a plain x86 runner, which has Docker and
+# a booted systemd (the nspawn gate has neither Docker nor a real port 53).
+#   ci/test-containers.sh          lib/containers.sh helpers
+#   ci/smoke-container-<task>.sh   one per task: runs "setup.sh <task>" with
+#                                  <TASK>_DOCKER=yes, checks the service
+#                                  answers, re-runs it and switches back
+on:
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+  push:
+    branches:
+      - main
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-tasks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  helpers:
+    name: Container helpers (lib/containers.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test lib/containers.sh
+        run: sudo bash ci/test-containers.sh
+
+  smoke:
+    name: Container tasks on plain runner
+    runs-on: ubuntu-latest
+    needs: [helpers]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run every ci/smoke-container-*.sh
+        run: |
+          set -euo pipefail
+          found=0
+          for t in ci/smoke-container-*.sh; do
+            [ -e "$t" ] || continue
+            found=1
+            echo "::group::$t"
+            sudo bash "$t"
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "No container smoke tests yet"
+
+      - name: Show containers and logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a || true
+          for c in $(sudo docker ps -aq); do
+            echo "::group::$(sudo docker inspect -f '{{.Name}}' "$c")"
+            sudo docker logs --tail 100 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
