@@ -9,6 +9,8 @@ anything about your devices; this private one holds your settings and a
 
 ```
 .github/workflows/deploy.yml   the Deploy to Pi workflow (copy from here)
+.github/workflows/update.yml   the Update Pi workflow (copy from here)
+pis/<pi>/tasks                 tasks that Pi should have, one per line (read by Update Pi)
 pis/<pi>/rpi-setup.env         filled settings of one Pi (start from config/rpi-setup.env.example)
 pis/<pi>/id_ed25519.pub        public SSH key for that Pi (for host/flash.sh -a); never the private key
 ```
@@ -30,6 +32,10 @@ pis/<pi>/id_ed25519.pub        public SSH key for that Pi (for host/flash.sh -a)
    `/usr/local/sbin/rpi-setup-deploy`.
 5. Deploy: **Actions > Deploy to Pi > Run workflow**, pick the Pi, the tasks
    (empty = every task already on the Pi) and the branch.
+6. Later updates: **Actions > Update Pi > Run workflow**. It updates the
+   containers already on the Pi (new images) and sets up only the tasks from
+   `pis/<pi>/tasks` that the Pi does not have yet. Add a task to that file to
+   install it with the next update.
 
 ## What the deploy does
 

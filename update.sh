@@ -14,6 +14,9 @@ UPDATE_REBOOT_FILE="${RPI_SETUP_REBOOT_FILE:-/run/reboot-required}"
 DRY_RUN=0
 DO_APT=1
 DO_CONTAINERS=1
+DO_PIHOLE=1
+DO_EEPROM=1
+SKIP_REASON=''
 declare -a UPDATE_RESULTS=()
 UPDATE_FAILED=0
 
@@ -29,6 +32,8 @@ Options:
   --dry-run        print the commands instead of running them
   --no-apt         skip the OS package upgrade
   --no-containers  skip the container update
+  --containers-only
+                   only update the containers (no apt, Pi-hole or EEPROM)
   -h, --help       show this help
 EOF
 }
@@ -115,8 +120,9 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
-      --no-apt) DO_APT=0 ;;
+      --no-apt) DO_APT=0 SKIP_REASON=--no-apt ;;
       --no-containers) DO_CONTAINERS=0 ;;
+      --containers-only) DO_APT=0 DO_PIHOLE=0 DO_EEPROM=0 SKIP_REASON=--containers-only ;;
       -h|--help) usage; return 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -126,7 +132,7 @@ main() {
   export DEBIAN_FRONTEND=noninteractive
 
   if [[ $DO_APT -eq 0 ]]; then
-    skip_step apt '--no-apt'
+    skip_step apt "$SKIP_REASON"
   elif have apt-get; then
     do_step apt step_apt
   else
@@ -145,13 +151,17 @@ main() {
     do_step containers step_containers "${projects[@]}"
   fi
 
-  if have pihole; then
+  if [[ $DO_PIHOLE -eq 0 ]]; then
+    skip_step pihole "$SKIP_REASON"
+  elif have pihole; then
     do_step pihole step_pihole
   else
     skip_step pihole 'Pi-hole not installed'
   fi
 
-  if ! is_pi; then
+  if [[ $DO_EEPROM -eq 0 ]]; then
+    skip_step eeprom "$SKIP_REASON"
+  elif ! is_pi; then
     skip_step eeprom 'not a Raspberry Pi'
   elif have rpi-eeprom-update; then
     do_step eeprom step_eeprom
