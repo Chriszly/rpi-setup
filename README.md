@@ -67,6 +67,7 @@ how to reach it and what to watch out for.
 | [`monitoring`](docs/tasks/monitoring.md) | Netdata dashboard on `http://<pi>:19999` | `MONITORING_PORT` |
 | [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |
 | [`teamspeak`](docs/tasks/teamspeak.md) | TeamSpeak 6 server, voice `:9987`, file `:30033`, web query `:10080` (needs `docker`, 64-bit OS) | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` |
+| [`runner`](docs/tasks/runner.md) | GitHub runner for a manual *Deploy to Pi* button in your private settings repository ([template](templates/private-repo/README.md)) | `RUNNER_REPO`, `RUNNER_TOKEN` (once) |
 | [`firewall`](docs/tasks/firewall.md) | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
 
 The SD card settings of the flash scripts (`FLASH_*`) have their own page:
@@ -205,7 +206,8 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
   [pihole](docs/tasks/pihole.md), [samba](docs/tasks/samba.md),
   [backup](docs/tasks/backup.md), [web](docs/tasks/web.md),
   [monitoring](docs/tasks/monitoring.md), [netalertx](docs/tasks/netalertx.md),
-  [teamspeak](docs/tasks/teamspeak.md), [firewall](docs/tasks/firewall.md),
+  [teamspeak](docs/tasks/teamspeak.md), [runner](docs/tasks/runner.md),
+  [firewall](docs/tasks/firewall.md),
   and the SD card settings in [flash](docs/tasks/flash.md).
 - [Raspberry Pi 5 test checklist](docs/pi5-test-checklist.md) - one full test
   run on real hardware, checked with `sudo bash check.sh`, and what to report.
