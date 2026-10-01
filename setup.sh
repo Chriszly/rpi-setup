@@ -244,8 +244,11 @@ Usage: sudo bash setup.sh [task ...]   run tasks (no task: interactive menu)
        bash setup.sh --list            list the tasks
        bash setup.sh --init-config     create config/rpi-setup.env from the example
        bash setup.sh --split-config    split config/rpi-setup.env into config/local/<task>.env
+       sudo bash setup.sh --move-config  move config/rpi-setup.env to $(system_config_dir) (root only)
 Put your settings in $(central_config); setup.sh splits it into one
-file per task before it runs any task.
+file per task before it runs any task. Settings are read from
+$(system_config_dir)/rpi-setup.env when that file exists, so they can
+live outside the git checkout.
 EOF
 }
 
@@ -261,6 +264,11 @@ main() {
       ;;
     --split-config)
       split_config "$(central_config)"
+      return 0
+      ;;
+    --move-config)
+      need_root
+      move_config
       return 0
       ;;
     -h|--help)
@@ -312,6 +320,7 @@ main() {
   fi
   start_log "${picked[*]}"
   plan_tasks "${picked[@]}"
+  warn_shadowed_config
   if [[ -f "$(central_config)" ]]; then
     split_config "$(central_config)"
   fi
