@@ -31,8 +31,9 @@ The private repository's layout, workflow and step-by-step setup are in
   GitHub publishes, running as a systemd service. It updates itself.
 - `/usr/local/sbin/rpi-setup-deploy`, the only command `rpi-runner` may run as
   root (`/etc/sudoers.d/rpi-setup-runner`). It accepts `--branch` (only from
-  `RUNNER_BRANCHES`), `--config` (a file the caller can read) and `--tasks`
-  (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`).
+  `RUNNER_BRANCHES`), `--config` (a file the caller can read), `--tasks`
+  (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`)
+  and `--update`.
 - `setup.sh` records every task that finished in
   `/var/lib/rpi-setup/tasks.done`; a deploy with no tasks reruns those.
 
@@ -52,6 +53,23 @@ The private repository's layout, workflow and step-by-step setup are in
 
 You can run the same deploy by hand on the Pi:
 `sudo /usr/local/sbin/rpi-setup-deploy --tasks "base pihole"`.
+
+## Update instead of deploy
+
+The *Update Pi* workflow (`templates/private-repo/.github/workflows/update.yml`)
+passes `--update`. Steps 1, 2 and 4 are the same; step 3 becomes:
+
+- `update.sh --containers-only`: pulls new images for the containers rpi-setup
+  set up and recreates the ones that changed. No OS packages, Pi-hole or
+  EEPROM update.
+- `setup.sh` only for the given tasks that are not yet in
+  `/var/lib/rpi-setup/tasks.done`, so tasks you add to the list get set up
+  and the others are left alone. The
+  workflow takes the list from its *tasks* input or from `pis/<pi>/tasks` in
+  the private repository.
+
+By hand: `sudo /usr/local/sbin/rpi-setup-deploy --update --tasks "base docker web"`.
+The full output of both steps stays on the Pi in `/var/log/rpi-setup-deploy/`.
 
 ## Pitfalls
 

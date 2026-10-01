@@ -1,0 +1,65 @@
+# Update Pi - copy this file to .github/workflows/update.yml in your PRIVATE
+# settings repository (see README.md next to it). It runs only when you
+# start it under Actions > "Update Pi" > Run workflow, on the runner that
+# "sudo bash setup.sh runner" installed on the Pi. It pulls new images for
+# the containers already on the Pi and sets up only the tasks that are new:
+# those in pis/<pi>/tasks (or the tasks input) that never ran on the Pi.
+name: Update Pi
+
+on:
+  workflow_dispatch:
+    inputs:
+      pi:
+        description: 'Which Pi: its runner label (default: its hostname) and its folder under pis/'
+        required: true
+        default: pi5
+      tasks:
+        description: 'Tasks the Pi should have, space separated. Empty: the list in pis/<pi>/tasks'
+        required: false
+        default: ''
+      branch:
+        description: 'Branch of rpi-setup to update to (must be listed in RUNNER_BRANCHES on the Pi)'
+        required: true
+        default: main
+      settings:
+        description: 'Install pis/<pi>/rpi-setup.env from this repository on the Pi first'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.pi }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update ${{ inputs.pi }}
+    runs-on: [self-hosted, '${{ inputs.pi }}']
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Update
+        env:
+          PI: ${{ inputs.pi }}
+          TASKS: ${{ inputs.tasks }}
+          BRANCH: ${{ inputs.branch }}
+          SETTINGS: ${{ inputs.settings }}
+        run: |
+          if [ -z "$TASKS" ] && [ -f "pis/$PI/tasks" ]; then
+            TASKS="$(sed 's/#.*//' "pis/$PI/tasks" | tr -s ' \n' '  ')"
+          fi
+          args=(--update --branch "$BRANCH" --tasks "$TASKS")
+          if [ "$SETTINGS" = true ]; then
+            test -f "pis/$PI/rpi-setup.env" || { echo "pis/$PI/rpi-setup.env not found in this repository"; exit 1; }
+            args+=(--config "$PWD/pis/$PI/rpi-setup.env")
+          fi
+          sudo -n /usr/local/sbin/rpi-setup-deploy "${args[@]}"
+
+      # The checkout holds your settings; do not leave it in the runner's
+      # work folder on the Pi.
+      - name: Remove the checkout
+        if: always()
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -delete

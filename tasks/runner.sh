@@ -164,16 +164,18 @@ deploy_run_git() {
   fi
 }
 
-# Parse and check the arguments into DP_BRANCH, DP_CONFIG and DP_TASKS.
+# Parse and check the arguments into DP_BRANCH, DP_CONFIG, DP_TASKS and
+# DP_UPDATE (1 with --update).
 # Everything comes from a workflow, so anything unexpected stops the deploy.
 # shellcheck disable=SC2153  # DP_BRANCHES is set at the top of the deploy command
 deploy_run_args() {
-  DP_BRANCH="${DP_BRANCHES%% *}" DP_CONFIG='' DP_TASKS=''
+  DP_BRANCH="${DP_BRANCHES%% *}" DP_CONFIG='' DP_TASKS='' DP_UPDATE=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --branch) DP_BRANCH="${2:-}"; shift 2 ;;
       --config) DP_CONFIG="${2:-}"; shift 2 ;;
       --tasks) DP_TASKS="${2:-}"; shift 2 ;;
+      --update) DP_UPDATE=1; shift ;;
       *) echo "rpi-setup-deploy: unknown argument '$1'" >&2; return 2 ;;
     esac
   done
@@ -227,19 +229,23 @@ deploy_run_check_config() {
   return 1
 }
 
-# Tasks to run: DP_TASKS, else every task that finished on this Pi. Each
-# must exist as tasks/<name>.sh in the (updated) checkout.
+# Tasks to run: DP_TASKS, else every task that finished on this Pi. With
+# --update only the DP_TASKS not yet finished on this Pi (the new ones).
+# Each must exist as tasks/<name>.sh in the (updated) checkout.
 deploy_run_tasks() {
   local -a t
   local n
   read -r -a t <<<"$DP_TASKS"
-  if [[ ${#t[@]} -eq 0 && -f "$DP_DONE_FILE" ]]; then
+  if [[ ${#t[@]} -eq 0 && $DP_UPDATE -eq 0 && -f "$DP_DONE_FILE" ]]; then
     mapfile -t t < <(grep -E '^[a-z0-9_-]+$' "$DP_DONE_FILE" || true)
   fi
   for n in "${t[@]}"; do
     if [[ ! -f "$DP_DIR/tasks/$n.sh" ]]; then
       echo "rpi-setup-deploy: unknown task '$n' (no $DP_DIR/tasks/$n.sh)" >&2
       return 2
+    fi
+    if [[ $DP_UPDATE -eq 1 && -f "$DP_DONE_FILE" ]] && grep -qxF "$n" "$DP_DONE_FILE"; then
+      continue
     fi
     printf '%s\n' "$n"
   done
@@ -254,9 +260,11 @@ deploy_run_config() {
 
 # One deploy. setup.sh's full output (it prints generated passwords) goes
 # to a root-only log on the Pi; only the summary reaches the workflow log.
+# With --update: update.sh --containers-only first, then setup.sh only for
+# the new tasks.
 deploy_run() {
   deploy_run_args "$@" || return $?
-  local owner old new list log rc=0
+  local owner old new list log stamp rc=0
   local -a tasks=()
   owner="$(deploy_run_owner)" || return 1
   deploy_run_check_config || return 1
@@ -277,17 +285,31 @@ deploy_run() {
   [[ -z "$DP_CONFIG" ]] || deploy_run_config "$DP_CONFIG"
   list="$(deploy_run_tasks)" || return $?
   [[ -z "$list" ]] || mapfile -t tasks <<<"$list"
-  if [[ ${#tasks[@]} -eq 0 ]]; then
+  install -m 0700 -d "$DP_LOG_DIR"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  if [[ $DP_UPDATE -eq 1 ]]; then
+    log="$DP_LOG_DIR/update-$stamp.log"
+    echo "rpi-setup-deploy: updating the containers (full output on the Pi: $log)"
+    ( umask 077
+      bash "$DP_DIR/update.sh" --containers-only </dev/null >"$log" 2>&1 ) || rc=$?
+    sed -n '/^Summary:/,$p' "$log"
+    [[ $rc -eq 0 ]] || echo "rpi-setup-deploy: update.sh failed (exit $rc); details on the Pi: sudo less $log" >&2
+    if [[ ${#tasks[@]} -eq 0 ]]; then
+      echo 'rpi-setup-deploy: no new tasks'
+      return "$rc"
+    fi
+  elif [[ ${#tasks[@]} -eq 0 ]]; then
     echo 'rpi-setup-deploy: no tasks given and none recorded on this Pi; pass --tasks'
     return 0
   fi
-  install -m 0700 -d "$DP_LOG_DIR"
-  log="$DP_LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+  log="$DP_LOG_DIR/deploy-$stamp.log"
   echo "rpi-setup-deploy: running setup.sh ${tasks[*]} (full output on the Pi: $log)"
+  local src=0
   ( umask 077
     SUDO_USER="$owner" SUDO_UID="$(id -u "$owner")" SUDO_GID="$(id -g "$owner")" \
-      RPI_SETUP_CONFIG_DIR="$DP_CONFIG_DIR" bash "$DP_DIR/setup.sh" "${tasks[@]}" </dev/null >"$log" 2>&1 ) || rc=$?
+      RPI_SETUP_CONFIG_DIR="$DP_CONFIG_DIR" bash "$DP_DIR/setup.sh" "${tasks[@]}" </dev/null >"$log" 2>&1 ) || src=$?
   sed -n '/^Summary:/,$p' "$log"
-  [[ $rc -eq 0 ]] || echo "rpi-setup-deploy: setup.sh failed (exit $rc); details on the Pi: sudo less $log" >&2
+  [[ $src -eq 0 ]] || echo "rpi-setup-deploy: setup.sh failed (exit $src); details on the Pi: sudo less $log" >&2
+  [[ $src -eq 0 ]] || rc=$src
   return "$rc"
 }
