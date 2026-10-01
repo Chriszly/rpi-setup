@@ -12,7 +12,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 PORT=19999
 setup() { env "$@" bash "$ROOT/setup.sh" monitoring; }
-api() { curl -fsS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/info" 2>/dev/null || true; }
+# HTTP status of the API, waiting up to 30 s for Netdata to finish starting (503).
+api() {
+    local code="" i
+    for i in $(seq 1 30); do
+        code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/info" 2>/dev/null || true)"
+        [[ "$code" != 200 ]] || break
+        sleep 1
+    done
+    printf '%s' "$code"
+}
 started() { docker inspect -f '{{.State.StartedAt}}' netdata 2>/dev/null || true; }
 
 setup MONITORING_DOCKER=no
