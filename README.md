@@ -51,24 +51,42 @@ firmware updates take effect.
 
 ## Tasks
 
-| Task         | What you get                                                        | Settings you will most likely set |
-|--------------|---------------------------------------------------------------------|-----------------------------------|
-| `base`       | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban, daily security updates, optional key-only SSH, journal size limit | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
-| `docker`     | Docker Engine, buildx and Compose (apt), log rotation               | none needed |
-| `network`    | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
-| `tailscale`  | Tailscale WireGuard VPN (official installer)                        | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
-| `pihole`     | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended     | `PIHOLE_PASSWORD`, `PIHOLE_CONFIRM=yes`, `PIHOLE_DNS` |
-| `samba`      | Read-write NAS share `\\<pi>\nas-share` for your user              | `SAMBA_PASSWORD` |
-| `backup`     | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
-| `web`        | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
-| `monitoring` | Netdata dashboard on `http://<pi>:19999`                            | `MONITORING_PORT` |
-| `netalertx`  | NetAlertX LAN device presence tracker on `http://<pi>:20211`        | `NETALERTX_PASSWORD` (empty = generated), `NETALERTX_LOGIN` (needs `docker`) |
-| `teamspeak`  | TeamSpeak 6 server (voice :9987, file :30033, web query :10080)     | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` (needs `docker`, 64-bit OS) |
-| `firewall`   | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
+Click a task for its page: every setting with its default, what it installs,
+how to reach it and what to watch out for.
 
-Each task prints the address to open when it finishes. Tasks are plain bash
-scripts inside `tasks/` - add your own by dropping in a file that appends to
-`TASKS` and defines a `run_<name>` function. See `tasks/base.sh` for the pattern.
+| Task | What you get | Settings you will most likely set |
+|------|--------------|-----------------------------------|
+| [`base`](docs/tasks/base.md) | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban, daily security updates, optional key-only SSH, journal size limit | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
+| [`docker`](docs/tasks/docker.md) | Docker Engine, buildx and Compose (apt), log rotation | none needed |
+| [`network`](docs/tasks/network.md) | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
+| [`tailscale`](docs/tasks/tailscale.md) | Tailscale WireGuard VPN (official installer) | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
+| [`pihole`](docs/tasks/pihole.md) | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended | `PIHOLE_CONFIRM=yes`, `PIHOLE_PASSWORD`, `PIHOLE_DNS` |
+| [`samba`](docs/tasks/samba.md) | Read-write NAS share `\\<pi>\nas-share` for your user | `SAMBA_PASSWORD` |
+| [`backup`](docs/tasks/backup.md) | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
+| [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
+| [`monitoring`](docs/tasks/monitoring.md) | Netdata dashboard on `http://<pi>:19999` | `MONITORING_PORT` |
+| [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |
+| [`teamspeak`](docs/tasks/teamspeak.md) | TeamSpeak 6 server, voice `:9987`, file `:30033`, web query `:10080` (needs `docker`, 64-bit OS) | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` |
+| [`firewall`](docs/tasks/firewall.md) | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
+
+The SD card settings of the flash scripts (`FLASH_*`) have their own page:
+[flash](docs/tasks/flash.md).
+
+How a run works:
+
+- `base` runs first when you pick it, and a task's dependency runs before it.
+  `netalertx` and `teamspeak` need `docker`; it is added to the run
+  automatically when Docker is not installed.
+- A failed task does not stop the others, but the tasks that need it are
+  skipped and `setup.sh` exits non-zero.
+- The run ends with a summary (`ok`, `failed` or `skipped` per task) and a
+  reboot hint when one is needed. The whole output is appended to
+  `/var/log/rpi-setup.log` (root only, as it holds generated passwords).
+- Each task prints the address to open when it finishes.
+
+Tasks are plain bash scripts in `tasks/`. Add your own by dropping in a file
+that appends to `TASKS` and defines a `run_<name>` function; see
+`tasks/base.sh` for the pattern and [AGENTS.md](AGENTS.md) for the conventions.
 
 ## Settings
 
@@ -90,7 +108,14 @@ TAILSCALE_AUTHKEY=tskey-auth-...
 - Each name starts with its task's name (`SAMBA_...` belongs to `samba`); an
   unknown name stops the run before anything changes, so typos are caught.
 - `config/rpi-setup.env` and everything generated from it are ignored by git:
-  your passwords never end up in a commit.
+  your passwords never end up in a commit. CI also fails when a filled
+  settings file, a private key or a password is committed by mistake.
+- To keep the settings outside the git checkout, run
+  `sudo bash setup.sh --move-config` once: it moves the file to
+  `/etc/rpi-setup/rpi-setup.env` (root only, mode 600). From then on
+  `setup.sh`, `update.sh` and `check.sh` read it from there; edit it with
+  `sudo nano /etc/rpi-setup/rpi-setup.env`. A leftover
+  `config/rpi-setup.env` is then ignored, with a warning.
 - Before running tasks, `setup.sh` splits the file into one file per task,
   `config/local/<task>.env`. [`config/tasks/<task>.env`](config/tasks) lists
   the names each task reads. Run the split on its own with
@@ -98,12 +123,12 @@ TAILSCALE_AUTHKEY=tskey-auth-...
 - A variable on the command line wins over the file:
   `sudo SAMBA_PASSWORD=other bash setup.sh samba`.
 - `RPI_SETUP_CONFIG_DIR=/some/folder` reads `rpi-setup.env` from another
-  folder, e.g. one kept outside the git checkout.
+  folder; it wins over `/etc/rpi-setup`.
 
 With the settings filled in, a whole setup runs unattended:
 `sudo bash setup.sh base docker samba pihole tailscale netalertx`. Passwords
-you leave empty (`SAMBA_PASSWORD`, `PIHOLE_PASSWORD`) are generated on the
-first install, printed once and saved (root-only) in
+you leave empty (`SAMBA_PASSWORD`, `PIHOLE_PASSWORD`, `NETALERTX_PASSWORD`)
+are generated on the first install, printed once and saved (root-only) in
 `/var/lib/rpi-setup/secrets/<task>.env`. Re-running a task applies changed
 settings: ports, the share, fail2ban, the Netdata bind and the containers are
 rewritten; Pi-hole's DNS, interface and logging are only used at install
@@ -123,6 +148,18 @@ instead of installing it with apt. Set it to `yes` and run the task again:
   does not stay up, the native service is started again.
 - Setting it back to `no` stops the container and starts the native service.
 
+Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
+[`monitoring`](docs/tasks/monitoring.md#run-it-in-docker),
+[`pihole`](docs/tasks/pihole.md#run-it-in-docker),
+[`samba`](docs/tasks/samba.md#run-it-in-docker) and
+[`tailscale`](docs/tasks/tailscale.md#run-it-in-docker) (native recommended).
+`netalertx` and `teamspeak` always run in Docker; `base`, `docker`, `network`,
+`backup` and `firewall` always run natively. The `firewall`, `backup` and
+`check.sh` recognise a task running in its container.
+
+Containers are opt-in for now: every `<TASK>_DOCKER` defaults to `no`, so
+nothing changes on a Pi unless you set one to `yes`.
+
 ## Raspberry Pi 5
 
 The Pi 5 (and Pi 500 / CM5) needs Raspberry Pi OS **Bookworm or newer**; the
@@ -139,7 +176,18 @@ on an older one. Use the **64-bit** Lite image: `teamspeak`'s Docker image is
 Both go into a marked block at the end of `/boot/firmware/config.txt` and
 apply after a reboot; switching them back to `no` removes the block again.
 
-## Updating
+## Keeping it running
+
+### Health check
+
+`sudo bash check.sh` checks the Pi without changing anything: board, OS
+and firmware, power and temperature (under-voltage, throttling), disk space,
+LAN address and SSH, and for every task that looks installed whether its
+service or container runs and its port answers. It prints one
+`OK`, `WARN` or `FAIL` line per check and exits 1 if anything failed. No
+password or key is printed.
+
+### Updating
 
 Re-running a task does not update a container that is already running. To
 bring an installed Pi up to date, run `sudo bash update.sh`: it upgrades the
@@ -152,6 +200,13 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
 
 ## Documentation
 
+- Task pages: [base](docs/tasks/base.md), [docker](docs/tasks/docker.md),
+  [network](docs/tasks/network.md), [tailscale](docs/tasks/tailscale.md),
+  [pihole](docs/tasks/pihole.md), [samba](docs/tasks/samba.md),
+  [backup](docs/tasks/backup.md), [web](docs/tasks/web.md),
+  [monitoring](docs/tasks/monitoring.md), [netalertx](docs/tasks/netalertx.md),
+  [teamspeak](docs/tasks/teamspeak.md), [firewall](docs/tasks/firewall.md),
+  and the SD card settings in [flash](docs/tasks/flash.md).
 - [Raspberry Pi 5 test checklist](docs/pi5-test-checklist.md) - one full test
   run on real hardware, checked with `sudo bash check.sh`, and what to report.
 - [Setup guide - Windows host](docs/setup-windows.md) - flash an SD card with
@@ -164,31 +219,17 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
 ## Notes
 
 - Re-running any task is safe: finished work is detected and skipped, and
-  `samba` keeps its password unless you set a new `SAMBA_PASSWORD`.
-- Run with `sudo`, not as `root`. The `docker` and `samba` tasks pick up your
-  normal user through `SUDO_USER`. After `docker`, log out and back in to use
-  `docker` without `sudo`.
+  changed settings are applied.
+- Run with `sudo` from your normal user, not as `root`. The `docker` and
+  `samba` tasks pick up your user through `SUDO_USER`. After `docker`, log out
+  and back in to use `docker` without `sudo`.
 - `pihole` and `tailscale` run their official installers (`curl | sh`); both
   print a warning first, and `pihole` asks you to type `yes` unless
-  `PIHOLE_CONFIRM=yes`. Pi-hole installs without its dialogs using the
-  `PIHOLE_*` settings; set `PIHOLE_UNATTENDED=no` to get the dialogs.
-- `pihole` and `web` can run together: whichever comes second moves to port
-  8080, and the task prints the address it ended up on.
-- `netalertx` requires Docker: run it via `sudo bash setup.sh docker netalertx`.
-  It auto-detects your LAN subnet and interface, or scans
-  `NETALERTX_SCAN_SUBNETS`. First discovery
-  takes 5-10 minutes.
-- `teamspeak` requires Docker: run it via `sudo bash setup.sh docker teamspeak`.
-  On first start the ServerAdmin privilege key is printed to the console - save
-  it, it is only shown once and is needed to log in from the TS6 client at
-  `<pi-ip>:9987` (later: `docker logs teamspeak`).
-- A run ends with a summary: each task with `ok`, `failed` or `skipped`, and a
-  reboot hint when one is needed. A failed task does not stop the others, but
-  tasks that need it are skipped and `setup.sh` exits non-zero. `base` always
-  runs first, and `docker` is added automatically (before the tasks that need
-  it) when you pick `netalertx` or `teamspeak` without Docker installed. The
-  whole output is appended to `/var/log/rpi-setup.log` (readable by root only,
-  as it holds generated passwords).
+  `PIHOLE_CONFIRM=yes`.
+- `network` changes the Pi's address: over SSH the session drops, so run it
+  alone or last.
+- Check the `[+] Complete: <task>` lines and the summary at the end of a run;
+  a task that could not finish prints `[!]` or `[x]` lines explaining why.
 
 ## Acknowledgements
 
@@ -210,7 +251,9 @@ Docker images when a task needs them:
 - [nginx](https://nginx.org/) - apt package (`tasks/web.sh`)
 - [Samba](https://www.samba.org/) - apt package (`tasks/samba.sh`)
 - [fail2ban](https://www.fail2ban.org/) - apt package (`tasks/base.sh`)
-- [NetAlertX](https://github.com/aitrix/NetAlertX) - official Docker image
+- [nftables](https://netfilter.org/projects/nftables/) - apt package
+  (`tasks/firewall.sh`)
+- [NetAlertX](https://github.com/netalertx/NetAlertX) - official Docker image
   (`ghcr.io/netalertx/netalertx`, `tasks/netalertx.sh`)
 - [TeamSpeak 6](https://teamspeak.com/) - official Docker image
   (`teamspeaksystems/teamspeak6-server`, `tasks/teamspeak.sh`)
