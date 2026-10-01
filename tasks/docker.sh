@@ -6,12 +6,8 @@ set -euo pipefail
 TASKS+=("docker|Docker Engine and Docker Compose")
 
 run_docker() {
-  : "${DOCKER_ADD_USER:=yes}" "${DOCKER_LOG_MAX_SIZE:=10m}" "${DOCKER_LOG_MAX_FILE:=3}"
+  : "${DOCKER_ADD_USER:=yes}"
   setting_on DOCKER_ADD_USER || true
-  [[ "$DOCKER_LOG_MAX_SIZE" =~ ^[1-9][0-9]*[kmg]$ ]] ||
-    die "DOCKER_LOG_MAX_SIZE must look like 10m, 500k or 1g (got '$DOCKER_LOG_MAX_SIZE')"
-  [[ "$DOCKER_LOG_MAX_FILE" =~ ^[1-9][0-9]*$ ]] ||
-    die "DOCKER_LOG_MAX_FILE must be a positive number (got '$DOCKER_LOG_MAX_FILE')"
 
   if command -v docker >/dev/null 2>&1; then
     if ! docker compose version >/dev/null 2>&1; then
@@ -28,7 +24,6 @@ run_docker() {
 
   local restart=0
   if docker_daemon_config; then restart=1; fi
-  systemctl daemon-reload || true
   systemctl enable --now docker || warn 'Docker installed but service not started; run "systemctl enable --now docker" after reboot or re-login.'
   if [[ $restart -eq 1 ]] && systemctl is-active --quiet docker; then
     # Containers with a restart policy come back by themselves.
@@ -73,21 +68,21 @@ docker_install() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
-# Log rotation for every container, so logs cannot fill the SD card. JSON has
-# no comments, so a copy of what we wrote marks /etc/docker/daemon.json as
-# ours; a daemon.json edited by hand is left alone. Returns 0 if it changed.
+# Log rotation for every container (3 files of 10 MB), so logs cannot fill
+# the SD card. JSON has no comments, so a copy of what we wrote marks
+# /etc/docker/daemon.json as ours; a daemon.json edited by hand is left
+# alone. Returns 0 if it changed.
 docker_daemon_config() {
-  local f=/etc/docker/daemon.json copy=/var/lib/rpi-setup/docker-daemon.json content
-  content="$(printf '{\n  "log-driver": "json-file",\n  "log-opts": {\n    "max-size": "%s",\n    "max-file": "%s"\n  }\n}' \
-    "$DOCKER_LOG_MAX_SIZE" "$DOCKER_LOG_MAX_FILE")"
+  local f=/etc/docker/daemon.json copy=/var/lib/rpi-setup/docker-daemon.json
   if [[ -f "$f" ]] && ! { [[ -f "$copy" ]] && cmp -s "$f" "$copy"; }; then
-    warn "$f was not written by rpi-setup; leaving it alone (DOCKER_LOG_* not applied)"
+    warn "$f was not written by rpi-setup; leaving it alone (container log rotation not applied)"
     return 1
   fi
   install -m 0755 -d /etc/docker /var/lib/rpi-setup
-  if printf '%s\n' "$content" | write_if_changed "$f" 0644; then
+  if printf '{\n  "log-driver": "json-file",\n  "log-opts": {\n    "max-size": "10m",\n    "max-file": "3"\n  }\n}\n' |
+      write_if_changed "$f" 0644; then
     cp -f "$f" "$copy"
-    say "Container logs rotate at $DOCKER_LOG_MAX_SIZE x $DOCKER_LOG_MAX_FILE ($f)"
+    say "Container logs rotate at 10m x 3 ($f)"
     return 0
   fi
   return 1

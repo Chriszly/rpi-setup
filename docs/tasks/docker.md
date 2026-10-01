@@ -1,7 +1,8 @@
 # docker - Docker Engine and Compose
 
 Installs Docker Engine with the buildx and Compose plugins from Docker's own
-apt repository and limits container log size, so logs cannot fill the SD card.
+apt repository and limits container logs to 3 files of 10 MB each, so logs
+cannot fill the SD card.
 
 ```bash
 sudo bash setup.sh docker
@@ -16,8 +17,6 @@ it first.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `DOCKER_ADD_USER` | `yes` | Add the user who ran `sudo` to the `docker` group, so `docker` works without `sudo` (after logging in again). |
-| `DOCKER_LOG_MAX_SIZE` | `10m` | Size at which a container log is rotated (`500k`, `10m`, `1g`). |
-| `DOCKER_LOG_MAX_FILE` | `3` | Number of rotated log files kept per container. |
 
 ## What it installs and changes
 

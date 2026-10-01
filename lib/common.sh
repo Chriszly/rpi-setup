@@ -391,8 +391,16 @@ split_config() {
   fi
   say "Split $central into $out/<task>.env"
 }
+
+# Settings that were removed (their value is fixed now). A central file
+# copied from an older example still has them, so they only warn.
+RETIRED_SETTINGS=' BASE_FAIL2BAN_MAXRETRY BASE_FAIL2BAN_BANTIME BASE_AUTO_REBOOT_TIME DOCKER_LOG_MAX_SIZE DOCKER_LOG_MAX_FILE PIHOLE_CONFIRM PIHOLE_UNATTENDED '
 _split_setting() {
   local n="$1" key="$2" value="$3"
+  if [[ -z "${_SPLIT_KNOWN[$key]+x}" && "$RETIRED_SETTINGS" == *" $key "* ]]; then
+    warn "$_SPLIT_FILE, line $n: '$key' is no longer a setting and is ignored; delete the line"
+    return 0
+  fi
   [[ -n "${_SPLIT_KNOWN[$key]+x}" ]] ||
     die "$_SPLIT_FILE, line $n: unknown setting '$key' (see config/rpi-setup.env.example for the names)"
   config_quote "$value" >/dev/null

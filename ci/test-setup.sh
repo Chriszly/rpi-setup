@@ -274,6 +274,12 @@ assert_contains "--init-config kept your change" "WEB_TITLE=Changed" "$(cat "$cf
 assert_ok "--split-config splits the central file" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config
 assert_contains "--split-config output carries the value" "WEB_TITLE='Changed'" "$(cat "$cfg/local/web.env")"
 assert_ok "config/split.sh does the same" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/config/split.sh"
+echo 'DOCKER_LOG_MAX_SIZE=10m' >>"$cfg/rpi-setup.env"
+out="$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config 2>&1)" && rc=0 || rc=$?
+assert_eq "--split-config accepts a removed setting" "0" "$rc"
+assert_contains "--split-config warns about a removed setting" "'DOCKER_LOG_MAX_SIZE' is no longer a setting" "$out"
+echo 'DOCKER_LOG_MAX_SIZES=10m' >>"$cfg/rpi-setup.env"
+assert_fails "--split-config still stops on an unknown setting" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config
 rm -rf "$cfg"
 assert_fails "setup.sh rejects an unknown option" bash "$ROOT/setup.sh" --bogus
 assert_contains "--help explains the settings file" "rpi-setup.env" "$(bash "$ROOT/setup.sh" --help)"

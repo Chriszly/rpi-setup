@@ -83,7 +83,7 @@ After provisioning, every profile does:
 4. A **settings check**: the run takes its settings from a central
    `rpi-setup.env` (in a temp folder, via `RPI_SETUP_CONFIG_DIR`), exactly as a
    user would, and verifies that `WEB_TITLE`, `BASE_TIMEZONE` and
-   `BASE_FAIL2BAN_MAXRETRY` reached the Pi and that a Samba user exists.
+   `BASE_JOURNAL_MAX_SIZE` reached the Pi and that a Samba user exists.
 5. An **idempotency re-run** of the same `setup.sh` invocation - every task must
    exit 0 on a second pass (this is what the README promises: "re-running is
    safe"). The re-run's settings file has no `SAMBA_PASSWORD` and there is no

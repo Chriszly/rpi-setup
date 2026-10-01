@@ -7,9 +7,8 @@ TASKS+=("base|OS update, EEPROM firmware, SSH enable, essential tools")
 
 run_base() {
   : "${BASE_UPGRADE:=yes}" "${BASE_EEPROM_UPDATE:=yes}"
-  : "${BASE_FAIL2BAN_MAXRETRY:=5}" "${BASE_FAIL2BAN_BANTIME:=1h}"
   : "${BASE_PCIE_GEN3:=no}" "${BASE_PI5_4K_KERNEL:=no}"
-  : "${BASE_AUTO_UPDATES:=yes}" "${BASE_AUTO_REBOOT:=no}" "${BASE_AUTO_REBOOT_TIME:=03:30}"
+  : "${BASE_AUTO_UPDATES:=yes}" "${BASE_AUTO_REBOOT:=no}"
   : "${BASE_SSH_PASSWORD_AUTH:=yes}" "${BASE_JOURNAL_MAX_SIZE:=100M}"
   local hostname="${BASE_HOSTNAME:-}" tz="${BASE_TIMEZONE:-}" extra="${BASE_EXTRA_PACKAGES:-}" p
   local -a extra_pkgs=()
@@ -19,10 +18,6 @@ run_base() {
   setting_on BASE_EEPROM_UPDATE || true
   setting_on BASE_PCIE_GEN3 || true
   setting_on BASE_PI5_4K_KERNEL || true
-  [[ "$BASE_FAIL2BAN_MAXRETRY" =~ ^[1-9][0-9]*$ ]] ||
-    die "BASE_FAIL2BAN_MAXRETRY must be a positive number (got '$BASE_FAIL2BAN_MAXRETRY')"
-  [[ "$BASE_FAIL2BAN_BANTIME" =~ ^(-1|[1-9][0-9]*[smhdw]?)$ ]] ||
-    die "BASE_FAIL2BAN_BANTIME must look like 600, 10m, 1h, 1d or -1 (got '$BASE_FAIL2BAN_BANTIME')"
   if [[ -n "$hostname" ]] && ! valid_hostname "$hostname"; then
     die "BASE_HOSTNAME must be letters, digits and '-', at most 63 characters (got '$hostname')"
   fi
@@ -80,10 +75,6 @@ run_base() {
   base_auto_updates
   base_ssh_hardening
   base_journal_limit
-
-  if [[ -f /run/reboot-required ]] || is_pi; then
-    info 'Reboot when convenient (sudo reboot) so kernel and firmware updates take effect.'
-  fi
 }
 
 
@@ -150,25 +141,26 @@ base_pi5_boot_config() {
   fi
 }
 
-# fail2ban's SSH jail. The file is rewritten while it carries our marker, so
-# changed settings apply on a re-run; a hand-written jail.local is kept.
+# fail2ban's SSH jail: 5 failed logins within 10 minutes ban the address for
+# an hour. The file is rewritten while it carries our marker; a hand-written
+# jail.local is kept.
 base_fail2ban() {
   local f=/etc/fail2ban/jail.local
   info 'Configuring fail2ban for SSH protection'
   if [[ -f "$f" ]] && ! grep -q 'Managed by rpi-setup' "$f" && ! base_is_old_jail "$f"; then
-    warn "$f was not written by rpi-setup; leaving it alone (BASE_FAIL2BAN_* not applied)"
+    warn "$f was not written by rpi-setup; leaving it alone"
     return
   fi
   if printf '%s\n' \
-      '# Managed by rpi-setup (tasks/base.sh, BASE_FAIL2BAN_* settings).' \
+      '# Managed by rpi-setup (tasks/base.sh).' \
       '[sshd]' \
       'enabled = true' \
       'port = ssh' \
       'backend = systemd' \
-      "maxretry = ${BASE_FAIL2BAN_MAXRETRY}" \
-      "bantime = ${BASE_FAIL2BAN_BANTIME}" \
+      'maxretry = 5' \
+      'bantime = 1h' \
       'findtime = 10m' | write_if_changed "$f" 0644; then
-    say "Wrote $f (maxretry ${BASE_FAIL2BAN_MAXRETRY}, bantime ${BASE_FAIL2BAN_BANTIME})"
+    say "Wrote $f (maxretry 5, bantime 1h)"
     if systemctl is-active --quiet fail2ban; then systemctl restart fail2ban || true; fi
   fi
 }
@@ -187,15 +179,10 @@ base_validate_hardening() {
   setting_on BASE_AUTO_UPDATES || true
   setting_on BASE_AUTO_REBOOT || true
   setting_on BASE_SSH_PASSWORD_AUTH || true
-  base_valid_time "$BASE_AUTO_REBOOT_TIME" ||
-    die "BASE_AUTO_REBOOT_TIME must be a time of day as HH:MM, e.g. 03:30 (got '$BASE_AUTO_REBOOT_TIME')"
   base_valid_journal_size "$BASE_JOURNAL_MAX_SIZE" ||
     die "BASE_JOURNAL_MAX_SIZE must be a size such as 50M, 100M or 1G, or 'no' to keep the journald default (got '$BASE_JOURNAL_MAX_SIZE')"
   if ! setting_on BASE_SSH_PASSWORD_AUTH; then base_ssh_key_guard "$(real_user)"; fi
 }
-
-# 24-hour HH:MM, e.g. 03:30.
-base_valid_time() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
 
 # A journald size (bytes, or with a K/M/G/T suffix) or "no".
 base_valid_journal_size() { [[ "${1,,}" == no || "$1" =~ ^[1-9][0-9]*[KMGT]?$ ]]; }
@@ -274,7 +261,7 @@ base_unattended_conf() {
     '  "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";' \
     '};' \
     "Unattended-Upgrade::Automatic-Reboot \"$reboot\";" \
-    "Unattended-Upgrade::Automatic-Reboot-Time \"$BASE_AUTO_REBOOT_TIME\";"
+    'Unattended-Upgrade::Automatic-Reboot-Time "03:30";'
 }
 
 base_auto_updates() {
@@ -295,7 +282,7 @@ base_auto_updates() {
   info 'Setting up automatic security updates (unattended-upgrades)'
   apt_install unattended-upgrades
   base_auto_upgrades_conf 1 | write_if_changed "$periodic" 0644 || true
-  if setting_on BASE_AUTO_REBOOT; then reboot="yes, at $BASE_AUTO_REBOOT_TIME"; fi
+  if setting_on BASE_AUTO_REBOOT; then reboot="yes, at 03:30"; fi
   if base_unattended_conf | write_if_changed "$ours" 0644; then
     say "Wrote $ours (reboot after updates: $reboot)"
   fi

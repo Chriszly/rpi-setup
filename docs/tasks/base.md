@@ -26,11 +26,8 @@ Every setting is optional; an empty value means the default.
 | `BASE_HOSTNAME` | keep current | New host name, e.g. `homepi`, then reachable as `homepi.local` (after a reboot). Letters, digits and `-`, at most 63 characters. |
 | `BASE_TIMEZONE` | keep current | Time zone such as `Europe/Berlin` (list: `timedatectl list-timezones`). |
 | `BASE_EXTRA_PACKAGES` | none | More apt packages, separated by spaces or commas, e.g. `rsync jq`. |
-| `BASE_FAIL2BAN_MAXRETRY` | `5` | Failed SSH logins before fail2ban bans the address. |
-| `BASE_FAIL2BAN_BANTIME` | `1h` | How long a ban lasts: `600`, `10m`, `1h`, `1d`, or `-1` for forever. |
 | `BASE_AUTO_UPDATES` | `yes` | Install security updates every day (unattended-upgrades, Debian security archive only). |
-| `BASE_AUTO_REBOOT` | `no` | Reboot on its own when an automatic update needs it. |
-| `BASE_AUTO_REBOOT_TIME` | `03:30` | Time of that reboot, `HH:MM`. |
+| `BASE_AUTO_REBOOT` | `no` | Reboot on its own at 03:30 when an automatic update needs it. |
 | `BASE_SSH_PASSWORD_AUTH` | `yes` | `no` allows SSH key login only. The task refuses unless your user already has an SSH key set up (`~/.ssh/authorized_keys`, or the key from the flash scripts), so you cannot lock yourself out. |
 | `BASE_JOURNAL_MAX_SIZE` | `100M` | Disk space the system journal may use (`50M`, `1G`, ...); `no` keeps the journald default. |
 | `BASE_PCIE_GEN3` | `no` | Pi 5 only: run the PCIe slot at Gen 3 for an NVMe HAT (about twice the speed, not officially certified). |
@@ -45,8 +42,9 @@ Every setting is optional; an empty value means the default.
 - `/etc/ssh/sshd_config.d/10-rpi-setup.conf`: root login over SSH is always
   off; password login off with `BASE_SSH_PASSWORD_AUTH=no`. The file is checked
   with `sshd -t` and rolled back if sshd rejects it.
-- `/etc/fail2ban/jail.local`: the SSH jail (reads the journal). A `jail.local`
-  you wrote yourself is left alone.
+- `/etc/fail2ban/jail.local`: the SSH jail (reads the journal); 5 failed
+  logins within 10 minutes ban the address for an hour. A `jail.local` you
+  wrote yourself is left alone.
 - `/etc/apt/apt.conf.d/20auto-upgrades` and
   `52rpi-setup-unattended-upgrades`: daily security updates.
 - `/etc/systemd/journald.conf.d/10-rpi-setup.conf`: the journal size limit.
