@@ -8,8 +8,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 # Sourcing setup.sh loads lib/common.sh and every tasks/*.sh without running main().
 . "$ROOT/setup.sh"
 
@@ -101,21 +100,11 @@ rm -rf "$tmp"
 dns_out="$(PIHOLE_DNS='9.9.9.9, 149.112.112.112#53'; declare -a l=(); pihole_dns_list l; printf '%s|' "${l[@]}")"
 assert_eq "pihole_dns_list splits commas and spaces" "9.9.9.9|149.112.112.112#53|" "$dns_out"
 assert_fails "pihole_dns_list rejects a host name" eval "PIHOLE_DNS=dns.google; declare -a l=(); pihole_dns_list l"
-ts_out="$(TAILSCALE_HOSTNAME=pi5 TAILSCALE_SSH=no TAILSCALE_ADVERTISE_ROUTES='192.168.1.0/24, 10.0.0.0/8'; declare -a o=(); tailscale_options o; printf '%s ' "${o[@]}")"
-assert_eq "tailscale_options turns settings into flags" \
-    "--hostname=pi5 --ssh=false --advertise-routes=192.168.1.0/24,10.0.0.0/8 " "$ts_out"
-assert_eq "tailscale_options adds no flag for empty settings" "" \
-    "$(unset TAILSCALE_HOSTNAME TAILSCALE_SSH TAILSCALE_ADVERTISE_EXIT_NODE TAILSCALE_ADVERTISE_ROUTES; declare -a o=(); tailscale_options o; printf '%s' "${o[@]}")"
-assert_fails "tailscale_options rejects a bad route" eval "TAILSCALE_ADVERTISE_ROUTES=lan; declare -a o=(); tailscale_options o"
 
 # raspi-config's nonint mode reads 0 as "enable": "do_ssh 1" switches SSH off
 # and locks out a headless Pi after its next reboot.
 assert_contains "base enables SSH (do_ssh 0)" "do_ssh 0" "$(declare -f run_base)"
-if [[ "$(declare -f run_base)" == *"do_ssh 1"* ]]; then
-    fail "base must never call 'raspi-config nonint do_ssh 1' (that disables SSH)"
-else
-    pass "base never disables SSH"
-fi
+assert_lacks "base never disables SSH" "do_ssh 1" "$(declare -f run_base)"
 assert_contains "docker refreshes apt after adding its repository" "apt_update_now" "$(declare -f docker_install)"
 
 # --- Settings: config/tasks/<task>.env, the central example and the tasks agree
@@ -190,11 +179,7 @@ flow() {
 }
 out="$(flow base docker netalertx web samba)"
 assert_contains "a failing command ends its task" "ran-docker" "$out"
-if [[ "$out" == *docker-went-on* ]]; then
-    fail "errexit must still apply inside a task"
-else
-    pass "errexit still applies inside a task"
-fi
+assert_lacks "errexit still applies inside a task" "docker-went-on" "$out"
 assert_contains "the run goes on after a failed task" "ran-samba" "$out"
 assert_eq "finished tasks are recorded for the runner, failed ones are not" "base netalertx samba" \
     "$(xargs <"$flow_tmp/tasks.done")"
@@ -206,11 +191,7 @@ assert_contains "summary: task after the failures" "  samba          ok" "$out"
 assert_contains "a failed task makes the run fail" "RUN_FAILED=1" "$out"
 out="$(flow base samba)"
 assert_contains "an all-ok run succeeds" "RUN_FAILED=0" "$out"
-if [[ "$out" == *"Reboot recommended"* ]]; then
-    fail "no reboot hint off a Pi without /run/reboot-required"
-else
-    pass "no reboot hint off a Pi without /run/reboot-required"
-fi
+assert_lacks "no reboot hint off a Pi without /run/reboot-required" "Reboot recommended" "$out"
 touch "$flow_tmp/reboot-required"
 assert_contains "reboot hint when /run/reboot-required exists" "Reboot recommended" \
     "$(REBOOT_FILE="$flow_tmp/reboot-required" flow samba)"

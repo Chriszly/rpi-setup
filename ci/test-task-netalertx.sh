@@ -10,15 +10,10 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 TASKS=()
 . "$ROOT/tasks/netalertx.sh"
-
-TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT
 
 have_python=0
 command -v python3 >/dev/null 2>&1 && have_python=1
@@ -156,7 +151,7 @@ if [[ $EUID -eq 0 ]]; then
 
     out="$(netalertx_password 2>&1; printf '\nPW=%s' "$netalertx_pw")"
     assert_eq "password: re-run reuses the saved one" "$first" "${out##*PW=}"
-    if [[ "${out%PW=*}" == *"$first"* ]]; then fail "password: reused one is not printed again"; else pass "password: reused one is not printed again"; fi
+    assert_lacks "password: reused one is not printed again" "$first" "${out%PW=*}"
 
     NETALERTX_PASSWORD='override'
     netalertx_password >/dev/null 2>&1

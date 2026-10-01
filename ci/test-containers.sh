@@ -7,12 +7,10 @@
 # Run: bash ci/test-containers.sh   (sudo for the systemd cases)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/containers.sh"
 
-TMP="$(mktemp -d)"
 export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
 UNIT=rpi-setup-test-native
 cleanup() {

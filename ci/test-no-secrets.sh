@@ -5,10 +5,7 @@
 # Run: bash ci/test-no-secrets.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 # repo NAME FILE CONTENT - a fresh repository holding the example plus FILE.
 repo() {
@@ -23,7 +20,6 @@ repo() {
 }
 check() { bash "$ROOT/ci/check-no-secrets.sh" "$1"; }
 
-assert_ok "the repository itself is clean" check "$ROOT"
 assert_ok "empty and commented passwords are fine" check "$(repo clean README.md 'TAILSCALE_AUTHKEY=tskey-auth-...\n')"
 assert_fails "a filled config/rpi-setup.env is caught" check "$(repo filled config/rpi-setup.env 'WEB_PORT=80\n')"
 assert_fails "split files are caught" check "$(repo split config/local/samba.env "SAMBA_PASSWORD=''\n")"

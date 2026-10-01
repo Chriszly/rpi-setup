@@ -8,25 +8,14 @@
 # Run: bash ci/test-task-samba.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 export RPI_SETUP_ROOT="$ROOT"
-. "$ROOT/ci/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 TASKS=()
 . "$ROOT/tasks/samba.sh"
 
-TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT
-
 export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
-require_image_ref() { :; }
-container_require_64bit() { :; }
-container_require_docker() { :; }
-container_pull() { :; }
-container_stop_native() { :; }
-container_state() { :; }
-port_owner() { return 1; }
+stub_container_helpers
 pdbedit() { return 1; }
 save_secret() { printf '%s=%s\n' "$2" "$3" >>"$TMP/saved"; }
 container_up() { echo "container_up saved=[$(cat "$TMP/saved" 2>/dev/null)]"; exit 1; }  # dies like a failed start

@@ -8,8 +8,7 @@
 # Run: sudo bash ci/smoke-container-pihole.sh   (frees port 53; CI runners only)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 # Ubuntu's systemd-resolved stub holds 127.0.0.53:53; a Raspberry Pi OS host
 # has nothing on port 53.

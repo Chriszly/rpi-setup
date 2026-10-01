@@ -3,11 +3,11 @@ name: Virtual Testing Environment
 # Docs-only and .claude/ (agent skill) changes cannot affect provisioning, so they skip this workflow.
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
+    paths-ignore: &paths-ignore ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   push:
     branches:
       - main
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
+    paths-ignore: *paths-ignore
   workflow_dispatch:
 
 permissions:
@@ -18,29 +18,12 @@ concurrency:
   # Only cancel superseded PR runs; let pushes to main finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # Pinned Raspberry Pi OS Lite (64-bit) images. See docs/ci-testing.md for the
-  # bump procedure and why these exact images are pinned. The Bookworm image is
-  # also the only one piqemu-action can boot (provision-qemu).
-  RPI_IMAGE_VERSION: 2025-05-13
-  RPI_IMAGE_SHA256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-  RPI_IMAGE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-
 jobs:
   syntax:
     name: Syntax check, lint, and task registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      # shellcheck ships with the hosted runner image; only install it if missing.
-      - name: Install shellcheck
-        run: |
-          if ! command -v shellcheck >/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq shellcheck
-          fi
-          shellcheck --version
 
       - name: Validate bash syntax
         run: |
@@ -50,6 +33,7 @@ jobs:
           done
           echo "All shell scripts pass 'bash -n'"
 
+      # shellcheck ships with the hosted runner image.
       - name: Run shellcheck
         run: shellcheck --color=never setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh config/*.sh
 
@@ -80,7 +64,7 @@ jobs:
         run: bash ci/test-no-secrets.sh
 
       - name: Test task helpers (ci/test-task-*.sh)
-        run: for t in ci/test-task-*.sh; do [ -e "$t" ] || continue; echo "== $t"; sudo bash "$t"; done
+        run: for t in ci/test-task-*.sh; do echo "== $t"; sudo bash "$t"; done
 
   # Exercises the Docker-based tasks on a plain x86 runner. The nspawn gate
   # cannot run Docker, so without this the compose/UID logic in netalertx and
@@ -106,35 +90,70 @@ jobs:
           path: ci-logs/
           retention-days: 7
 
-  # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
-  # today, resolved at run time) and on Bookworm (what existing Pis still run).
+  # The <TASK>_DOCKER=yes mode on a plain x86 runner, which has Docker and a
+  # booted systemd (the nspawn gate has neither Docker nor a real port 53).
+  container-helpers:
+    name: Container helpers (lib/containers.sh)
+    runs-on: ubuntu-latest
+    needs: [syntax, unit]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test lib/containers.sh
+        run: sudo bash ci/test-containers.sh
+
+  # One ci/smoke-container-<task>.sh per task: runs "setup.sh <task>" with
+  # <TASK>_DOCKER=yes, checks the service answers, re-runs it and switches back.
+  container-smoke:
+    name: Container tasks on plain runner
+    runs-on: ubuntu-latest
+    needs: [container-helpers]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run every ci/smoke-container-*.sh
+        run: |
+          set -euo pipefail
+          for t in ci/smoke-container-*.sh; do
+            echo "::group::$t"
+            sudo bash "$t"
+            echo "::endgroup::"
+          done
+
+      - name: Show containers and logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a || true
+          for c in $(sudo docker ps -aq); do
+            echo "::group::$(sudo docker inspect -f '{{.Name}}' "$c")"
+            sudo docker logs --tail 100 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
   # Decides whether the PR touches anything the nspawn gate exercises. PRs that
   # only change the flashers, their tests or other workflows skip the gate.
   changes:
     name: Detect provisioning changes
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
     outputs:
-      provision: ${{ steps.diff.outputs.provision }}
+      provision: ${{ steps.filter.outputs.provision }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4.0.3
+        id: filter
         with:
-          fetch-depth: 0
-
-      - name: Diff against the base branch
-        id: diff
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
-          printf '%s\n' "$files"
-          if grep -qE '^(setup\.sh|lib/|tasks/|ci/provision\.sh|\.github/workflows/test-provision\.yml|\.github/actions/)' <<<"$files"; then
-            echo provision=true >>"$GITHUB_OUTPUT"
-          else
-            echo provision=false >>"$GITHUB_OUTPUT"
-            echo "No provisioning changes; the nspawn gate is skipped."
-          fi
+          filters: |
+            provision:
+              - setup.sh
+              - lib/**
+              - tasks/**
+              - ci/provision.sh
+              - .github/workflows/test-provision.yml
+              - .github/actions/**
 
   # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
   # today, resolved at run time) and on Bookworm (what existing Pis still run).
@@ -145,24 +164,13 @@ jobs:
     name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }}, ${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: [syntax, unit, changes]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.provision == 'true'
+    if: needs.changes.outputs.provision == 'true'
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         release: [bookworm, latest]
         group: [system, web]
-        include:
-          - release: bookworm
-            version: 2025-05-13
-            url: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-            sha256: 62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45
-          # Whatever the flash scripts would write today (checksum from the
-          # release's own .sha256, as in host/flash.sh).
-          - release: latest
-            version: latest
-            url: ''
-            sha256: ''
     steps:
       - uses: actions/checkout@v7
 
@@ -170,9 +178,7 @@ jobs:
         id: image
         uses: ./.github/actions/prepare-image
         with:
-          version: ${{ matrix.version }}
-          url: ${{ matrix.url }}
-          sha256: ${{ matrix.sha256 }}
+          version: ${{ matrix.release }}
 
       # host/flash.sh and host/flash.ps1 enable SSH and create the login user
       # by writing "ssh" and "userconf.txt" to the boot partition. Fail if a new
@@ -200,8 +206,44 @@ jobs:
           sudo losetup -d "$dev"
           exit "$rc"
 
-      - name: Install systemd-nspawn host packages
-        uses: ./.github/actions/nspawn-deps
+      # pinspawn-action needs systemd-container, qemu-user-static and
+      # binfmt-support, and skips its own apt install when they are present.
+      # The runner's Ubuntu mirror serves them at 70-110 kB/s (2-4 minutes per
+      # run), so their .debs are cached, keyed on the runner image so they
+      # always match its base system.
+      - name: Restore cached nspawn host packages
+        id: nspawn-debs
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/nspawn-debs
+          key: nspawn-debs-${{ runner.arch }}-${{ env.ImageOS }}-${{ env.ImageVersion }}
+
+      - name: Install nspawn host packages
+        env:
+          DEB_DIR: ${{ runner.temp }}/nspawn-debs
+          CACHE_HIT: ${{ steps.nspawn-debs.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [[ "$CACHE_HIT" != true ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --download-only systemd-container qemu-user-static binfmt-support
+            mkdir -p "$DEB_DIR"
+            find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} "$DEB_DIR/" \;
+          fi
+          shopt -s nullglob
+          debs=("$DEB_DIR"/*.deb)
+          if [[ ${#debs[@]} -eq 0 ]]; then
+            echo "Nothing to install; the packages are already on the runner"
+          else
+            sudo DEBIAN_FRONTEND=noninteractive dpkg -i "${debs[@]}"
+          fi
+
+      - name: Save nspawn host packages to cache
+        if: steps.nspawn-debs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/nspawn-debs
+          key: ${{ steps.nspawn-debs.outputs.cache-primary-key }}
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
@@ -235,13 +277,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # piqemu-action can only boot Bookworm (its DTB build is Bookworm-specific).
       - name: Prepare Raspberry Pi OS image
         id: image
         uses: ./.github/actions/prepare-image
         with:
-          version: ${{ env.RPI_IMAGE_VERSION }}
-          url: ${{ env.RPI_IMAGE_URL }}
-          sha256: ${{ env.RPI_IMAGE_SHA256 }}
+          version: bookworm
 
       - name: Copy repository into image
         env:
@@ -266,7 +307,7 @@ jobs:
           shell: bash
           run: |
             set -euo pipefail
-            bash ci/provision.sh /opt/rpi-setup
+            PROVISION_PROFILE=full bash ci/provision.sh /opt/rpi-setup
 
       # QEMU has no bind mount, so pull the guest's ci-logs back out of the
       # image after the VM has shut down.

@@ -7,8 +7,7 @@
 # Run: bash ci/test-task-network.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$ROOT/ci/test-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 declare -a TASKS=()
 . "$ROOT/tasks/network.sh"
@@ -72,8 +71,7 @@ assert_eq "nmcli arguments" \
 # --- stubs for nmcli and ip ----------------------------------------------------
 # NMCLI_SHOW is what "nmcli -g ... connection show" prints; NMCLI_LOG records
 # every other nmcli call.
-NMCLI_LOG="$(mktemp)"
-trap 'rm -f "$NMCLI_LOG"' EXIT
+NMCLI_LOG="$TMP/nmcli.log"
 NMCLI_SHOW=''
 NMCLI_RUNNING=running
 IP_ADDR='2: lo    inet 192.168.1.10/24 brd 192.168.1.255 scope global lo'

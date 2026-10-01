@@ -7,16 +7,11 @@
 # Run: bash ci/test-task-pihole.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 export RPI_SETUP_ROOT="$ROOT"
-. "$ROOT/ci/test-helpers.sh"
 . "$ROOT/lib/common.sh"
 TASKS=()
 . "$ROOT/tasks/pihole.sh"
-
-TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT
 
 # --- The installer: a warning, never a question --------------------------------
 assert_contains "the curl|bash warning is printed" 'curl ... | bash' "$(declare -f run_pihole)"
@@ -25,14 +20,8 @@ assert_eq "no question is asked" "" "$(grep -n 'read -r -p' "$ROOT/tasks/pihole.
 
 # --- PIHOLE_DOCKER: generated password saved before the container starts -----
 export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
-require_image_ref() { :; }
-container_require_64bit() { :; }
-container_require_docker() { :; }
+stub_container_helpers
 container_copy_once() { return 1; }
-container_pull() { :; }
-container_stop_native() { :; }
-container_state() { :; }
-port_owner() { return 1; }
 save_secret() { printf '%s=%s\n' "$2" "$3" >>"$TMP/saved"; }
 container_up() { echo "container_up saved=[$(cat "$TMP/saved" 2>/dev/null)]"; exit 1; }  # dies like a failed start
 
