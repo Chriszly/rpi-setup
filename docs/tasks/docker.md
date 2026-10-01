@@ -37,5 +37,7 @@ task only adds the Compose plugin.
   without `sudo`.
 - rpi-setup's containers live in `/opt/<task>/` (a `docker-compose.yml` plus
   a `data/` folder). `sudo bash update.sh` pulls new images and recreates the
-  containers that changed; re-running a task does not.
+  containers that changed; re-running a task does not. Switching a task back
+  to native (`<TASK>_DOCKER=no`) renames its file to
+  `docker-compose.yml.disabled`, so `update.sh` leaves it alone; the data stays.
 - Turn Docker off with `sudo systemctl disable --now docker docker.socket`.

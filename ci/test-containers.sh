@@ -83,6 +83,40 @@ else
     skip "native unit cases need root and systemd"
 fi
 
+# --- container_leave (docker mocked) ----------------------------------------------
+# The mock logs its calls; MOCK_PS is what "compose ps -aq" prints and
+# MOCK_DOWN_RC what "compose down" returns.
+leave_dir="$(container_dir leave)"
+docker() {
+    printf '%s\n' "$*" >>"$TMP/docker.log"
+    case "$1 ${4:-}" in
+        "compose ps") printf '%s' "${MOCK_PS:-}" ;;
+        "compose down") return "${MOCK_DOWN_RC:-0}" ;;
+    esac
+}
+install -d "$leave_dir/data"
+echo old >"$leave_dir/docker-compose.yml"
+: >"$TMP/docker.log"
+MOCK_PS=abc123 container_leave leave >/dev/null 2>&1
+assert_contains "leave takes the container down" "compose -f $leave_dir/docker-compose.yml down" "$(cat "$TMP/docker.log")"
+assert_fails "leave removes the live compose file" test -e "$leave_dir/docker-compose.yml"
+assert_eq "leave keeps it as docker-compose.yml.disabled" "old" "$(cat "$leave_dir/docker-compose.yml.disabled")"
+assert_ok "leave keeps the data" test -d "$leave_dir/data"
+assert_fails "task_in_container is false after leave" task_in_container leave
+: >"$TMP/docker.log"
+assert_ok "leave again (only .disabled left) is a no-op" container_leave leave
+assert_eq "leave again calls no docker" "" "$(cat "$TMP/docker.log")"
+echo new >"$leave_dir/docker-compose.yml"
+MOCK_PS=abc123 container_leave leave >/dev/null 2>&1
+assert_eq "leave after a re-enable replaces the old .disabled" "new" "$(cat "$leave_dir/docker-compose.yml.disabled")"
+echo kept >"$leave_dir/docker-compose.yml"
+MOCK_PS=abc123 MOCK_DOWN_RC=1 container_leave leave >/dev/null 2>&1
+assert_eq "leave keeps the compose file when down fails" "kept" "$(cat "$leave_dir/docker-compose.yml")"
+MOCK_PS='' container_leave leave >/dev/null 2>&1
+assert_fails "leave without a container still disables the compose file" test -e "$leave_dir/docker-compose.yml"
+unset -f docker
+rm -rf "$leave_dir" "$TMP/docker.log"
+
 # --- Docker: start, wait, roll back, leave ---------------------------------------
 # compose_project <task> <command...>: a compose project running alpine.
 compose_project() {
@@ -126,7 +160,8 @@ EOF
 
     container_leave up >/dev/null 2>&1
     assert_eq "container_leave takes the container down" "" "$(container_state rpi-setup-test-up)"
-    assert_ok "container_leave keeps the project folder" test -f "$up/docker-compose.yml"
+    assert_ok "container_leave disables the compose file" test -f "$up/docker-compose.yml.disabled"
+    assert_fails "container_leave leaves no live compose file" test -e "$up/docker-compose.yml"
     assert_ok "container_leave without a container is a no-op" container_leave up
     assert_ok "container_leave without a project is a no-op" container_leave never-set-up
 else

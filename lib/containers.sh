@@ -7,7 +7,8 @@
 # container is proven: the image is pulled first, the native units are then
 # stopped and recorded in /opt/<task>/.native-units, and if the container does
 # not stay up they are started again. Switching back (<TASK>_DOCKER=no) takes
-# the container down and starts the recorded units.
+# the container down, starts the recorded units and renames the compose file
+# to docker-compose.yml.disabled, so update.sh does not start it again.
 #
 # Loaded by the task files that use it (after lib/common.sh); safe to source
 # more than once.
@@ -193,15 +194,24 @@ container_fail() {
 }
 
 # Switching task $1 back to native: take its container down if there is one,
-# and start the native units it replaced. The data in /opt/<task> stays.
+# and start the native units it replaced. The data in /opt/<task> stays, but
+# the compose file is renamed to docker-compose.yml.disabled so that update.sh
+# and task_in_container no longer see a live project (update.sh would start the
+# container again next to the native service). <TASK>_DOCKER=yes writes a fresh
+# one. If "down" fails the file is kept, so the next run tries again.
+# Not called for netalertx and teamspeak, which always run in a container.
 container_leave() {
-  local task="$1" dir
+  local task="$1" dir file down=0
   dir="$(container_dir "$task")"
-  [[ -f "$dir/docker-compose.yml" ]] || return 0
-  command -v docker >/dev/null 2>&1 || return 0
-  if [[ -n "$(docker compose -f "$dir/docker-compose.yml" ps -aq 2>/dev/null)" ]]; then
-    info "Stopping the $task container (${task^^}_DOCKER is off); its data stays in $dir"
-    docker compose -f "$dir/docker-compose.yml" down >/dev/null 2>&1 || warn "Could not stop the $task container"
+  file="$dir/docker-compose.yml"
+  [[ -f "$file" ]] || return 0
+  if command -v docker >/dev/null 2>&1; then
+    if [[ -n "$(docker compose -f "$file" ps -aq 2>/dev/null)" ]]; then
+      info "Stopping the $task container (${task^^}_DOCKER is off); its data stays in $dir"
+      docker compose -f "$file" down >/dev/null 2>&1 || { warn "Could not stop the $task container"; down=1; }
+    fi
+    container_restore_native "$dir"
   fi
-  container_restore_native "$dir"
+  [[ $down -eq 0 ]] || return 0
+  mv -f "$file" "$file.disabled"
 }
