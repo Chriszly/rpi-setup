@@ -8,11 +8,11 @@ name: Container tasks
 #                                  answers, re-runs it and switches back
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   push:
     branches:
       - main
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   workflow_dispatch:
 
 permissions:
