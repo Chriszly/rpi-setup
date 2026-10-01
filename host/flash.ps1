@@ -19,6 +19,12 @@
 #   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'   # still asks "yes"
 #   .\host\flash.ps1 -Disk 2 -Force ...                          # unattended
 #   .\host\flash.ps1 -Image C:\dl\raspios.img.xz # use an image you already have
+#   .\host\flash.ps1 -Hostname homepi -WifiSsid 'My WiFi' -SshPublicKeyFile $HOME\.ssh\id_ed25519.pub
+#
+# The optional first-boot settings (hostname, Wi-Fi, SSH key) are written as
+# cloud-init files on Trixie images and as a one-time firstrun.sh on Bookworm.
+# They can also come from FLASH_* environment variables or the FLASH_* lines of
+# config\rpi-setup.env (nothing else in that file is read).
 #Requires -Version 5.1
 
 [CmdletBinding()]
@@ -43,7 +49,18 @@ param(
     [switch]$SkipImagerInstall,
     # Skip the "type 'yes' to DESTROY" confirmation. Only for unattended runs
     # together with -Disk; the wrong number wipes the wrong disk without asking.
-    [switch]$Force
+    [switch]$Force,
+    # First-boot settings (optional). Each falls back to the FLASH_* environment
+    # variable of the same meaning, then to config\rpi-setup.env.
+    # Host name, e.g. homepi (reachable as homepi.local).
+    [string]$Hostname,
+    # Wi-Fi network to join on first boot, and its password (prompted if omitted).
+    [string]$WifiSsid,
+    [string]$WifiPassword,
+    # Wi-Fi country code (regulatory domain). Default: DE
+    [string]$WifiCountry,
+    # SSH public key file to authorize for the user, e.g. $HOME\.ssh\id_ed25519.pub
+    [string]$SshPublicKeyFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -409,7 +426,7 @@ function Get-BootRoot {
 }
 
 function Add-FirstBootFiles {
-    param([int]$DiskNumber, [string]$UserName, [string]$Password)
+    param([int]$DiskNumber, [string]$UserName, [string]$Password, [hashtable]$Settings)
     Write-Step 'Enabling SSH and creating the login user for headless first boot'
     $root = Get-BootRoot $DiskNumber
     if (-not $root) { Fail 'Could not locate the boot partition after flashing.' }
@@ -420,8 +437,326 @@ function Add-FirstBootFiles {
     $userConf = Join-Path $root 'userconf.txt'
     [System.IO.File]::WriteAllText($userConf, "$UserName`:$hash`n")
 
+    if ($Settings) { Write-FirstBootSettings -Root $root -UserName $UserName -Settings $Settings }
+
     Write-Step "Wrote to $root : 'ssh' (empty) and 'userconf.txt' (user '$UserName')"
     Write-Info 'On first boot the Pi creates the account and deletes both files.'
+}
+
+# --- first-boot settings: hostname, Wi-Fi, SSH key ----------------------------
+# All optional. Each comes from its parameter, else the FLASH_* environment
+# variable, else the FLASH_* line of config\rpi-setup.env. With none set the
+# card gets exactly what it got before: 'ssh' and 'userconf.txt'.
+# Mirrors host/flash.sh; ci/test-task-flash.sh tests the bash version.
+$Script:FlashNames = @('FLASH_HOSTNAME', 'FLASH_WIFI_SSID', 'FLASH_WIFI_PASSWORD', 'FLASH_WIFI_COUNTRY', 'FLASH_SSH_PUBKEY_FILE')
+$Script:FlashKeyPattern = '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\s+AAAA[A-Za-z0-9+/]+={0,3}(\s.*)?$'
+# sshd drop-in that makes sshd also read /etc/ssh/authorized_keys/<user>; keys
+# there do not depend on when userconf.txt creates or renames the login user.
+$Script:FlashSshdConf = '/etc/ssh/sshd_config.d/10-rpi-setup-authorized-keys.conf'
+$Script:FlashSshdLine = 'AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 /etc/ssh/authorized_keys/%u'
+# Clears the Wi-Fi rfkill block Raspberry Pi OS Lite keeps until a country is set.
+$Script:FlashRfkillUnblock = 'rfkill unblock wifi; for f in /var/lib/systemd/rfkill/*:wlan; do [ -e "$f" ] && echo 0 >"$f"; done; true'
+
+# The value part of a KEY=value line, read like lib/common.sh config_value:
+# surrounding whitespace, a matching pair of quotes and a " # comment" go.
+function ConvertFrom-ConfigValue {
+    param([string]$Value)
+    $v = $Value.TrimStart()
+    $m = [regex]::Match($v, '^"([^"]*)"\s*(#.*)?$')
+    if (-not $m.Success) { $m = [regex]::Match($v, "^'([^']*)'\s*(#.*)?$") }
+    if ($m.Success) { return $m.Groups[1].Value }
+    return ([regex]::Replace($v, '\s#.*$', '')).TrimEnd()
+}
+
+# The FLASH_* values of the settings file $Path (only those lines are read).
+function Read-FlashConfig {
+    param([string]$Path)
+    $values = @{}
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $values }
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $m = [regex]::Match($line, '^\s*(export\s+)?(FLASH_[A-Z0-9_]*)=(.*)$')
+        if (-not $m.Success) { continue }
+        $key = $m.Groups[2].Value
+        if ($Script:FlashNames -notcontains $key) { Write-Warn "${Path}: ignoring unknown setting $key"; continue }
+        $values[$key] = ConvertFrom-ConfigValue $m.Groups[3].Value
+    }
+    return $values
+}
+
+# Merge parameters, environment and settings file (in that order of priority).
+function Get-FlashSettings {
+    param([hashtable]$Given, [hashtable]$FromFile)
+    $s = @{}
+    foreach ($name in $Script:FlashNames) {
+        $v = $Given[$name]
+        if (-not $v) { $v = [Environment]::GetEnvironmentVariable($name) }
+        if (-not $v -and $FromFile) { $v = $FromFile[$name] }
+        $s[$name] = [string]$v
+    }
+    $s['SSH_KEYS'] = @()
+    return $s
+}
+
+# True when any first-boot setting is requested (the country alone is not one).
+function Test-FirstBootWanted {
+    param([hashtable]$Settings)
+    return [bool]($Settings['FLASH_HOSTNAME'] -or $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_SSH_PUBKEY_FILE'])
+}
+
+# The OpenSSH public key lines of $Path; fails unless every non-comment line
+# is one key and there is at least one.
+function Read-PublicKeys {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Fail "SSH public key file not found: $Path" }
+    # .NET resolves relative paths against the process directory, not the
+    # PowerShell location, so resolve it first.
+    $lines = [System.IO.File]::ReadAllLines((Resolve-Path -LiteralPath $Path).ProviderPath)
+    if (($lines -join "`n") -match '-----BEGIN') { Fail "$Path is a private key. Pass the public key instead (the .pub file)." }
+    $keys = @()
+    foreach ($line in $lines) {
+        if ($line -match '^\s*(#|$)') { continue }
+        if ($line -cnotmatch $Script:FlashKeyPattern -or $line -match '[\x00-\x08\x0A-\x1F\x7F]') {
+            Fail "$Path does not look like an SSH public key (expected e.g. 'ssh-ed25519 AAAA... you@pc', as in id_ed25519.pub)."
+        }
+        $keys += $line
+    }
+    if ($keys.Count -eq 0) { Fail "$Path contains no SSH public key." }
+    return ,$keys
+}
+
+# Check the settings before anything is written. Upper-cases the country and
+# reads the key file into SSH_KEYS. Never prints the Wi-Fi password.
+function Assert-FlashSettings {
+    param([hashtable]$Settings)
+    $h = $Settings['FLASH_HOSTNAME']
+    if ($h -and ($h.Length -gt 63 -or $h -notmatch '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$')) {
+        Fail "Invalid hostname '$h'. Use 1-63 letters, digits and '-', not starting or ending with '-'."
+    }
+    $cc = $Settings['FLASH_WIFI_COUNTRY']
+    if (-not $cc) { $cc = 'DE' }
+    $cc = $cc.ToUpperInvariant()
+    if ($cc -cnotmatch '^[A-Z]{2}$') { Fail "Invalid Wi-Fi country '$cc'. Use a 2-letter code such as DE, AT, CH, GB or US." }
+    $Settings['FLASH_WIFI_COUNTRY'] = $cc
+    $ssid = $Settings['FLASH_WIFI_SSID']
+    $pass = $Settings['FLASH_WIFI_PASSWORD']
+    if ($ssid) {
+        if ([System.Text.Encoding]::UTF8.GetByteCount($ssid) -gt 32) { Fail 'Wi-Fi SSID is longer than 32 bytes.' }
+        if ($ssid -match '[\x00-\x1F\x7F]') { Fail 'Wi-Fi SSID must not contain control characters.' }
+        if ($pass -and $pass -notmatch '^[\x20-\x7E]{8,63}$' -and $pass -notmatch '^[0-9A-Fa-f]{64}$') {
+            Fail 'Wi-Fi password must be 8-63 printable ASCII characters (or a 64-digit hex key).'
+        }
+    } elseif ($pass) {
+        Fail 'A Wi-Fi password was given without an SSID. Set the SSID too (-WifiSsid or FLASH_WIFI_SSID).'
+    }
+    $Settings['SSH_KEYS'] = @()
+    if ($Settings['FLASH_SSH_PUBKEY_FILE']) { $Settings['SSH_KEYS'] = Read-PublicKeys $Settings['FLASH_SSH_PUBKEY_FILE'] }
+}
+
+# Ask for the Wi-Fi password when an SSID is set without one. An empty answer
+# means an open network.
+function Request-WifiPassword {
+    param([hashtable]$Settings)
+    if (-not $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_WIFI_PASSWORD']) { return }
+    $sec = Read-Host -AsSecureString "Wi-Fi password for '$($Settings['FLASH_WIFI_SSID'])' (hidden, empty for an open network)"
+    if ($sec -and $sec.Length -gt 0) {
+        $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+        $Settings['FLASH_WIFI_PASSWORD'] = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+        Assert-FlashSettings $Settings
+    } else {
+        Write-Warn "No Wi-Fi password: '$($Settings['FLASH_WIFI_SSID'])' is set up as an open network."
+    }
+}
+
+# Quote $Value as a YAML single-quoted scalar, where only ' needs escaping.
+function ConvertTo-YamlQuoted {
+    param([string]$Value)
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
+# Write $Lines to $Path with LF line endings and no BOM, as the Pi expects.
+function Write-UnixFile {
+    param([string]$Path, [string[]]$Lines)
+    $enc = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), $enc)
+}
+
+# First line of the boot partition's cmdline.txt, or $null if there is none.
+function Get-CmdlineText {
+    param([string]$Root)
+    $path = Join-Path $Root 'cmdline.txt'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    return ([System.IO.File]::ReadAllText($path) -split "`r?`n")[0]
+}
+
+# Set the Wi-Fi regulatory domain on the kernel command line, replacing an
+# earlier one, as Raspberry Pi Imager does.
+function Set-CmdlineRegdom {
+    param([string]$Root, [string]$Country)
+    $line = Get-CmdlineText $Root
+    if ($null -eq $line) { Write-Warn 'No cmdline.txt on the boot partition; the Wi-Fi country is only set in the network settings.'; return }
+    $line = [regex]::Replace($line, '\s*cfg80211\.ieee80211_regdom=\S*', '')
+    Write-UnixFile (Join-Path $Root 'cmdline.txt') @("$line cfg80211.ieee80211_regdom=$Country")
+}
+
+# cloud-init user-data (and network-config when Wi-Fi is set) for images
+# seeded from the boot partition (Trixie). No users: entry: the login user
+# still comes from userconf.txt.
+function Write-CloudInit {
+    param([string]$Root, [string]$UserName, [hashtable]$Settings)
+    $ud = @(
+        '#cloud-config',
+        '# Written by rpi-setup host/flash.ps1. The login user comes from userconf.txt',
+        '# and SSH is enabled by the empty "ssh" file, as without these settings.'
+    )
+    if ($Settings['FLASH_HOSTNAME']) {
+        $ud += "hostname: $(ConvertTo-YamlQuoted $Settings['FLASH_HOSTNAME'])"
+        $ud += 'manage_etc_hosts: true'
+    }
+    if ($Settings['SSH_KEYS'].Count -gt 0) {
+        $ud += 'write_files:'
+        $ud += "  - path: $Script:FlashSshdConf"
+        $ud += "    permissions: '0644'"
+        $ud += '    content: |'
+        $ud += "      $Script:FlashSshdLine"
+        $ud += "  - path: /etc/ssh/authorized_keys/$UserName"
+        $ud += "    permissions: '0644'"
+        $ud += '    content: |'
+        foreach ($k in $Settings['SSH_KEYS']) { $ud += "      $k" }
+    }
+    if ($Settings['FLASH_WIFI_SSID']) {
+        $ud += 'runcmd:'
+        $ud += "  - [sh, -c, $(ConvertTo-YamlQuoted $Script:FlashRfkillUnblock)]"
+    }
+    Write-UnixFile (Join-Path $Root 'user-data') $ud
+
+    if (-not $Settings['FLASH_WIFI_SSID']) { return }
+    $nc = @(
+        '# Written by rpi-setup host/flash.ps1.',
+        'network:',
+        '  version: 2',
+        '  renderer: NetworkManager',
+        '  ethernets:',
+        '    eth0:',
+        '      dhcp4: true',
+        '      optional: true',
+        '  wifis:',
+        '    wlan0:',
+        '      dhcp4: true',
+        '      optional: true',
+        "      regulatory-domain: $(ConvertTo-YamlQuoted $Settings['FLASH_WIFI_COUNTRY'])",
+        '      access-points:'
+    )
+    $ssid = ConvertTo-YamlQuoted $Settings['FLASH_WIFI_SSID']
+    if ($Settings['FLASH_WIFI_PASSWORD']) {
+        $nc += "        ${ssid}:"
+        $nc += "          password: $(ConvertTo-YamlQuoted $Settings['FLASH_WIFI_PASSWORD'])"
+    } else {
+        $nc += "        ${ssid}: {}"
+    }
+    Write-UnixFile (Join-Path $Root 'network-config') $nc
+}
+
+# One-time firstrun.sh started from cmdline.txt, for images without cloud-init
+# (Bookworm); the route Raspberry Pi Imager takes there. It removes itself and
+# its cmdline.txt entry, and the Pi reboots once.
+function Write-FirstRun {
+    param([string]$Root, [string]$UserName, [hashtable]$Settings)
+    $line = Get-CmdlineText $Root
+    if ($null -eq $line) { Fail 'No cmdline.txt on the boot partition; cannot start firstrun.sh.' }
+    $fr = @(
+        '#!/bin/bash',
+        '# Written by rpi-setup host/flash.ps1: one-time first-boot settings for images',
+        '# without cloud-init. Started from cmdline.txt; removes itself when done.',
+        'set +e',
+        'BOOT=/boot/firmware',
+        '[ -f "$BOOT/cmdline.txt" ] || BOOT=/boot'
+    )
+    if ($Settings['FLASH_HOSTNAME']) {
+        $fr += "NEW_HOSTNAME='$($Settings['FLASH_HOSTNAME'])'"
+        $fr += @(
+            'echo "$NEW_HOSTNAME" >/etc/hostname',
+            'if grep -q "^127\.0\.1\.1" /etc/hosts; then',
+            '  sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$NEW_HOSTNAME/" /etc/hosts',
+            'else',
+            '  printf "127.0.1.1\t%s\n" "$NEW_HOSTNAME" >>/etc/hosts',
+            'fi'
+        )
+    }
+    if ($Settings['SSH_KEYS'].Count -gt 0) {
+        $fr += 'install -d -m 0755 /etc/ssh/sshd_config.d /etc/ssh/authorized_keys'
+        $fr += "echo '$Script:FlashSshdLine' >$Script:FlashSshdConf"
+        $fr += "cat >/etc/ssh/authorized_keys/$UserName <<'RPI_SETUP_EOF'"
+        $fr += $Settings['SSH_KEYS']
+        $fr += 'RPI_SETUP_EOF'
+        $fr += "chmod 0644 $Script:FlashSshdConf /etc/ssh/authorized_keys/$UserName"
+    }
+    if ($Settings['FLASH_WIFI_SSID']) {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Settings['FLASH_WIFI_SSID'])
+        $ssidList = (($bytes | ForEach-Object { [string]$_ }) -join ';') + ';'
+        $fr += @(
+            'NM=/etc/NetworkManager/system-connections',
+            'install -d -m 0700 "$NM"',
+            'cat >"$NM/preconfigured.nmconnection" <<''RPI_SETUP_EOF''',
+            '[connection]',
+            'id=preconfigured',
+            "uuid=$([guid]::NewGuid().ToString())",
+            'type=wifi',
+            'autoconnect=true',
+            '',
+            '[wifi]',
+            'mode=infrastructure',
+            "ssid=$ssidList"
+        )
+        if ($Settings['FLASH_WIFI_PASSWORD']) {
+            # GLib key file escaping: backslash and spaces.
+            $psk = ($Settings['FLASH_WIFI_PASSWORD'] -replace '\\', '\\') -replace ' ', '\s'
+            $fr += @('', '[wifi-security]', 'key-mgmt=wpa-psk', "psk=$psk")
+        }
+        $fr += @(
+            '',
+            '[ipv4]',
+            'method=auto',
+            '',
+            '[ipv6]',
+            'method=auto',
+            'RPI_SETUP_EOF',
+            'chmod 0600 "$NM/preconfigured.nmconnection"',
+            $Script:FlashRfkillUnblock
+        )
+    }
+    $fr += @(
+        'rm -f "$BOOT/firstrun.sh"',
+        'sed -i "s| systemd.run.*||g" "$BOOT/cmdline.txt"',
+        'exit 0'
+    )
+    Write-UnixFile (Join-Path $Root 'firstrun.sh') $fr
+
+    $line = Get-CmdlineText $Root
+    if ($line -notmatch 'systemd\.run=') {
+        $line += ' systemd.run=/boot/firmware/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target'
+    }
+    Write-UnixFile (Join-Path $Root 'cmdline.txt') @($line)
+}
+
+# Write the requested first-boot settings into the boot partition at $Root.
+# Writes nothing when no setting is requested.
+function Write-FirstBootSettings {
+    param([string]$Root, [string]$UserName, [hashtable]$Settings)
+    if (-not (Test-FirstBootWanted $Settings)) { return }
+    if ($Settings['FLASH_WIFI_SSID']) { Set-CmdlineRegdom -Root $Root -Country $Settings['FLASH_WIFI_COUNTRY'] }
+    if ((Test-Path -LiteralPath (Join-Path $Root 'user-data')) -or (Test-Path -LiteralPath (Join-Path $Root 'meta-data'))) {
+        Write-CloudInit -Root $Root -UserName $UserName -Settings $Settings
+        $what = "'user-data'"
+        if ($Settings['FLASH_WIFI_SSID']) { $what += " and 'network-config'" }
+        Write-Step "Wrote cloud-init settings to $Root : $what"
+    } else {
+        Write-FirstRun -Root $Root -UserName $UserName -Settings $Settings
+        Write-Step "No cloud-init on this image (e.g. Bookworm): wrote 'firstrun.sh'; the Pi reboots once on first boot."
+    }
+    if ($Settings['FLASH_HOSTNAME']) { Write-Info "Hostname: $($Settings['FLASH_HOSTNAME'])" }
+    if ($Settings['FLASH_WIFI_SSID']) { Write-Info "Wi-Fi: '$($Settings['FLASH_WIFI_SSID'])' (country $($Settings['FLASH_WIFI_COUNTRY']))" }
+    if ($Settings['SSH_KEYS'].Count -gt 0) { Write-Info "SSH key(s) from $($Settings['FLASH_SSH_PUBKEY_FILE']) authorized for '$UserName'" }
 }
 
 # --- main -------------------------------------------------------------
@@ -432,6 +767,23 @@ try {
     }
 
     if (-not $DownloadDir) { $DownloadDir = Join-Path $PSScriptRoot 'downloads' }
+
+    # First-boot settings are checked before anything is downloaded or written.
+    $configDir = $env:RPI_SETUP_CONFIG_DIR
+    if (-not $configDir) { $configDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'config' }
+    $given = @{
+        FLASH_HOSTNAME        = $Hostname
+        FLASH_WIFI_SSID       = $WifiSsid
+        FLASH_WIFI_PASSWORD   = $WifiPassword
+        FLASH_WIFI_COUNTRY    = $WifiCountry
+        FLASH_SSH_PUBKEY_FILE = $SshPublicKeyFile
+    }
+    $firstBoot = Get-FlashSettings -Given $given -FromFile (Read-FlashConfig (Join-Path $configDir 'rpi-setup.env'))
+    if ($SkipCustomize -and (Test-FirstBootWanted $firstBoot)) {
+        Fail '-SkipCustomize cannot be combined with a hostname, Wi-Fi or SSH key setting.'
+    }
+    Assert-FlashSettings $firstBoot
+    Request-WifiPassword $firstBoot
 
     $imager = Find-Imager
     Write-Step "Using Raspberry Pi Imager: $imager"
@@ -456,14 +808,16 @@ try {
 
     if (-not $SkipCustomize) {
         $cred = Get-Credentials -UserName $UserName -Password $Password
-        Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass
+        Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass -Settings $firstBoot
     }
 
     Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
     if (-not $SkipCustomize) {
         Write-Host ''
         Write-Info 'After the Pi has booted (give it ~1-2 minutes on first boot), connect over SSH:'
-        Write-Host ("    ssh {0}@raspberrypi.local" -f $cred.User)
+        $piHost = $firstBoot['FLASH_HOSTNAME']
+        if (-not $piHost) { $piHost = 'raspberrypi' }
+        Write-Host ("    ssh {0}@{1}.local" -f $cred.User, $piHost)
         Write-Info 'Then on the Pi:'
         Write-Host '    git clone https://github.com/Chriszly/rpi-setup.git'
         Write-Host '    cd rpi-setup && sudo bash setup.sh'

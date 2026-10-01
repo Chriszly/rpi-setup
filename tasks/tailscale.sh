@@ -57,6 +57,14 @@ tailscale_options() {
   if [[ -n "${TAILSCALE_ADVERTISE_EXIT_NODE:-}" ]]; then
     if setting_on TAILSCALE_ADVERTISE_EXIT_NODE; then _ts_opts+=(--advertise-exit-node=true); else _ts_opts+=(--advertise-exit-node=false); fi
   fi
+  # A Pi running Pi-hole is the DNS server: taking the tailnet's DNS settings
+  # (MagicDNS, or a global nameserver pointing at this Pi) would make it
+  # resolve through itself. So "auto" (empty) turns it off when Pi-hole is here.
+  if [[ -n "${TAILSCALE_ACCEPT_DNS:-}" ]]; then
+    if setting_on TAILSCALE_ACCEPT_DNS; then _ts_opts+=(--accept-dns=true); else _ts_opts+=(--accept-dns=false); fi
+  elif tailscale_pihole_here; then
+    _ts_opts+=(--accept-dns=false)
+  fi
   if [[ -n "$routes" ]]; then
     routes="${routes// /}"
     for r in ${routes//,/ }; do
@@ -66,6 +74,9 @@ tailscale_options() {
     _ts_opts+=("--advertise-routes=$routes")
   fi
 }
+
+# True if Pi-hole is installed on this Pi.
+tailscale_pihole_here() { command -v pihole >/dev/null 2>&1; }
 
 # Subnet routes and exit nodes need IP forwarding.
 tailscale_forwarding() {
