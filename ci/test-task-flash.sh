@@ -229,6 +229,46 @@ chmod 600 "$TMP/cfg/rpi-setup.env"
 assert_ok "setup.sh's split_config accepts FLASH_* names" \
     env RPI_SETUP_CONFIG_DIR="$TMP/cfg" bash -c '. "$1/lib/common.sh"; split_config' _ "$ROOT"
 
+# --- fetch_image: download, cache and checksum ---------------------------------------
+# A file:// mirror stands in for downloads.raspberrypi.com; curl is wrapped
+# only to serve the release directory listing, which file:// cannot.
+REL=raspios_lite_arm64-2099-01-01
+IMG=2099-01-01-raspios-lite-arm64.img.xz
+MIRROR="$TMP/mirror/images/$REL"
+mkdir -p "$MIRROR"
+printf 'image bytes\n' >"$MIRROR/$IMG"
+printf '%s  %s\n' "$(sha256sum "$MIRROR/$IMG" | awk '{print $1}')" "$IMG" >"$MIRROR/$IMG.sha256"
+curl() {
+    if [[ "${*: -1}" == */ ]]; then printf '<a href="%s">%s</a>\n' "$IMG" "$IMG"; return 0; fi
+    command curl "$@"
+}
+fetch() { # fetch DIR  - run fetch_image with DOWNLOAD_DIR=DIR; stdout only
+    (DOWNLOAD_DIR="$1" BASE_URI="file://$TMP/mirror"; fetch_image "$REL") 2>"$TMP/fetch.err"
+}
+dl="$TMP/dl1"
+assert_eq "fetch_image prints only the image path" "$dl/$IMG" "$(fetch "$dl")"
+assert_eq "fetch_image downloads the image" "image bytes" "$(cat "$dl/$IMG")"
+assert_eq "no .part files are left behind" "" "$(find "$dl" -maxdepth 1 -name '*.part')"
+# Truncated image and checksum left by an interrupted run: replaced, not fatal.
+printf 'ima' >"$dl/$IMG"
+printf 'abc' >"$dl/$IMG.sha256"
+assert_eq "a truncated cached image is downloaded again" "$dl/$IMG" "$(fetch "$dl")"
+assert_contains "the re-download is explained" "failed the SHA-256 check" "$(cat "$TMP/fetch.err")"
+assert_eq "the image is complete after the re-download" "image bytes" "$(cat "$dl/$IMG")"
+assert_eq "the checksum file is fetched fresh" "$(cat "$MIRROR/$IMG.sha256")" "$(cat "$dl/$IMG.sha256")"
+assert_eq "a good cached image is reused" "$dl/$IMG" "$(fetch "$dl")"
+assert_contains "the cached image is reported" "Using cached image" "$(cat "$TMP/fetch.err")"
+# A download that does not match the checksum is deleted, so the next run starts over.
+printf 'corrupt\n' >"$MIRROR/$IMG"
+dl="$TMP/dl2"
+assert_fails "a checksum mismatch stops" fetch "$dl"
+assert_contains "the mismatch says to run again" "Run the script again" "$(cat "$TMP/fetch.err")"
+assert_eq "the mismatching image and checksum are deleted" "" "$(ls -A "$dl")"
+rm "$MIRROR/$IMG"
+assert_fails "a failed download stops" fetch "$dl"
+assert_eq "a failed download leaves no partial file" "$IMG.sha256" "$(ls -A "$dl")"
+unset -f curl fetch
+
 # --- CLI ---------------------------------------------------------------------------
 help="$(bash "$ROOT/host/flash.sh" -h 2>&1)"
 assert_contains "usage lists the hostname flag" "-n HOSTNAME" "$help"
@@ -238,6 +278,10 @@ if [[ $EUID -eq 0 ]]; then
     assert_contains "-k with a first-boot setting stops before any disk work" "cannot be combined" "$out"
     out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -n bad_name -d /dev/null 2>&1 || true)"
     assert_contains "an invalid hostname stops before any disk work" "Invalid hostname" "$out"
+    out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -u Bad -p longpassword -i "$TMP/none.img" -d /dev/null 2>&1 </dev/null || true)"
+    assert_contains "an invalid username stops before the image and the card" "Invalid username" "$out"
+    out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -u pi -i "$TMP/none.img" -d /dev/null 2>&1 </dev/null || true)"
+    assert_contains "a missing password stops before the image and the card" "Password required" "$out"
 else
     skip "CLI validation cases need root (flash.sh checks for root first)"
 fi

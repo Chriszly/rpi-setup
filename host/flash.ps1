@@ -233,8 +233,16 @@ function Get-ReleaseFiles {
 function Invoke-Download {
     param([string]$Url, [string]$OutFile)
     Write-Info "Downloading $([System.IO.Path]::GetFileName($OutFile))"
-    & curl.exe -L --fail --silent --show-error --output $OutFile $Url
-    if ($LASTEXITCODE -ne 0) { Fail "Download failed: $Url" }
+    # Download to a .part file and move it into place only when complete, so an
+    # interrupted transfer never leaves a file that looks finished.
+    $part = "$OutFile.part"
+    if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+    & curl.exe -L --fail --silent --show-error --output $part $Url
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+        Fail "Download failed: $Url. Check network connectivity and re-run."
+    }
+    Move-Item -LiteralPath $part -Destination $OutFile -Force
 }
 
 function Get-Image {
@@ -247,24 +255,32 @@ function Get-Image {
     $imgPath = Join-Path $Dir $files.Image
     $shaPath = Join-Path $Dir $files.Sha
 
-    if (-not (Test-Path -LiteralPath $imgPath)) {
-        Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath
-    } else {
-        Write-Info "Using cached image: $imgPath"
-    }
-    if (-not (Test-Path -LiteralPath $shaPath)) {
-        Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Sha)" -OutFile $shaPath
+    # The checksum file is tiny: fetch it fresh on every run, so a truncated or
+    # stale copy can never fail the check forever.
+    Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Sha)" -OutFile $shaPath
+    $expected = ((Get-Content -LiteralPath $shaPath -TotalCount 1) -split ' ')[0].Trim().ToLowerInvariant()
+    if ($expected -notmatch '^[0-9a-f]{64}$') {
+        Remove-Item -LiteralPath $shaPath -Force
+        Fail "$($files.Sha) is not a SHA-256 checksum file. Re-run later or use -Image."
     }
 
-    $expected = ((Get-Content -LiteralPath $shaPath -TotalCount 1) -split ' ')[0].Trim()
-    if (-not $expected) { Fail "Could not read the expected checksum from $shaPath" }
-
-    Write-Step "Verifying SHA-256 of $($files.Image)"
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $imgPath).Hash.ToLowerInvariant()
-    if ($actual -ne $expected.ToLowerInvariant()) {
-        Fail "SHA-256 mismatch for $imgPath`n  expected: $expected`n  actual:   $actual"
+    # A cached image that fails the check (e.g. left by an interrupted download
+    # of an older version of this script) is deleted and downloaded once more.
+    foreach ($cached in @($true, $false)) {
+        if ($cached) {
+            if (-not (Test-Path -LiteralPath $imgPath)) { continue }
+            Write-Info "Using cached image: $imgPath"
+        } else {
+            Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath
+        }
+        Write-Step "Verifying SHA-256 of $($files.Image)"
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $imgPath).Hash.ToLowerInvariant()
+        if ($actual -eq $expected) { return @{ Path = $imgPath; Hash = $expected } }
+        Remove-Item -LiteralPath $imgPath -Force
+        if ($cached) { Write-Warn 'Cached image failed the SHA-256 check (interrupted download?); deleted it, downloading again.' }
     }
-    return @{ Path = $imgPath; Hash = $expected.ToLowerInvariant() }
+    Remove-Item -LiteralPath $shaPath -Force
+    Fail "SHA-256 mismatch for $($files.Image) (deleted the download)`n  expected: $expected`n  actual:   $actual`nRe-run the script to download it afresh."
 }
 
 function Select-Disk {
@@ -426,16 +442,15 @@ function Get-BootRoot {
 }
 
 function Add-FirstBootFiles {
-    param([int]$DiskNumber, [string]$UserName, [string]$Password, [hashtable]$Settings)
+    param([int]$DiskNumber, [string]$UserName, [string]$PasswordHash, [hashtable]$Settings)
     Write-Step 'Enabling SSH and creating the login user for headless first boot'
     $root = Get-BootRoot $DiskNumber
     if (-not $root) { Fail 'Could not locate the boot partition after flashing.' }
 
     New-Item -ItemType File -Path (Join-Path $root 'ssh') -Force | Out-Null
 
-    $hash = New-CryptHash $Password
     $userConf = Join-Path $root 'userconf.txt'
-    [System.IO.File]::WriteAllText($userConf, "$UserName`:$hash`n")
+    [System.IO.File]::WriteAllText($userConf, "$UserName`:$PasswordHash`n")
 
     if ($Settings) { Write-FirstBootSettings -Root $root -UserName $UserName -Settings $Settings }
 
@@ -784,6 +799,12 @@ try {
     }
     Assert-FlashSettings $firstBoot
     Request-WifiPassword $firstBoot
+    # Ask for (and check) the login user before the card is wiped, so a typo
+    # cannot leave a freshly written card without 'ssh' and 'userconf.txt'.
+    if (-not $SkipCustomize) {
+        $cred = Get-Credentials -UserName $UserName -Password $Password
+        $passHash = New-CryptHash $cred.Pass
+    }
 
     $imager = Find-Imager
     Write-Step "Using Raspberry Pi Imager: $imager"
@@ -807,8 +828,7 @@ try {
     Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 
     if (-not $SkipCustomize) {
-        $cred = Get-Credentials -UserName $UserName -Password $Password
-        Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -Password $cred.Pass -Settings $firstBoot
+        Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -PasswordHash $passHash -Settings $firstBoot
     }
 
     Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
