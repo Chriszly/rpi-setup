@@ -1,13 +1,13 @@
 name: Virtual Testing Environment
 
-# Docs-only changes cannot affect provisioning, so they skip this workflow.
+# Docs-only and .claude/ (agent skill) changes cannot affect provisioning, so they skip this workflow.
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   push:
     branches:
       - main
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   workflow_dispatch:
 
 permissions:
