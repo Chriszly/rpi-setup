@@ -241,16 +241,27 @@ firewall_sshd_ports() {
   ss -H -ltnp 2>/dev/null | awk '/"sshd/ { n = split($4, a, ":"); print a[n] }' | sort -un | tr '\n' ' '
 }
 
-# Every web server port nginx listens on (from its enabled sites).
+# Every web server port nginx listens on (from its enabled sites, or the
+# site files of the web container).
 firewall_nginx_ports() {
+  local -a sites=(/etc/nginx/sites-enabled/*)
+  if task_in_container web; then sites=("${RPI_SETUP_CONTAINER_ROOT:-/opt}"/web/conf/*.conf); fi
   sed -nE 's/^[[:space:]]*listen[[:space:]]+([^;[:space:]]*:)?([0-9]+)([[:space:];]).*/\2/p' \
-    /etc/nginx/sites-enabled/* 2>/dev/null | sort -un
+    "${sites[@]}" 2>/dev/null | sort -un
+}
+
+# Run pihole-FTL with arguments "$@" where Pi-hole runs: in its container
+# (PIHOLE_DOCKER=yes) or on the host.
+firewall_ftl() {
+  if task_in_container pihole; then docker exec pihole pihole-FTL "$@"
+  else pihole-FTL "$@"
+  fi
 }
 
 # Ports of Pi-hole's web server, from "80o,443os,[::]:80o" style config.
 firewall_pihole_web_ports() {
   local cfg e
-  cfg="$(pihole-FTL --config webserver.port 2>/dev/null)" || return 0
+  cfg="$(firewall_ftl --config webserver.port 2>/dev/null)" || return 0
   for e in ${cfg//,/ }; do
     e="${e##*:}"
     e="${e%%[!0-9]*}"
@@ -263,26 +274,26 @@ firewall_pihole_web_ports() {
 # load_task_config, so call it in a subshell: $(firewall_service_ports).
 firewall_service_ports() {
   local p
-  if command -v pihole-FTL >/dev/null 2>&1 || command -v pihole >/dev/null 2>&1; then
+  if command -v pihole-FTL >/dev/null 2>&1 || command -v pihole >/dev/null 2>&1 || task_in_container pihole; then
     load_task_config pihole >/dev/null
     printf '53/tcp open pihole-dns\n53/udp open pihole-dns\n'
     p="$(firewall_pihole_web_ports)"
     [[ -n "$p" ]] || p="${PIHOLE_WEB_PORT:-80}"
     for p in $p; do printf '%s/tcp web pihole-web\n' "$p"; done
-    if [[ "$(pihole-FTL --config dhcp.active 2>/dev/null)" == true ]]; then
+    if [[ "$(firewall_ftl --config dhcp.active 2>/dev/null)" == true ]]; then
       printf '67/udp open pihole-dhcp\n'
-      if [[ "$(pihole-FTL --config dhcp.ipv6 2>/dev/null)" == true ]]; then
+      if [[ "$(firewall_ftl --config dhcp.ipv6 2>/dev/null)" == true ]]; then
         printf '547/udp open pihole-dhcpv6\n'
       fi
     fi
   fi
-  if apt_installed nginx; then
+  if apt_installed nginx || task_in_container web; then
     load_task_config web >/dev/null
     p="$(firewall_nginx_ports)"
     [[ -n "$p" ]] || p="${WEB_PORT:-80}"
     for p in $p; do printf '%s/tcp web nginx\n' "$p"; done
   fi
-  if apt_installed netdata; then
+  if apt_installed netdata || task_in_container monitoring netdata; then
     load_task_config monitoring >/dev/null
     : "${MONITORING_PORT:=19999}" "${MONITORING_BIND:=0.0.0.0}"
     require_port MONITORING_PORT
@@ -307,10 +318,10 @@ firewall_service_ports() {
     printf '%s/udp open teamspeak-voice\n%s/tcp open teamspeak-file\n' "$TEAMSPEAK_VOICE_PORT" "$TEAMSPEAK_FILE_PORT"
     if setting_on TEAMSPEAK_QUERY_HTTP; then printf '%s/tcp open teamspeak-query\n' "$TEAMSPEAK_QUERY_PORT"; fi
   fi
-  if apt_installed samba; then
+  if apt_installed samba || task_in_container samba; then
     printf '445/tcp open samba\n139/tcp open samba\n137/udp open samba-netbios\n138/udp open samba-netbios\n'
   fi
-  if command -v tailscale >/dev/null 2>&1; then
+  if command -v tailscale >/dev/null 2>&1 || task_in_container tailscale; then
     printf '41641/udp open tailscale-direct\n'
   fi
 }

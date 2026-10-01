@@ -46,6 +46,18 @@ else
 fi
 assert_eq "backup_run_shares reads the managed share's path" "home/pi/nas-share" \
     "$(backup_run_shares "$r/etc/samba/smb.conf")"
+install -d "$r/opt/samba" "$r/srv/container-share"
+printf 'services:\n  samba:\n    volumes:\n      - type: bind\n        source: /opt/samba/data\n        target: /data\n      - type: bind\n        source: /srv/container-share\n        target: /samba/share\n' \
+    >"$r/opt/samba/docker-compose.yml"
+assert_eq "backup_run_container_share reads the Samba container's share" "srv/container-share" \
+    "$(backup_run_container_share "$r/opt/samba/docker-compose.yml")"
+assert_contains "backup_run_paths adds the Samba container's share when asked" "srv/container-share" "$(paths yes)"
+if [[ "$(paths no)" == *container-share* ]]; then
+    fail "backup_run_paths leaves the container share out unless asked"
+else
+    pass "backup_run_paths leaves the container share out unless asked"
+fi
+rm -rf "$r/opt/samba" "$r/srv/container-share"
 assert_eq "backup_run_shares tolerates a missing smb.conf" "" "$(backup_run_shares "$tmp/nope.conf")"
 assert_eq "backup_run_paths on an empty system prints nothing" "" \
     "$(mkdir -p "$tmp/empty"; BK_ROOT="$tmp/empty" BK_INCLUDE_SHARE=no BK_CONFIG_DIRS=(); backup_run_paths)"
@@ -65,6 +77,8 @@ assert_eq "backup_run_prune keeps everything when under the limit" "4" "$(find "
 # --- backup_run (end to end in temp folders) ----------------------------------
 dest="$tmp/dest"
 printf 'SAMBA_PASSWORD=x\n' >"$r/var/lib/rpi-setup/secret.env"
+install -d "$r/opt/monitoring/config" "$r/opt/monitoring/cache"
+touch "$r/opt/monitoring/docker-compose.yml" "$r/opt/monitoring/config/netdata.conf" "$r/opt/monitoring/cache/metrics.db"
 out="$(BK_ROOT="$r" BK_DEST="$dest" BK_KEEP=2 BK_INCLUDE_SHARE=no BK_CONFIG_DIRS=(); backup_run 2>/dev/null)"
 assert_contains "backup_run prints the archive path" "$dest/rpi-setup-backup-" "$out"
 assert_eq "backup_run archive is private (0600)" "600" "$(stat -c %a "$out")"
@@ -72,6 +86,8 @@ assert_eq "backup_run destination is private (0700)" "700" "$(stat -c %a "$dest"
 listing="$(tar -tzf "$out")"
 assert_contains "archive holds rpi-setup state" "var/lib/rpi-setup/secret.env" "$listing"
 assert_contains "archive holds compose folders" "opt/teamspeak/docker-compose.yml" "$listing"
+assert_contains "archive holds the Netdata container's settings" "opt/monitoring/config/netdata.conf" "$listing"
+if [[ "$listing" == *metrics.db* ]]; then fail "archive must leave Netdata's metrics database out"; else pass "archive leaves Netdata's metrics database out"; fi
 if [[ "$listing" == *nas-share* ]]; then fail "archive must not hold the share by default"; else pass "archive leaves the share out by default"; fi
 # Destination inside the backed-up tree is never archived into itself.
 inner="$r/var/lib/rpi-setup/backups"

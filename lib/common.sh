@@ -166,6 +166,15 @@ compose_is_up() {
   [[ -n "$(docker ps -q --filter "name=^${name}\$" --filter status=running 2>/dev/null)" ]]
 }
 
+# True if task $1 runs in its own container (<TASK>_DOCKER=yes): it has a
+# compose file in /opt/<task> and Docker knows container $2 (default: $1).
+# Switching the task back to native removes the container, so this turns false.
+task_in_container() {
+  [[ -f "${RPI_SETUP_CONTAINER_ROOT:-/opt}/$1/docker-compose.yml" ]] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  docker inspect --type container "${2:-$1}" >/dev/null 2>&1
+}
+
 # Create $dir and $dir/data, with data owned (numerically) by $uid.
 ensure_container_dir() {
   local dir="$1" uid="$2"

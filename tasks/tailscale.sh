@@ -71,8 +71,8 @@ tailscale_options() {
   fi
 }
 
-# True if Pi-hole is installed on this Pi.
-tailscale_pihole_here() { command -v pihole >/dev/null 2>&1; }
+# True if Pi-hole is installed on this Pi, natively or in its container.
+tailscale_pihole_here() { command -v pihole >/dev/null 2>&1 || task_in_container pihole; }
 
 # Subnet routes and exit nodes need IP forwarding.
 tailscale_forwarding() {
