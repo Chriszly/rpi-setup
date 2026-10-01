@@ -144,6 +144,15 @@ for n in "${names[@]}"; do
     # Every setting the task file reads is listed, and every listed one is read.
     used="$(grep -oE "\\$\\{?${prefix}[A-Z0-9_]*" "$ROOT/tasks/$n.sh" | tr -d '${' | sort -u)"
     assert_eq "tasks/$n.sh reads exactly the settings in config/tasks/$n.env" "$tpl_names" "$used"
+    # Every task has a page that documents each of its settings, linked from the README.
+    doc="$ROOT/docs/tasks/$n.md"
+    if [[ ! -f "$doc" ]]; then
+        fail "task '$n' has no docs/tasks/$n.md"
+    else
+        assert_eq "docs/tasks/$n.md documents every setting in config/tasks/$n.env" "" \
+            "$(while read -r s; do [[ -z "$s" ]] || grep -qF "\`$s\`" "$doc" || echo "$s"; done <<<"$tpl_names")"
+    fi
+    assert_contains "README links docs/tasks/$n.md" "(docs/tasks/$n.md)" "$(cat "$ROOT/README.md")"
 done
 assert_eq "every name in the example belongs to a task" "$example_names" "$(grep -v '^$' <<<"$all_names" | sort)"
 
