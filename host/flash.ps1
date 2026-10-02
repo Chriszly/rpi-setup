@@ -439,14 +439,42 @@ function Add-FirstBootFiles {
     Write-Info 'On first boot the Pi creates the account and deletes both files.'
 }
 
-# Eject the card on disk $DiskNumber, as "Eject" in Explorer does: every volume
-# on it is flushed, locked, dismounted and its media ejected (the reader stays).
-# Returns $true when the card can be taken out; never fails the run.
+# Eject the card on disk $DiskNumber: every volume on it is flushed, locked,
+# dismounted and its media ejected (the reader stays). If that fails, the USB
+# device itself is ejected, as "Safely Remove Hardware" does (a card reader
+# then needs replugging). Returns $true when the card can be taken out; never
+# fails the run.
 $Script:EjectSource = @'
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 public static class RpiSetupEject {
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    static extern int CM_Locate_DevNodeW(out uint devInst, string deviceId, int flags);
+    [DllImport("cfgmgr32.dll")]
+    static extern int CM_Get_Parent(out uint parent, uint devInst, int flags);
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    static extern int CM_Request_Device_EjectW(uint devInst, out int vetoType, StringBuilder vetoName, int nameLength, int flags);
+    // Eject the device $instanceId (e.g. USBSTOR\DISK&...), else its parent
+    // (the USB device). Returns "" on success, else why it was refused.
+    public static string EjectDevice(string instanceId) {
+        uint dev;
+        int r = CM_Locate_DevNodeW(out dev, instanceId, 0);
+        if (r != 0) return "device not found (" + r + ")";
+        string why = "";
+        for (int i = 0; i < 3; i++) {
+            int veto;
+            StringBuilder name = new StringBuilder(400);
+            r = CM_Request_Device_EjectW(dev, out veto, name, name.Capacity, 0);
+            if (r == 0 && veto == 0) return "";
+            why = "refused (" + r + ", veto " + veto + (name.Length > 0 ? " by " + name : "") + ")";
+            uint parent;
+            if (CM_Get_Parent(out parent, dev, 0) != 0) break;
+            dev = parent;
+        }
+        return why;
+    }
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -460,7 +488,7 @@ public static class RpiSetupEject {
         using (SafeFileHandle h = CreateFile(@"\\.\" + letter + ":", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (h.IsInvalid) return "open failed (" + Marshal.GetLastWin32Error() + ")";
             bool locked = false;
-            for (int i = 0; i < 10 && !locked; i++) {
+            for (int i = 0; i < 20 && !locked; i++) {
                 locked = Ioctl(h, 0x00090018, null);                // FSCTL_LOCK_VOLUME
                 if (!locked) System.Threading.Thread.Sleep(500);
             }
@@ -478,14 +506,19 @@ function Dismount-Card {
     param([int]$DiskNumber)
     $letters = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
                  Where-Object DriveLetter | ForEach-Object { [char]$_.DriveLetter })
-    if ($letters.Count -eq 0) { return $true }    # nothing mounted: safe to remove
     try {
         if (-not ('RpiSetupEject' -as [type])) { Add-Type -TypeDefinition $Script:EjectSource -ErrorAction Stop }
+        $err = ''
         foreach ($l in $letters) {
             Write-VolumeCache -DriveLetter $l -ErrorAction SilentlyContinue
             $err = [RpiSetupEject]::Eject($l)
-            if ($err) { Write-Warn "Could not eject ${l}: $err. Eject the card in Explorer before removing it."; return $false }
+            if ($err) { Write-Info "Media eject of ${l}: $err; ejecting the USB device instead."; break }
         }
+        if ($letters.Count -gt 0 -and -not $err) { return $true }
+        $id = (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | Where-Object Index -eq $DiskNumber).PNPDeviceID
+        if (-not $id) { Write-Warn 'Could not find the card''s USB device. Eject it in Explorer before removing it.'; return $false }
+        $usbErr = [RpiSetupEject]::EjectDevice($id)
+        if ($usbErr) { Write-Warn "Could not eject the USB device: $usbErr. Eject it in Explorer before removing it."; return $false }
         return $true
     } catch {
         Write-Warn "Could not eject the card ($($_.Exception.Message)). Eject it in Explorer before removing it."

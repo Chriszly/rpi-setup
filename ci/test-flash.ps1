@@ -140,6 +140,7 @@ Assert-True ($source -match "Remove-Item -LiteralPath \`$firstBoot\['GITHUB_KEY'
 # --- Eject: the helper compiles, and main() ejects unless -NoEject
 Add-Type -TypeDefinition $Script:EjectSource
 Assert-True ([bool]('RpiSetupEject' -as [type])) 'the eject helper compiles'
+Assert-True ([RpiSetupEject]::EjectDevice('USBSTOR\NO&SUCH&DEVICE\0') -like 'device not found*') 'the USB eject reports a missing device instead of throwing'
 Assert-True ($source -match '-not \$NoEject -and \(Dismount-Card \$targetDisk\.Number\)') 'main() ejects the card at the end unless -NoEject'
 
 # --- New-CryptHash: the hash is of the password itself, without a CR or LF

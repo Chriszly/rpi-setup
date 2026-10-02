@@ -78,7 +78,8 @@ Then it installs Imager if needed, downloads and checks the image and writes
 the card without asking anything else. It also creates a new SSH key for the
 Pi to use with GitHub, without asking (`-GitHubKey no` turns it off), and
 prints its public key at the end to add on GitHub. When it is done it ejects
-the card, so you can take it out right away. A value passed as a switch, an
+the card (if the card cannot be ejected on its own, the whole USB device, as
+"Safely Remove Hardware" does), so you can take it out right away. A value passed as a switch, an
 environment variable or in `config\rpi-setup.env` is not asked for.
 
 Or pass everything up front:
