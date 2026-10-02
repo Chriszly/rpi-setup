@@ -308,5 +308,5 @@ firewall_docker_note() {
   [[ -n "$published" ]] || return 0
   warn 'Ports published by Docker containers bypass this firewall (Docker forwards them itself):'
   printf '  %s\n' "$published" >&2
-  warn 'Stop publishing a port in its docker-compose.yml to close it.'
+  warn 'To close or limit one, see "Ports of Docker containers" in docs/tasks/firewall.md.'
 }
