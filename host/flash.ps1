@@ -59,7 +59,8 @@ param(
     [string]$WifiCountry,
     # SSH public key file to authorize for the user, e.g. $HOME\.ssh\id_ed25519.pub
     [string]$SshPublicKeyFile,
-    # Create a new SSH key for the Pi to use with GitHub: yes or no (asked if omitted).
+    # Create a new SSH key for the Pi to use with GitHub: yes or no. Default when
+    # run at a console: yes, without asking.
     [string]$GitHubKey
 )
 
@@ -632,18 +633,16 @@ function Request-FlashSettings {
     if (-not $Settings['FLASH_SSH_PUBKEY_FILE']) {
         $default = Get-DefaultPublicKey
         if ($default) {
-            $k = (Read-Answer "SSH public key file to authorize ['none' for password login only] [$default]").Trim()
+            $k = (Read-Answer "Your PC's SSH public key, to log in to the Pi without a password ['none' to skip] [$default]").Trim()
             if (-not $k) { $k = $default } elseif ($k -eq 'none') { $k = '' }
         } else {
-            $k = (Read-Answer 'SSH public key file to authorize (empty for password login only)').Trim()
+            $k = (Read-Answer "Your PC's SSH public key file, to log in to the Pi without a password (empty to skip)").Trim()
         }
         if ($k -match '^~') { $k = $HOME + $k.Substring(1) }
         $Settings['FLASH_SSH_PUBKEY_FILE'] = $k
     }
-    if (-not $Settings['FLASH_GITHUB_KEY']) {
-        $a = (Read-Answer 'Create a new SSH key for the Pi to use with GitHub? [Y/n]').Trim()
-        if ($a -match '^(n|no)$') { $Settings['FLASH_GITHUB_KEY'] = 'no' } else { $Settings['FLASH_GITHUB_KEY'] = 'yes' }
-    }
+    # The Pi's own GitHub key is made without asking; -GitHubKey no turns it off.
+    if (-not $Settings['FLASH_GITHUB_KEY']) { $Settings['FLASH_GITHUB_KEY'] = 'yes' }
 }
 
 # Ask for the Wi-Fi password when an SSID is set without one. An empty answer

@@ -84,20 +84,20 @@ $defaultKey = 'C:\keys\id_ed25519.pub'
 function Get-DefaultPublicKey { $defaultKey }
 try {
     $s = @{ FLASH_HOSTNAME = ''; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
-    $script:answers = @('homepi', '', '', '')      # hostname, no Wi-Fi, default key, GitHub key (Enter = yes)
+    $script:answers = @('homepi', '', '')          # hostname, no Wi-Fi, default key
     Request-FlashSettings $s
     Assert-True ($s['FLASH_HOSTNAME'] -eq 'homepi') 'Request-FlashSettings takes the typed hostname'
     Assert-True (-not $s['FLASH_WIFI_SSID'] -and -not $s['FLASH_WIFI_COUNTRY']) 'Request-FlashSettings: empty Wi-Fi name means cable only, no country asked'
     Assert-True ($s['FLASH_SSH_PUBKEY_FILE'] -eq $defaultKey) 'Request-FlashSettings: Enter takes the key found in ~\.ssh'
-    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'yes') 'Request-FlashSettings: Enter creates a GitHub key'
+    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'yes') 'Request-FlashSettings creates a GitHub key without asking'
 
-    $s = @{ FLASH_HOSTNAME = 'given'; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
-    $script:answers = @('My WiFi', 'at', 'none', 'n')   # no hostname question: it was given
+    $s = @{ FLASH_HOSTNAME = 'given'; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = ''; FLASH_GITHUB_KEY = 'no' }
+    $script:answers = @('My WiFi', 'at', 'none')   # no hostname question: it was given
     Request-FlashSettings $s
     Assert-True ($s['FLASH_HOSTNAME'] -eq 'given') 'Request-FlashSettings does not ask for a value that was given'
     Assert-True ($s['FLASH_WIFI_SSID'] -eq 'My WiFi' -and $s['FLASH_WIFI_COUNTRY'] -eq 'at') 'Request-FlashSettings asks for the country after a Wi-Fi name'
     Assert-True (-not $s['FLASH_SSH_PUBKEY_FILE']) "Request-FlashSettings: 'none' means password login only"
-    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'no') "Request-FlashSettings: 'n' means no GitHub key"
+    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'no') 'Request-FlashSettings keeps -GitHubKey no'
 } finally {
     Remove-Item function:Read-Answer, function:Test-CanPrompt, function:Get-DefaultPublicKey -ErrorAction SilentlyContinue
 }

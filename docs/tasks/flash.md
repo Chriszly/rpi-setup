@@ -28,7 +28,7 @@ card is written with user and SSH only.
 | `FLASH_WIFI_PASSWORD` | `-w` | `-WifiPassword` | asked, hidden | Its password, 8-63 characters. |
 | `FLASH_WIFI_COUNTRY` | `-c` | `-WifiCountry` | `DE` | Wi-Fi country code (regulatory domain). |
 | `FLASH_SSH_PUBKEY_FILE` | `-a` | `-SshPublicKeyFile` | password login only | Your SSH **public** key, e.g. `~/.ssh/id_ed25519.pub`. |
-| `FLASH_GITHUB_KEY` | `-g` | `-GitHubKey` | asked (Enter = `yes`); `no` without a terminal | `yes` creates a new SSH key for the Pi to use with GitHub and prints its public key at the end, to add at github.com/settings/keys. |
+| `FLASH_GITHUB_KEY` | `-g` | `-GitHubKey` | `yes` (without asking); `no` without a terminal | `yes` creates a new SSH key for the Pi to use with GitHub and prints its public key at the end, to add at github.com/settings/keys. |
 
 The other options (disk, image, user, password, skipping the user setup) are
 flags only; see the guides.

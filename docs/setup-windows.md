@@ -65,19 +65,19 @@ default shown in brackets):
 1. Hostname for the Pi (default `raspberrypi`).
 2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
    it also asks for the Wi-Fi password (hidden) and country (default `DE`).
-3. SSH public key file to authorize (default: the key found in
-   `$HOME\.ssh`, `none` for password login only).
-4. Whether to create a new SSH key for the Pi to use with GitHub (default
-   yes; its public key is printed at the end, to add on GitHub).
-5. A username (1-32 lowercase letters, digits, `_` or `-`).
-6. A password (at least 8 characters, ASCII, no `:`, hidden).
-7. The target disk, from a numbered list of removable drives with model,
+3. Your PC's SSH public key, so you can log in to the Pi without a password
+   (default: the key found in `$HOME\.ssh`, `none` to skip).
+4. A username (1-32 lowercase letters, digits, `_` or `-`).
+5. A password (at least 8 characters, ASCII, no `:`, hidden).
+6. The target disk, from a numbered list of removable drives with model,
    size, bus and drive letters, e.g.
    `1) PhysicalDrive1  Generic MassStorageClass  119.2 GB  (USB)  D: SDCARD`.
-8. `yes` to confirm it will DESTROY all data on that disk.
+7. `yes` to confirm it will DESTROY all data on that disk.
 
 Then it installs Imager if needed, downloads and checks the image and writes
-the card without asking anything else. A value passed as a switch, an
+the card without asking anything else. It also creates a new SSH key for the
+Pi to use with GitHub, without asking (`-GitHubKey no` turns it off), and
+prints its public key at the end to add on GitHub. A value passed as a switch, an
 environment variable or in `config\rpi-setup.env` is not asked for.
 
 Or pass everything up front:
@@ -100,7 +100,7 @@ All switches:
 | `-WifiPassword`     | Its password (prompted, hidden, if omitted; empty = open network)   |
 | `-WifiCountry`      | Wi-Fi country code (regulatory domain); default `DE`                |
 | `-SshPublicKeyFile` | SSH public key to authorize for the user, e.g. `$HOME\.ssh\id_ed25519.pub` |
-| `-GitHubKey yes`/`no` | Create a new SSH key for the Pi to use with GitHub (asked if omitted) |
+| `-GitHubKey yes`/`no` | New SSH key for the Pi to use with GitHub, printed at the end (default `yes`) |
 
 ### Optional: host name, Wi-Fi and SSH key
 

@@ -67,17 +67,17 @@ default shown in brackets):
 1. Hostname for the Pi (default `raspberrypi`).
 2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
    it also asks for the Wi-Fi password (hidden) and country (default `DE`).
-3. SSH public key file to authorize (default: the key found in your
-   `~/.ssh`, `none` for password login only).
-4. Whether to create a new SSH key for the Pi to use with GitHub (default
-   yes; its public key is printed at the end, to add on GitHub).
-5. A username and password (same rules as on Windows).
-6. The target disk, from the listed candidates with size, model and bus (a
+3. Your PC's SSH public key, so you can log in to the Pi without a password
+   (default: the key found in your `~/.ssh`, `none` to skip).
+4. A username and password (same rules as on Windows).
+5. The target disk, from the listed candidates with size, model and bus (a
    number, or a full `/dev/node` such as `/dev/sda`).
-7. `yes` to confirm it will DESTROY all data on that disk.
+6. `yes` to confirm it will DESTROY all data on that disk.
 
 Then it downloads and checks the image and writes the card without asking
-anything else. A value passed as an option, an environment variable or in
+anything else. It also creates a new SSH key for the Pi to use with GitHub,
+without asking (`-g no` turns it off), and prints its public key at the end
+to add on GitHub. A value passed as an option, an environment variable or in
 `config/rpi-setup.env` is not asked for.
 
 Or pass everything up front:
@@ -100,7 +100,7 @@ All options:
 | `-w PASSWORD`     | Its password (prompted, hidden, if omitted; empty = open network) |
 | `-c COUNTRY`      | Wi-Fi country code (regulatory domain); default `DE`           |
 | `-a KEYFILE`      | SSH public key to authorize for the user, e.g. `~/.ssh/id_ed25519.pub` |
-| `-g yes`/`no`     | Create a new SSH key for the Pi to use with GitHub (asked if omitted) |
+| `-g yes`/`no`     | New SSH key for the Pi to use with GitHub, printed at the end (default `yes`) |
 
 ### Optional: host name, Wi-Fi and SSH key
 

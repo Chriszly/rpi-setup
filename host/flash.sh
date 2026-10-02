@@ -55,7 +55,7 @@ usage() {
   echo "  -w WIFI_PASSWORD  its password (prompted, hidden, if omitted)."
   echo "  -c COUNTRY        Wi-Fi country code (regulatory domain). Default: DE"
   echo "  -a PUBKEY_FILE    SSH public key to authorize for the user, e.g. ~/.ssh/id_ed25519.pub"
-  echo "  -g yes|no         create a new SSH key for the Pi to use with GitHub (printed at the end)."
+  echo "  -g yes|no         new SSH key for the Pi to use with GitHub, printed at the end (default: yes)."
   exit 0
 }
 
@@ -454,27 +454,21 @@ ask_flash_settings() {
   if [[ -z "${FLASH_SSH_PUBKEY_FILE:-}" ]]; then
     key="$(default_pubkey)"
     if [[ -n "$key" ]]; then
-      read -rp "SSH public key file to authorize ['none' for password login only] [$key]: " FLASH_SSH_PUBKEY_FILE || true
+      read -rp "Your PC's SSH public key, to log in to the Pi without a password ['none' to skip] [$key]: " FLASH_SSH_PUBKEY_FILE || true
       case "${FLASH_SSH_PUBKEY_FILE:-}" in
         '') FLASH_SSH_PUBKEY_FILE="$key" ;;
         none) FLASH_SSH_PUBKEY_FILE='' ;;
       esac
     else
-      read -rp 'SSH public key file to authorize (empty for password login only): ' FLASH_SSH_PUBKEY_FILE || true
+      read -rp "Your PC's SSH public key file, to log in to the Pi without a password (empty to skip): " FLASH_SSH_PUBKEY_FILE || true
     fi
     # shellcheck disable=SC2088  # a typed "~/" is expanded here on purpose
     if [[ "$FLASH_SSH_PUBKEY_FILE" == '~/'* ]]; then
       FLASH_SSH_PUBKEY_FILE="$(invoking_home)/${FLASH_SSH_PUBKEY_FILE#\~/}"
     fi
   fi
-  if [[ -z "${FLASH_GITHUB_KEY:-}" ]]; then
-    local answer=""
-    read -rp 'Create a new SSH key for the Pi to use with GitHub? [Y/n]: ' answer || true
-    case "$answer" in
-      [nN] | [nN][oO]) FLASH_GITHUB_KEY=no ;;
-      *) FLASH_GITHUB_KEY=yes ;;
-    esac
-  fi
+  # The Pi's own GitHub key is made without asking; -g no turns it off.
+  FLASH_GITHUB_KEY="${FLASH_GITHUB_KEY:-yes}"
 }
 
 # Ask for the Wi-Fi password when an SSID is set without one. An empty answer
