@@ -142,6 +142,18 @@ Add-Type -TypeDefinition $Script:EjectSource
 Assert-True ([bool]('RpiSetupEject' -as [type])) 'the eject helper compiles'
 Assert-True ($source -match '-not \$NoEject -and \(Dismount-Card \$targetDisk\.Number\)') 'main() ejects the card at the end unless -NoEject'
 
+# --- New-CryptHash: the hash is of the password itself, without a CR or LF
+$ssl = Find-OpenSsl
+if ($ssl) {
+    $h = New-CryptHash 'testpass1'
+    $salt = $h.Split('$')[2]
+    $plain = (& $ssl passwd -6 -salt $salt 'testpass1' | Out-String).Trim()
+    Assert-True ($h -ceq $plain) 'New-CryptHash hashes exactly the password (no byte order mark in front)'
+    Assert-True ((Invoke-OpenSslPasswd -OpenSsl $ssl -Password 'testpass1' -Salt $salt) -ceq $plain) 'Invoke-OpenSslPasswd with a salt matches openssl passwd'
+} else {
+    Write-Host '[SKIP] New-CryptHash needs openssl'
+}
+
 # --- Get-Credentials: the username check is case-sensitive, like flash.sh's
 # (Fail exits the process, so the check is asserted on the source).
 Assert-True ($source -match "\`$UserName -cnotmatch '\^\[a-z_\]") "Get-Credentials refuses upper-case user names (-cnotmatch)"

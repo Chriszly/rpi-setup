@@ -331,6 +331,37 @@ function Find-OpenSsl {
     return $null
 }
 
+# Run "openssl passwd -6 -stdin" ($Salt adds -salt) with exactly $Password on
+# stdin. Windows PowerShell feeds native programs through the console input
+# encoding, which on a UTF-8 system (codepage 65001) starts with a byte order
+# mark: "$Password | openssl ..." then hashed <BOM>password, a password no one
+# can type at the Pi's login or sudo prompt. So the bytes are written raw,
+# with the console input encoding set to UTF-8 without BOM meanwhile.
+function Invoke-OpenSslPasswd {
+    param([string]$OpenSsl, [string]$Password, [string]$Salt)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $OpenSsl
+    $psi.Arguments = 'passwd -6 -stdin'
+    if ($Salt) { $psi.Arguments = "passwd -6 -salt $Salt -stdin" }
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $savedEncoding = $null
+    try { $savedEncoding = [Console]::InputEncoding; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false } catch { $savedEncoding = $null }
+    try {
+        $p = [System.Diagnostics.Process]::Start($psi)
+    } finally {
+        if ($savedEncoding) { [Console]::InputEncoding = $savedEncoding }
+    }
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Password + "`n")
+    $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $p.StandardInput.Close()
+    $out = $p.StandardOutput.ReadToEnd().Trim()
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { return $null }
+    return $out
+}
+
 function New-CryptHash {
     param([string]$Password)
     $ssl = Find-OpenSsl
@@ -338,8 +369,8 @@ function New-CryptHash {
         Fail 'openssl not found. Install Git for Windows (ships openssl), or re-run with -SkipCustomize.'
     }
     # Let openssl generate the salt (full 16 characters, crypto-grade randomness).
-    $hash = ($Password | & $ssl passwd -6 -stdin | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $hash -notmatch '^\$6\$') { Fail 'openssl passwd failed to create the password hash.' }
+    $hash = Invoke-OpenSslPasswd -OpenSsl $ssl -Password $Password
+    if ($hash -notmatch '^\$6\$') { Fail 'openssl passwd failed to create the password hash.' }
     return $hash
 }
 
