@@ -338,6 +338,7 @@ reset_flash_vars
 help="$(bash "$ROOT/host/flash.sh" -h 2>&1)"
 assert_contains "usage lists the hostname flag" "-n HOSTNAME" "$help"
 assert_contains "usage lists the SSH key flag" "-a PUBKEY_FILE" "$help"
+assert_contains "usage lists the no-eject flag" "-E " "$help"
 if [[ $EUID -eq 0 ]]; then
     out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -k -n homepi -d /dev/null 2>&1 || true)"
     assert_contains "-k with a first-boot setting stops before any disk work" "cannot be combined" "$out"

@@ -18,7 +18,7 @@
 # every run (and downloaded again if it fails), so interrupted runs are safe.
 #
 # Example:
-#   sudo ./host/flash.sh                                # asks for everything, lists the disks
+#   sudo ./host/flash.sh                                # asks for everything, lists the disks, ejects the card
 #   sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
 #   sudo ./host/flash.sh -i /path/to/raspios.img.xz     # use an image you have
 #   sudo ./host/flash.sh -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub
@@ -37,9 +37,10 @@ USER=""
 PASS=""
 SKIP_CUSTOMIZE=0
 LIST_ONLY=0
+NO_EJECT=0
 
 usage() {
-  echo "Usage: $0 [-d DEVICE] [-i IMAGE] [-u USER] [-p PASS] [-k] [-l]"
+  echo "Usage: $0 [-d DEVICE] [-i IMAGE] [-u USER] [-p PASS] [-k] [-l] [-E]"
   echo "       [-n HOSTNAME] [-s WIFI_SSID] [-w WIFI_PASSWORD] [-c COUNTRY] [-a PUBKEY_FILE] [-g yes|no]"
   echo
   echo "  -d DEVICE   SD card device node (e.g. /dev/sda). Prompts if omitted."
@@ -48,6 +49,7 @@ usage() {
   echo "  -p PASS     password for that user (prompted if omitted, hidden)."
   echo "  -k          skip SSH/user setup; boot to the on-screen wizard."
   echo "  -l          list candidate disks and exit."
+  echo "  -E          leave the card in the reader instead of ejecting it at the end."
   echo
   echo "First-boot settings (optional; also FLASH_* variables or config/rpi-setup.env):"
   echo "  -n HOSTNAME       host name, e.g. homepi (reachable as homepi.local)."
@@ -195,6 +197,17 @@ pick_device() {
     [[ -n "$dev" ]] || die 'Invalid selection.'
   fi
   echo "$dev"
+}
+
+# Eject the card $1 so it can be taken out (partitions are already unmounted).
+# Returns 0 when it was ejected; never fails the run.
+eject_card() {
+  local dev="$1"
+  sync
+  if command -v eject >/dev/null 2>&1 && eject "$dev" 2>/dev/null; then return 0; fi
+  if command -v udisksctl >/dev/null 2>&1 && udisksctl power-off -b "$dev" >/dev/null 2>&1; then return 0; fi
+  warn "Could not eject $dev; run 'sudo eject $dev' before removing the card."
+  return 1
 }
 
 confirm_device() {
@@ -709,13 +722,14 @@ write_firstboot_config() {
 # --- main ---------------------------------------------------------------
 main() {
   local opt
-  while getopts "d:i:u:p:kln:s:w:c:a:g:h" opt; do
+  while getopts "d:i:u:p:klEn:s:w:c:a:g:h" opt; do
     case "$opt" in
       d) DEV="$OPTARG" ;;
       i) IMAGE="$OPTARG" ;;
       u) USER="$OPTARG" ;;
       p) PASS="$OPTARG" ;;
       k) SKIP_CUSTOMIZE=1 ;;
+      E) NO_EJECT=1 ;;
       l) LIST_ONLY=1 ;;
       n) FLASH_HOSTNAME="$OPTARG" ;;
       s) FLASH_WIFI_SSID="$OPTARG" ;;
@@ -808,7 +822,11 @@ main() {
   fi
 
   sync
-  say 'Done. Eject the SD card, insert it into the Pi, and power on.'
+  if [[ "$NO_EJECT" -eq 0 ]] && eject_card "$DEV"; then
+    say 'Done. The SD card is ejected: take it out, insert it into the Pi, and power on.'
+  else
+    say 'Done. Eject the SD card, insert it into the Pi, and power on.'
+  fi
   if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
     say 'After the Pi boots (1-2 minutes), connect over SSH:'
     echo "    ssh $USER@${FLASH_HOSTNAME:-raspberrypi}.local"

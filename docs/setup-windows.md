@@ -77,7 +77,8 @@ default shown in brackets):
 Then it installs Imager if needed, downloads and checks the image and writes
 the card without asking anything else. It also creates a new SSH key for the
 Pi to use with GitHub, without asking (`-GitHubKey no` turns it off), and
-prints its public key at the end to add on GitHub. A value passed as a switch, an
+prints its public key at the end to add on GitHub. When it is done it ejects
+the card, so you can take it out right away. A value passed as a switch, an
 environment variable or in `config\rpi-setup.env` is not asked for.
 
 Or pass everything up front:
@@ -95,6 +96,7 @@ All switches:
 | `-SkipImagerInstall`| Don't auto-install Raspberry Pi Imager; fail if it is missing       |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 | `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`) |
+| `-NoEject`          | Leave the card mounted at the end instead of ejecting it            |
 | `-Hostname`         | Host name, e.g. `homepi` (reachable as `homepi.local`)              |
 | `-WifiSsid`         | Wi-Fi network to join on first boot                                 |
 | `-WifiPassword`     | Its password (prompted, hidden, if omitted; empty = open network)   |

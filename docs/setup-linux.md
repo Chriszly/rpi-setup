@@ -77,7 +77,8 @@ default shown in brackets):
 Then it downloads and checks the image and writes the card without asking
 anything else. It also creates a new SSH key for the Pi to use with GitHub,
 without asking (`-g no` turns it off), and prints its public key at the end
-to add on GitHub. A value passed as an option, an environment variable or in
+to add on GitHub. When it is done it ejects the card (`eject`, else
+`udisksctl power-off`), so you can take it out right away. A value passed as an option, an environment variable or in
 `config/rpi-setup.env` is not asked for.
 
 Or pass everything up front:
@@ -95,6 +96,7 @@ All options:
 | `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
 | `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
 | `-l`              | List candidate disks and exit                                  |
+| `-E`              | Leave the card in the reader instead of ejecting it at the end |
 | `-n HOSTNAME`     | Host name, e.g. `homepi` (reachable as `homepi.local`)         |
 | `-s SSID`         | Wi-Fi network to join on first boot                            |
 | `-w PASSWORD`     | Its password (prompted, hidden, if omitted; empty = open network) |

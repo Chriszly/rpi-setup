@@ -17,7 +17,7 @@
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
-#   .\host\flash.ps1                              # asks for everything, lists the disks
+#   .\host\flash.ps1                              # asks for everything, lists the disks, ejects the card
 #   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'   # still asks "yes"
 #   .\host\flash.ps1 -Disk 2 -Force ...                          # unattended
 #   .\host\flash.ps1 -Image C:\dl\raspios.img.xz # use an image you already have
@@ -48,6 +48,8 @@ param(
     # Skip the "type 'yes' to DESTROY" confirmation. Only for unattended runs
     # together with -Disk; the wrong number wipes the wrong disk without asking.
     [switch]$Force,
+    # Leave the card mounted at the end instead of ejecting it.
+    [switch]$NoEject,
     # First-boot settings (optional). Each falls back to the FLASH_* environment
     # variable of the same meaning, then to config\rpi-setup.env.
     # Host name, e.g. homepi (reachable as homepi.local).
@@ -404,6 +406,60 @@ function Add-FirstBootFiles {
 
     Write-Step "Wrote to $root : 'ssh' (empty) and 'userconf.txt' (user '$UserName')"
     Write-Info 'On first boot the Pi creates the account and deletes both files.'
+}
+
+# Eject the card on disk $DiskNumber, as "Eject" in Explorer does: every volume
+# on it is flushed, locked, dismounted and its media ejected (the reader stays).
+# Returns $true when the card can be taken out; never fails the run.
+$Script:EjectSource = @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class RpiSetupEject {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle h, uint code, byte[] inBuf, int inSize, IntPtr outBuf, int outSize, out int returned, IntPtr overlapped);
+    static bool Ioctl(SafeFileHandle h, uint code, byte[] input) {
+        int returned;
+        return DeviceIoControl(h, code, input, input == null ? 0 : input.Length, IntPtr.Zero, 0, out returned, IntPtr.Zero);
+    }
+    // Returns "" on success, else the step that failed and the Win32 error.
+    public static string Eject(char letter) {
+        using (SafeFileHandle h = CreateFile(@"\\.\" + letter + ":", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+            if (h.IsInvalid) return "open failed (" + Marshal.GetLastWin32Error() + ")";
+            bool locked = false;
+            for (int i = 0; i < 10 && !locked; i++) {
+                locked = Ioctl(h, 0x00090018, null);                // FSCTL_LOCK_VOLUME
+                if (!locked) System.Threading.Thread.Sleep(500);
+            }
+            if (!locked) return "volume in use (" + Marshal.GetLastWin32Error() + ")";
+            if (!Ioctl(h, 0x00090020, null)) return "dismount failed (" + Marshal.GetLastWin32Error() + ")";   // FSCTL_DISMOUNT_VOLUME
+            Ioctl(h, 0x002D4804, new byte[] { 0 });                    // IOCTL_STORAGE_MEDIA_REMOVAL: allow
+            if (!Ioctl(h, 0x002D4808, null)) return "eject failed (" + Marshal.GetLastWin32Error() + ")";      // IOCTL_STORAGE_EJECT_MEDIA
+            return "";
+        }
+    }
+}
+'@
+
+function Dismount-Card {
+    param([int]$DiskNumber)
+    $letters = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
+                 Where-Object DriveLetter | ForEach-Object { [char]$_.DriveLetter })
+    if ($letters.Count -eq 0) { return $true }    # nothing mounted: safe to remove
+    try {
+        if (-not ('RpiSetupEject' -as [type])) { Add-Type -TypeDefinition $Script:EjectSource -ErrorAction Stop }
+        foreach ($l in $letters) {
+            Write-VolumeCache -DriveLetter $l -ErrorAction SilentlyContinue
+            $err = [RpiSetupEject]::Eject($l)
+            if ($err) { Write-Warn "Could not eject ${l}: $err. Eject the card in Explorer before removing it."; return $false }
+        }
+        return $true
+    } catch {
+        Write-Warn "Could not eject the card ($($_.Exception.Message)). Eject it in Explorer before removing it."
+        return $false
+    }
 }
 
 # --- first-boot settings: hostname, Wi-Fi, SSH key ----------------------------
@@ -956,7 +1012,11 @@ try {
         Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -PasswordHash $passHash -Settings $firstBoot
     }
 
-    Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
+    if (-not $NoEject -and (Dismount-Card $targetDisk.Number)) {
+        Write-Step 'Done. The SD card is ejected: take it out, insert it into the Pi, and power on.'
+    } else {
+        Write-Step 'Done. Safely eject the SD card, insert it into the Pi, and power on.'
+    }
     if (-not $SkipCustomize) {
         Write-Host ''
         Write-Info 'After the Pi has booted (give it ~1-2 minutes on first boot), connect over SSH:'
