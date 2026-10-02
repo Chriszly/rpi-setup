@@ -11,8 +11,10 @@ which the flash scripts write, or Bookworm).
    - Linux: `sudo ./host/flash.sh` ([guide](docs/setup-linux.md))
    - Windows, elevated PowerShell: `.\host\flash.ps1` ([guide](docs/setup-windows.md))
 
-   Optionally it also sets the host name, Wi-Fi and your SSH public key, so the
-   Pi comes up on your network without a screen or cable, e.g.
+   Started without options it asks for every value and lists the disks to
+   pick from. It can also set the host name, Wi-Fi and your SSH public key, so
+   the Pi comes up on your network without a screen or cable, and create a new
+   SSH key for the Pi to use with GitHub (printed at the end), e.g.
    `sudo ./host/flash.sh -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub`
    (Windows: `-Hostname`, `-WifiSsid`, `-SshPublicKeyFile`); see the guides.
 2. **Boot the Pi** with the card, wait 1-2 minutes, then

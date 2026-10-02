@@ -59,12 +59,28 @@ elevated PowerShell:
 .\host\flash.ps1
 ```
 
-It asks you to:
+Started without switches it asks for every value in turn (Enter keeps the
+default shown in brackets):
 
-1. Pick the target disk from the numbered list of removable drives.
-2. Type `yes` when asked to confirm it will DESTROY all data on that disk.
-3. Enter a username (1-32 lowercase letters, digits, `_` or `-`).
-4. Enter a password twice (at least 8 characters, ASCII, no `:`).
+1. Hostname for the Pi (default `raspberrypi`).
+2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
+   it also asks for the Wi-Fi password (hidden) and country (default `DE`).
+3. Your PC's SSH public key, so you can log in to the Pi without a password
+   (default: the key found in `$HOME\.ssh`, `none` to skip).
+4. A username (1-32 lowercase letters, digits, `_` or `-`).
+5. A password (at least 8 characters, ASCII, no `:`, hidden).
+6. The target disk, from a numbered list of removable drives with model,
+   size, bus and drive letters, e.g.
+   `1) PhysicalDrive1  Generic MassStorageClass  119.2 GB  (USB)  D: SDCARD`.
+7. `yes` to confirm it will DESTROY all data on that disk.
+
+Then it installs Imager if needed, downloads and checks the image and writes
+the card without asking anything else. It also creates a new SSH key for the
+Pi to use with GitHub, without asking (`-GitHubKey no` turns it off), and
+prints its public key at the end to add on GitHub. When it is done it ejects
+the card (if the card cannot be ejected on its own, the whole USB device, as
+"Safely Remove Hardware" does), so you can take it out right away. A value passed as a switch, an
+environment variable or in `config\rpi-setup.env` is not asked for.
 
 Or pass everything up front:
 
@@ -81,11 +97,13 @@ All switches:
 | `-SkipImagerInstall`| Don't auto-install Raspberry Pi Imager; fail if it is missing       |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
 | `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`) |
+| `-NoEject`          | Leave the card mounted at the end instead of ejecting it            |
 | `-Hostname`         | Host name, e.g. `homepi` (reachable as `homepi.local`)              |
 | `-WifiSsid`         | Wi-Fi network to join on first boot                                 |
 | `-WifiPassword`     | Its password (prompted, hidden, if omitted; empty = open network)   |
 | `-WifiCountry`      | Wi-Fi country code (regulatory domain); default `DE`                |
 | `-SshPublicKeyFile` | SSH public key to authorize for the user, e.g. `$HOME\.ssh\id_ed25519.pub` |
+| `-GitHubKey yes`/`no` | New SSH key for the Pi to use with GitHub, printed at the end (default `yes`) |
 
 ### Optional: host name, Wi-Fi and SSH key
 
@@ -99,7 +117,8 @@ ssh pi@homepi.local        # a few minutes later
 ```
 
 Instead of switches you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
-`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` as
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY`, `FLASH_SSH_PUBKEY_FILE` and
+`FLASH_GITHUB_KEY` as
 environment variables (`$env:FLASH_HOSTNAME = 'homepi'`) or in
 `config\rpi-setup.env` next to the scripts (see the `flash` section at the end
 of `config\rpi-setup.env.example`; only the `FLASH_*` lines are read).

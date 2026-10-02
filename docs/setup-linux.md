@@ -61,12 +61,25 @@ The script writes the card directly with `dd`. Run it with `sudo`:
 sudo ./host/flash.sh
 ```
 
-It asks you to:
+Started without options it asks for every value in turn (Enter keeps the
+default shown in brackets):
 
-1. Pick the target disk from the listed candidates (a number, or a full
-   `/dev/node` such as `/dev/sda`).
-2. Type `yes` when asked to confirm it will DESTROY all data on that disk.
-3. Enter a username and password (same rules as on Windows).
+1. Hostname for the Pi (default `raspberrypi`).
+2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
+   it also asks for the Wi-Fi password (hidden) and country (default `DE`).
+3. Your PC's SSH public key, so you can log in to the Pi without a password
+   (default: the key found in your `~/.ssh`, `none` to skip).
+4. A username and password (same rules as on Windows).
+5. The target disk, from the listed candidates with size, model and bus (a
+   number, or a full `/dev/node` such as `/dev/sda`).
+6. `yes` to confirm it will DESTROY all data on that disk.
+
+Then it downloads and checks the image and writes the card without asking
+anything else. It also creates a new SSH key for the Pi to use with GitHub,
+without asking (`-g no` turns it off), and prints its public key at the end
+to add on GitHub. When it is done it ejects the card (`eject`, else
+`udisksctl power-off`), so you can take it out right away. A value passed as an option, an environment variable or in
+`config/rpi-setup.env` is not asked for.
 
 Or pass everything up front:
 
@@ -83,11 +96,13 @@ All options:
 | `-u USER`, `-p PASS` | Username/password for the Pi user (prompted if omitted)     |
 | `-k`              | Skip SSH/user setup; boot to the on-screen first-run wizard    |
 | `-l`              | List candidate disks and exit                                  |
+| `-E`              | Leave the card in the reader instead of ejecting it at the end |
 | `-n HOSTNAME`     | Host name, e.g. `homepi` (reachable as `homepi.local`)         |
 | `-s SSID`         | Wi-Fi network to join on first boot                            |
 | `-w PASSWORD`     | Its password (prompted, hidden, if omitted; empty = open network) |
 | `-c COUNTRY`      | Wi-Fi country code (regulatory domain); default `DE`           |
 | `-a KEYFILE`      | SSH public key to authorize for the user, e.g. `~/.ssh/id_ed25519.pub` |
+| `-g yes`/`no`     | New SSH key for the Pi to use with GitHub, printed at the end (default `yes`) |
 
 ### Optional: host name, Wi-Fi and SSH key
 
@@ -100,7 +115,8 @@ ssh pi@homepi.local        # a few minutes later
 ```
 
 Instead of flags you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
-`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` in the
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY`, `FLASH_SSH_PUBKEY_FILE` and
+`FLASH_GITHUB_KEY` in the
 environment (`sudo FLASH_HOSTNAME=homepi ./host/flash.sh`, since `sudo` drops
 other variables) or in `config/rpi-setup.env` next to the scripts (see the
 `flash` section at the end of `config/rpi-setup.env.example`; only the
