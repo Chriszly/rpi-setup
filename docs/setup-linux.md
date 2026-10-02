@@ -61,12 +61,22 @@ The script writes the card directly with `dd`. Run it with `sudo`:
 sudo ./host/flash.sh
 ```
 
-It asks you to:
+Started without options it asks for every value in turn (Enter keeps the
+default shown in brackets):
 
-1. Pick the target disk from the listed candidates (a number, or a full
-   `/dev/node` such as `/dev/sda`).
-2. Type `yes` when asked to confirm it will DESTROY all data on that disk.
-3. Enter a username and password (same rules as on Windows).
+1. Hostname for the Pi (default `raspberrypi`).
+2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
+   it also asks for the Wi-Fi password (hidden) and country (default `DE`).
+3. SSH public key file to authorize (default: the key found in your
+   `~/.ssh`, `none` for password login only).
+4. A username and password (same rules as on Windows).
+5. The target disk, from the listed candidates with size, model and bus (a
+   number, or a full `/dev/node` such as `/dev/sda`).
+6. `yes` to confirm it will DESTROY all data on that disk.
+
+Then it downloads and checks the image and writes the card without asking
+anything else. A value passed as an option, an environment variable or in
+`config/rpi-setup.env` is not asked for.
 
 Or pass everything up front:
 

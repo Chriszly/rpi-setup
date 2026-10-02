@@ -266,6 +266,30 @@ assert_fails "a failed download stops" fetch "$dl"
 assert_eq "a failed download leaves no partial file" "$IMG.sha256" "$(ls -A "$dl")"
 unset -f curl fetch
 
+# --- ask_flash_settings: asks only for what was not given ---------------------------
+saved_helpers="$(declare -f can_prompt default_pubkey invoking_home)"
+can_prompt() { return 0; }
+default_pubkey() { echo /home/alice/.ssh/id_ed25519.pub; }
+invoking_home() { echo /home/alice; }
+reset_flash_vars
+ask_flash_settings <<<$'homepi\n\n' >/dev/null 2>&1   # hostname, no Wi-Fi, default key
+assert_eq "ask_flash_settings takes the typed hostname" "homepi" "$FLASH_HOSTNAME"
+assert_eq "ask_flash_settings: empty Wi-Fi name means cable only" "" "$FLASH_WIFI_SSID"
+assert_eq "ask_flash_settings: no country asked without Wi-Fi" "" "${FLASH_WIFI_COUNTRY:-}"
+assert_eq "ask_flash_settings: Enter takes the key found in ~/.ssh" "/home/alice/.ssh/id_ed25519.pub" "$FLASH_SSH_PUBKEY_FILE"
+reset_flash_vars
+FLASH_HOSTNAME=given
+ask_flash_settings <<<$'My WiFi\nat\nnone\n' >/dev/null 2>&1   # no hostname question: it was given
+assert_eq "ask_flash_settings does not ask for a value that was given" "given" "$FLASH_HOSTNAME"
+assert_eq "ask_flash_settings asks for the Wi-Fi name" "My WiFi" "$FLASH_WIFI_SSID"
+assert_eq "ask_flash_settings asks for the country after a Wi-Fi name" "at" "$FLASH_WIFI_COUNTRY"
+assert_eq "ask_flash_settings: 'none' means password login only" "" "$FLASH_SSH_PUBKEY_FILE"
+reset_flash_vars
+ask_flash_settings <<<$'\n\n~/keys/pi.pub\n' >/dev/null 2>&1
+assert_eq "ask_flash_settings expands a typed ~/ to the invoking user's home" "/home/alice/keys/pi.pub" "$FLASH_SSH_PUBKEY_FILE"
+reset_flash_vars
+eval "$saved_helpers"   # restore the real helpers
+
 # --- CLI ---------------------------------------------------------------------------
 help="$(bash "$ROOT/host/flash.sh" -h 2>&1)"
 assert_contains "usage lists the hostname flag" "-n HOSTNAME" "$help"

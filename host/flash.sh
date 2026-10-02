@@ -16,7 +16,7 @@
 # every run (and downloaded again if it fails), so interrupted runs are safe.
 #
 # Example:
-#   sudo ./host/flash.sh                                # interactive
+#   sudo ./host/flash.sh                                # asks for everything, lists the disks
 #   sudo ./host/flash.sh -d /dev/sda -u pi -p 'change-me'
 #   sudo ./host/flash.sh -i /path/to/raspios.img.xz     # use an image you have
 #   sudo ./host/flash.sh -n homepi -s 'My WiFi' -a ~/.ssh/id_ed25519.pub
@@ -71,7 +71,7 @@ disk_size_gb() {
 }
 
 list_candidates() {
-  local b removable
+  local b removable model bus
   for sys in /sys/class/block/*; do
     b="${sys##*/}"
     case "$b" in
@@ -79,9 +79,16 @@ list_candidates() {
     esac
     [[ -e "/sys/class/block/$b/partition" ]] && continue   # partitions, not whole disks
     removable="$(cat "/sys/class/block/$b/removable" 2>/dev/null || echo 0)"
+    model="$(tr -s ' ' 2>/dev/null <"/sys/class/block/$b/device/model" | sed 's/ *$//' || true)"
+    case "$(readlink -f "$sys")" in
+      */usb*) bus=USB ;;
+      */mmc*) bus=SD ;;
+      */nvme*) bus=NVMe ;;
+      *) bus=other ;;
+    esac
     case "$b" in
       sd[a-z] | mmcblk* | nvme* | vd* | xvd*)
-        printf '/dev/%s\t%6s GB\tremovable=%s\n' "$b" "$(disk_size_gb "$b")" "$removable" ;;
+        printf '/dev/%s\t%6s GB\t%s\t(%s)\tremovable=%s\n' "$b" "$(disk_size_gb "$b")" "${model:-unknown model}" "$bus" "$removable" ;;
     esac
   done
 }
@@ -319,6 +326,57 @@ validate_flash_options() {
   fi
 }
 
+# Home directory of the user who ran sudo (root's home is not where the keys are).
+invoking_home() {
+  local home
+  home="$(getent passwd "$(real_user)" 2>/dev/null | cut -d: -f6)"
+  echo "${home:-$HOME}"
+}
+
+# The first SSH public key in the invoking user's ~/.ssh, or nothing.
+default_pubkey() {
+  local home name
+  home="$(invoking_home)"
+  for name in id_ed25519.pub id_ecdsa.pub id_rsa.pub; do
+    if [[ -f "$home/.ssh/$name" ]]; then echo "$home/.ssh/$name"; return 0; fi
+  done
+}
+
+# Ask for each first-boot setting that no flag, environment variable or
+# settings file gave. Enter keeps the default in brackets. Without a terminal
+# to ask on nothing is asked.
+can_prompt() { [[ -t 0 ]]; }
+
+ask_flash_settings() {
+  can_prompt || return 0
+  local key
+  if [[ -z "${FLASH_HOSTNAME:-}" ]]; then
+    read -rp 'Hostname for the Pi [raspberrypi]: ' FLASH_HOSTNAME || true
+  fi
+  if [[ -z "${FLASH_WIFI_SSID:-}" ]]; then
+    read -rp 'Wi-Fi network name (empty for a network cable only): ' FLASH_WIFI_SSID || true
+  fi
+  if [[ -n "${FLASH_WIFI_SSID:-}" && -z "${FLASH_WIFI_COUNTRY:-}" ]]; then
+    read -rp 'Wi-Fi country code [DE]: ' FLASH_WIFI_COUNTRY || true
+  fi
+  if [[ -z "${FLASH_SSH_PUBKEY_FILE:-}" ]]; then
+    key="$(default_pubkey)"
+    if [[ -n "$key" ]]; then
+      read -rp "SSH public key file to authorize ['none' for password login only] [$key]: " FLASH_SSH_PUBKEY_FILE || true
+      case "${FLASH_SSH_PUBKEY_FILE:-}" in
+        '') FLASH_SSH_PUBKEY_FILE="$key" ;;
+        none) FLASH_SSH_PUBKEY_FILE='' ;;
+      esac
+    else
+      read -rp 'SSH public key file to authorize (empty for password login only): ' FLASH_SSH_PUBKEY_FILE || true
+    fi
+    # shellcheck disable=SC2088  # a typed "~/" is expanded here on purpose
+    if [[ "$FLASH_SSH_PUBKEY_FILE" == '~/'* ]]; then
+      FLASH_SSH_PUBKEY_FILE="$(invoking_home)/${FLASH_SSH_PUBKEY_FILE#\~/}"
+    fi
+  fi
+}
+
 # Ask for the Wi-Fi password when an SSID is set without one. An empty answer
 # (or no terminal to ask on) means an open network.
 ask_wifi_password() {
@@ -546,6 +604,7 @@ main() {
   if [[ "$SKIP_CUSTOMIZE" -eq 1 ]] && want_firstboot; then
     die '-k (skip customization) cannot be combined with a hostname, Wi-Fi or SSH key setting.'
   fi
+  [[ "$SKIP_CUSTOMIZE" -eq 1 ]] || ask_flash_settings
   validate_flash_options
   ask_wifi_password
   # Ask for (and check) the login user before the card is wiped, so a typo
@@ -556,6 +615,13 @@ main() {
     pass_hash="$(generate_hash "$PASS")"
   fi
 
+  # Pick the card last among the questions, so the slow part (download,
+  # write) runs without anyone having to wait at the keyboard.
+  if [[ -z "$DEV" ]]; then
+    DEV="$(pick_device)"
+  fi
+  confirm_device "$DEV"
+
   if [[ -n "$IMAGE" ]]; then
     [[ -f "$IMAGE" ]] || die "Image not found: $IMAGE"
     say "Using image: $IMAGE"
@@ -564,11 +630,6 @@ main() {
     release="$(latest_release)"
     img_path="$(fetch_image "$release")"
   fi
-
-  if [[ -z "$DEV" ]]; then
-    DEV="$(pick_device)"
-  fi
-  confirm_device "$DEV"
 
   info 'Zeroing the start of the disk so partprobe reliably sees the new table'
   dd if=/dev/zero of="$DEV" bs=1M count=8 status=none || true

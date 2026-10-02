@@ -14,7 +14,7 @@
 # Run in an elevated PowerShell. See README.md for the full workflow.
 #
 # Examples:
-#   .\host\flash.ps1                              # interactive
+#   .\host\flash.ps1                              # asks for everything, lists the disks
 #   .\host\flash.ps1 -Disk 2 -UserName pi -Password 'changeme'   # still asks "yes"
 #   .\host\flash.ps1 -Disk 2 -Force ...                          # unattended
 #   .\host\flash.ps1 -Image C:\dl\raspios.img.xz # use an image you already have
@@ -223,6 +223,18 @@ function Get-Image {
     Fail "SHA-256 mismatch for $($files.Image) (deleted the download)`n  expected: $expected`n  actual:   $actual`nRe-run the script to download it afresh."
 }
 
+# The drive letters and labels on disk $Number, e.g. "  D: SDCARD", to help
+# recognise the card in the list; empty when it has none.
+function Get-DiskVolumeText {
+    param([int]$Number)
+    $names = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object {
+        $label = (Get-Volume -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue).FileSystemLabel
+        ("{0}: {1}" -f $_.DriveLetter, $label).Trim()
+    })
+    if ($names.Count -eq 0) { return '' }
+    return '  ' + ($names -join ', ')
+}
+
 function Select-Disk {
     param([int]$Requested)
 
@@ -250,7 +262,7 @@ function Select-Disk {
     $i = 1
     foreach ($d in $disks) {
         $sizeGb = [math]::Round($d.Size / 1GB, 1)
-        Write-Host ("  {0}) PhysicalDrive{1}  {2,-24} {3,6} GB  ({4})" -f $i, $d.Number, $d.FriendlyName, $sizeGb, $d.BusType)
+        Write-Host ("  {0}) PhysicalDrive{1}  {2,-24} {3,6} GB  ({4}){5}" -f $i, $d.Number, $d.FriendlyName, $sizeGb, $d.BusType, (Get-DiskVolumeText $d.Number))
         $i++
     }
     $sel = Read-Host "Select disk to overwrite (1-$($disks.Count))"
@@ -492,6 +504,48 @@ function Assert-FlashSettings {
     if ($Settings['FLASH_SSH_PUBKEY_FILE']) { $Settings['SSH_KEYS'] = Read-PublicKeys $Settings['FLASH_SSH_PUBKEY_FILE'] }
 }
 
+# The first SSH public key in $HOME\.ssh, or $null.
+function Get-DefaultPublicKey {
+    foreach ($name in @('id_ed25519.pub', 'id_ecdsa.pub', 'id_rsa.pub')) {
+        $p = Join-Path (Join-Path $HOME '.ssh') $name
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    }
+    return $null
+}
+
+# Ask for each first-boot setting that no parameter, environment variable or
+# settings file gave. Enter keeps the default in brackets. Without a console to
+# ask on (input redirected) nothing is asked.
+function Test-CanPrompt { return -not [Console]::IsInputRedirected }
+
+# One answer from the console (a seam the tests replace).
+function Read-Answer { param([string]$Prompt) return Read-Host $Prompt }
+
+function Request-FlashSettings {
+    param([hashtable]$Settings)
+    if (-not (Test-CanPrompt)) { return }
+    if (-not $Settings['FLASH_HOSTNAME']) {
+        $Settings['FLASH_HOSTNAME'] = (Read-Answer 'Hostname for the Pi [raspberrypi]').Trim()
+    }
+    if (-not $Settings['FLASH_WIFI_SSID']) {
+        $Settings['FLASH_WIFI_SSID'] = Read-Answer 'Wi-Fi network name (empty for a network cable only)'
+    }
+    if ($Settings['FLASH_WIFI_SSID'] -and -not $Settings['FLASH_WIFI_COUNTRY']) {
+        $Settings['FLASH_WIFI_COUNTRY'] = (Read-Answer 'Wi-Fi country code [DE]').Trim()
+    }
+    if (-not $Settings['FLASH_SSH_PUBKEY_FILE']) {
+        $default = Get-DefaultPublicKey
+        if ($default) {
+            $k = (Read-Answer "SSH public key file to authorize ['none' for password login only] [$default]").Trim()
+            if (-not $k) { $k = $default } elseif ($k -eq 'none') { $k = '' }
+        } else {
+            $k = (Read-Answer 'SSH public key file to authorize (empty for password login only)').Trim()
+        }
+        if ($k -match '^~') { $k = $HOME + $k.Substring(1) }
+        $Settings['FLASH_SSH_PUBKEY_FILE'] = $k
+    }
+}
+
 # Ask for the Wi-Fi password when an SSID is set without one. An empty answer
 # means an open network.
 function Request-WifiPassword {
@@ -717,6 +771,7 @@ try {
     if ($SkipCustomize -and (Test-FirstBootWanted $firstBoot)) {
         Fail '-SkipCustomize cannot be combined with a hostname, Wi-Fi or SSH key setting.'
     }
+    if (-not $SkipCustomize) { Request-FlashSettings $firstBoot }
     Assert-FlashSettings $firstBoot
     Request-WifiPassword $firstBoot
     # Ask for (and check) the login user before the card is wiped, so a typo
@@ -725,6 +780,10 @@ try {
         $cred = Get-Credentials -UserName $UserName -Password $Password
         $passHash = New-CryptHash $cred.Pass
     }
+
+    # Pick the card last among the questions, so the slow part (Imager,
+    # download, write) runs without anyone having to wait at the keyboard.
+    $targetDisk = Select-Disk $Disk
 
     $imager = Find-Imager
     Write-Step "Using Raspberry Pi Imager: $imager"
@@ -736,8 +795,6 @@ try {
     } else {
         $img = Get-Image $DownloadDir
     }
-
-    $targetDisk = Select-Disk $Disk
 
     Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
 

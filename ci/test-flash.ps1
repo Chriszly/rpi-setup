@@ -73,6 +73,33 @@ Assert-True ($flashBody -notmatch '&\s*\$(Imager|exe)\b') "Invoke-Flash never us
 Assert-True ($flashBody -notmatch "'--disable-telemetry'") "Invoke-Flash does not pass the GUI-only --disable-telemetry to Imager's --cli mode"
 Assert-True ($flashBody -match "'--disable-eject'") "Invoke-Flash passes --disable-eject so the boot partition stays mounted"
 
+# --- Request-FlashSettings: asks only for what was not given, Enter keeps defaults
+function Test-CanPrompt { $true }
+$script:answers = @()
+function Read-Answer { param([string]$Prompt) $a = $script:answers[0]; $script:answers = @($script:answers | Select-Object -Skip 1); $a }
+$defaultKey = 'C:\keys\id_ed25519.pub'
+function Get-DefaultPublicKey { $defaultKey }
+try {
+    $s = @{ FLASH_HOSTNAME = ''; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
+    $script:answers = @('homepi', '', '')          # hostname, no Wi-Fi, default key
+    Request-FlashSettings $s
+    Assert-True ($s['FLASH_HOSTNAME'] -eq 'homepi') 'Request-FlashSettings takes the typed hostname'
+    Assert-True (-not $s['FLASH_WIFI_SSID'] -and -not $s['FLASH_WIFI_COUNTRY']) 'Request-FlashSettings: empty Wi-Fi name means cable only, no country asked'
+    Assert-True ($s['FLASH_SSH_PUBKEY_FILE'] -eq $defaultKey) 'Request-FlashSettings: Enter takes the key found in ~\.ssh'
+
+    $s = @{ FLASH_HOSTNAME = 'given'; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
+    $script:answers = @('My WiFi', 'at', 'none')   # no hostname question: it was given
+    Request-FlashSettings $s
+    Assert-True ($s['FLASH_HOSTNAME'] -eq 'given') 'Request-FlashSettings does not ask for a value that was given'
+    Assert-True ($s['FLASH_WIFI_SSID'] -eq 'My WiFi' -and $s['FLASH_WIFI_COUNTRY'] -eq 'at') 'Request-FlashSettings asks for the country after a Wi-Fi name'
+    Assert-True (-not $s['FLASH_SSH_PUBKEY_FILE']) "Request-FlashSettings: 'none' means password login only"
+} finally {
+    Remove-Item function:Read-Answer, function:Test-CanPrompt, function:Get-DefaultPublicKey -ErrorAction SilentlyContinue
+}
+
+# --- main() asks for the disk before the slow part (Imager, download, write)
+Assert-True ($source -match '(?s)\$targetDisk\s*=\s*Select-Disk\s*\$Disk.*\$imager\s*=\s*Find-Imager') 'main() selects the disk before Imager and the download'
+
 # --- main() must not assign the selected disk to $disk (collides with [int]$Disk)
 Assert-True ($source -match '\$targetDisk\s*=\s*Select-Disk\s*\$Disk') "main() assigns Select-Disk result to `$targetDisk (avoids [int]`$Disk collision)"
 

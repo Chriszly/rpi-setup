@@ -59,12 +59,24 @@ elevated PowerShell:
 .\host\flash.ps1
 ```
 
-It asks you to:
+Started without switches it asks for every value in turn (Enter keeps the
+default shown in brackets):
 
-1. Pick the target disk from the numbered list of removable drives.
-2. Type `yes` when asked to confirm it will DESTROY all data on that disk.
-3. Enter a username (1-32 lowercase letters, digits, `_` or `-`).
-4. Enter a password twice (at least 8 characters, ASCII, no `:`).
+1. Hostname for the Pi (default `raspberrypi`).
+2. Wi-Fi network name, or Enter for a network cable only. With a Wi-Fi name
+   it also asks for the Wi-Fi password (hidden) and country (default `DE`).
+3. SSH public key file to authorize (default: the key found in
+   `$HOME\.ssh`, `none` for password login only).
+4. A username (1-32 lowercase letters, digits, `_` or `-`).
+5. A password (at least 8 characters, ASCII, no `:`, hidden).
+6. The target disk, from a numbered list of removable drives with model,
+   size, bus and drive letters, e.g.
+   `1) PhysicalDrive1  Generic MassStorageClass  119.2 GB  (USB)  D: SDCARD`.
+7. `yes` to confirm it will DESTROY all data on that disk.
+
+Then it installs Imager if needed, downloads and checks the image and writes
+the card without asking anything else. A value passed as a switch, an
+environment variable or in `config\rpi-setup.env` is not asked for.
 
 Or pass everything up front:
 

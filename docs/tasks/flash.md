@@ -15,8 +15,11 @@ key, so it needs no screen or network cable on first boot.
 Each one can be a flag, an environment variable or a line in
 `config/rpi-setup.env` next to the scripts (remove the `#` in front of the
 `FLASH_*` lines there; nothing else in that file is read by the flashers).
-Flags win over the environment, which wins over the file. With none of them
-set, the card is written with user and SSH only.
+Flags win over the environment, which wins over the file. Any setting none
+of them gives is asked for when the script starts (Enter keeps the default,
+an empty Wi-Fi name means a network cable), so the scripts also run with no
+flags at all. Without a terminal to ask on, unset settings stay off and the
+card is written with user and SSH only.
 
 | Setting | Linux flag | Windows parameter | Default | Meaning |
 |---------|-----------|-------------------|---------|---------|
