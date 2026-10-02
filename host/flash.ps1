@@ -295,13 +295,16 @@ function ConvertTo-ArgumentString {
 }
 
 function Invoke-Flash {
-    param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
+    param([object]$Disk, [string]$ImagePath, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
     # --disable-telemetry is a GUI-only option: Imager's --cli parser rejects it
     # and exits before writing. --disable-eject keeps the card mounted so the
     # first-boot files can be written to its boot partition afterwards.
+    # No --sha256: Imager 2.x compares it with the hash of the *uncompressed*
+    # image, while the published checksum (already checked by Get-Image) is
+    # that of the .img.xz, so passing it fails every write. Imager still reads
+    # the card back and verifies what it wrote.
     $cliArgs = @('--cli', '--disable-eject')
-    if ($Hash) { $cliArgs += @('--sha256', $Hash) }
     $cliArgs += @($ImagePath, $device)
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"
     # rpi-imager.exe is built as a GUI application, so "& rpi-imager.exe ..."
@@ -942,12 +945,12 @@ try {
     if ($Image) {
         if (-not (Test-Path -LiteralPath $Image)) { Fail "Image not found: $Image" }
         Write-Step "Using image: $Image"
-        $img = @{ Path = $Image; Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Image).Hash.ToLowerInvariant() }
+        $img = @{ Path = $Image }
     } else {
         $img = Get-Image $DownloadDir
     }
 
-    Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Hash $img.Hash -Imager $imager
+    Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Imager $imager
 
     if (-not $SkipCustomize) {
         Add-FirstBootFiles -DiskNumber $targetDisk.Number -UserName $cred.User -PasswordHash $passHash -Settings $firstBoot

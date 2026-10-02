@@ -72,6 +72,9 @@ Assert-True ($flashBody -notmatch '&\s*\$(Imager|exe)\b') "Invoke-Flash never us
 # and without --disable-eject the card is ejected before the first-boot files go on.
 Assert-True ($flashBody -notmatch "'--disable-telemetry'") "Invoke-Flash does not pass the GUI-only --disable-telemetry to Imager's --cli mode"
 Assert-True ($flashBody -match "'--disable-eject'") "Invoke-Flash passes --disable-eject so the boot partition stays mounted"
+# Imager 2.x checks --sha256 against the uncompressed image, not the .img.xz
+# checksum the script verifies, so passing that hash fails every write.
+Assert-True ($flashBody -notmatch "'--sha256'") "Invoke-Flash does not pass the .img.xz checksum as Imager's --sha256"
 
 # --- Request-FlashSettings: asks only for what was not given, Enter keeps defaults
 function Test-CanPrompt { $true }
