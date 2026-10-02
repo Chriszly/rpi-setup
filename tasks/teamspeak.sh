@@ -39,11 +39,13 @@ run_teamspeak() {
   require_port TEAMSPEAK_FILE_PORT
   require_port TEAMSPEAK_QUERY_PORT
   require_image_ref TEAMSPEAK_IMAGE
-  local query="" admin_pw="${TEAMSPEAK_QUERY_ADMIN_PASSWORD:-}"
+  local query="" query_port="" admin_pw="${TEAMSPEAK_QUERY_ADMIN_PASSWORD:-}"
   # A set TSSERVER_QUERY_HTTP_ENABLED may count as "on" whatever its value,
-  # so "no" leaves the variable out instead of setting it to false.
+  # so "no" leaves the variable out instead of setting it to false. Without
+  # the query API its port is not published either, so it is closed.
   if setting_on TEAMSPEAK_QUERY_HTTP; then
     query='      TSSERVER_QUERY_HTTP_ENABLED: "true"'
+    query_port="      - \"${TEAMSPEAK_QUERY_PORT}:${TEAMSPEAK_QUERY_PORT}/tcp\"   # Web query"
   fi
   setting_on TEAMSPEAK_ACCEPT_LICENSE ||
     die 'The TeamSpeak server only starts once you accept its license; set TEAMSPEAK_ACCEPT_LICENSE=yes'
@@ -87,7 +89,7 @@ services:
     ports:
       - "${TEAMSPEAK_VOICE_PORT}:${inner}/udp"   # Voice
       - "${TEAMSPEAK_FILE_PORT}:${TEAMSPEAK_FILE_PORT}/tcp"     # File transfer
-      - "${TEAMSPEAK_QUERY_PORT}:${TEAMSPEAK_QUERY_PORT}/tcp"   # Web query
+${query_port}
     environment:
       TSSERVER_LICENSE_ACCEPTED: "accept"
       TSSERVER_DEFAULT_PORT: "${inner}"

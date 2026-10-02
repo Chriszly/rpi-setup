@@ -51,11 +51,37 @@ sudo nft list table inet rpi_setup                  # show the rules
 sudo systemctl disable --now rpi-setup-firewall     # turn it off
 ```
 
+## Ports of Docker containers
+
+Ports a container publishes (`ports:` in its compose file) are forwarded by
+Docker before these rules see them, so the firewall does not limit them. The
+task lists them when it runs. Only TeamSpeak publishes ports: the other
+containers use the host network, so the rules above apply to them.
+
+To close or limit such a port:
+
+- **Turn off what uses it.** `TEAMSPEAK_QUERY_HTTP=no` and
+  `sudo bash setup.sh teamspeak` stop publishing the web query port (10080).
+  The voice and file ports are needed by every TeamSpeak client.
+- **Keep it inside your network.** A port is only reachable from the
+  internet if your router forwards it to the Pi; without a port forward it
+  stays in your LAN (and Tailscale, if you installed it yourself).
+- **Do not edit `/opt/teamspeak/docker-compose.yml` by hand**: the task
+  rewrites it on its next run.
+- **Limit who may connect** with a rule in Docker's `DOCKER-USER` chain,
+  which Docker checks before forwarding. For example, allow the query port
+  only from your LAN:
+
+  ```bash
+  sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 10080 ! -s 192.168.1.0/24 -j DROP
+  ```
+
+  rpi-setup does not manage this rule and it is gone after a reboot unless
+  you save it (for example with the `iptables-persistent` package). See
+  [Docker's packet filtering docs](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
+
 ## Good to know
 
-- Ports published by Docker containers (TeamSpeak's) are forwarded by Docker
-  before these rules see them, so the firewall does not limit them. The task
-  lists them when it runs.
 - Services running in their own container (`<TASK>_DOCKER=yes`) are
   detected like native ones; they use the host network, so these rules apply
   to them.

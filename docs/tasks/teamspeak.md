@@ -31,8 +31,9 @@ shown and it is taken down again.
   runs as 9987.
 - `/opt/teamspeak/voice-port`: the voice port the server was created with
   (see below).
-- The `teamspeak` container with the three ports published, restarting on
-  its own.
+- The `teamspeak` container with the voice, file and (with
+  `TEAMSPEAK_QUERY_HTTP=yes`) web query ports published, restarting on its
+  own.
 
 ## Reach it
 
@@ -57,6 +58,7 @@ and re-run the task.
 ## Good to know
 
 - Ports published by Docker bypass the `firewall` task's rules (it opens them
-  anyway and says so).
+  anyway and says so). How to close or limit them:
+  [Ports of Docker containers](firewall.md#ports-of-docker-containers).
 - A newer image comes with `sudo bash update.sh`.
 - Stop: `cd /opt/teamspeak && sudo docker compose down`.
