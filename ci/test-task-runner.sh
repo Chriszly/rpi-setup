@@ -154,6 +154,27 @@ assert_contains "the summary reaches the workflow log" "base ok" "$out"
 assert_lacks "setup.sh's full output (passwords) stays out of the workflow log" "hunter2" "$out"
 assert_contains "the full output is kept on the Pi" "hunter2" "$(cat "$tmp"/log/deploy-*.log)"
 
+# A failed task: its error line reaches the workflow log, nothing else does.
+cp "$tmp/work/setup.sh" "$tmp/setup.ok"
+cat >"$tmp/work/setup.sh" <<STUB
+#!/usr/bin/env bash
+echo "generated password: hunter2"
+printf '\033[31m[x]\033[0m Port 8080 is used by nginx; set USAGECONTROL_PORT to a free port\n'
+echo 'Summary:'
+echo "  \$1 failed"
+exit 1
+STUB
+git_q -C "$tmp/work" commit -am failing
+git_q -C "$tmp/work" push origin main
+out="$(deploy --tasks web || true)"
+assert_contains "a failed task's error line reaches the workflow log" \
+    "rpi-setup-deploy: error: Port 8080 is used by nginx; set USAGECONTROL_PORT to a free port" "$out"
+assert_contains "and so does the summary" "web failed" "$out"
+assert_lacks "a failed run keeps the passwords on the Pi" "hunter2" "$out"
+cp "$tmp/setup.ok" "$tmp/work/setup.sh"
+git_q -C "$tmp/work" commit -am fixed
+git_q -C "$tmp/work" push origin main
+
 out="$(deploy)"
 assert_contains "no tasks and none recorded does nothing" "none recorded" "$out"
 assert_ok "and runs no setup" test ! -e "$tmp/ran"

@@ -46,8 +46,8 @@ The private repository's layout, workflow and step-by-step setup are in
 3. Runs `setup.sh` with the chosen tasks, as if the owner of the checkout
    had started it with sudo (`SUDO_USER`), so tasks that set up "your" user
    (docker group, SSH keys, Samba user) pick that person and never
-   `rpi-runner`. Only the run summary goes to the
-   workflow log; the full output, which can contain generated passwords,
+   `rpi-runner`. Only the run summary and, when a task fails, its error
+   lines (`[x] ...`) go to the workflow log; the full output, which can contain generated passwords,
    stays on the Pi in `/var/log/rpi-setup-deploy/`.
 4. Deletes the private repository's checkout from the Pi.
 
