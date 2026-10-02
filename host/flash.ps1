@@ -347,7 +347,8 @@ function Get-Credentials {
         $UserName = Read-Host 'Username to create on the Pi'
         if (-not $UserName) { Fail 'Username required.' }
     }
-    if ($UserName -notmatch '^[a-z_][a-z0-9_-]{0,31}$') {
+    # -cnotmatch: -notmatch ignores case and let 'piUser' through.
+    if ($UserName -cnotmatch '^[a-z_][a-z0-9_-]{0,31}$') {
         Fail "Invalid username '$UserName'. Use 1-32 lowercase letters, digits, '_' or '-'."
     }
     if (-not $Password) {

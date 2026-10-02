@@ -137,6 +137,11 @@ try {
 }
 Assert-True ($source -match "Remove-Item -LiteralPath \`$firstBoot\['GITHUB_KEY'\]\.Dir") 'main() deletes the temp key folder in its finally block'
 
+# --- Get-Credentials: the username check is case-sensitive, like flash.sh's
+# (Fail exits the process, so the check is asserted on the source).
+Assert-True ($source -match "\`$UserName -cnotmatch '\^\[a-z_\]") "Get-Credentials refuses upper-case user names (-cnotmatch)"
+Assert-True (-not ('piUser' -cmatch '^[a-z_][a-z0-9_-]{0,31}$') -and ('piuser' -cmatch '^[a-z_][a-z0-9_-]{0,31}$')) 'the user name pattern takes piuser and refuses piUser'
+
 # --- main() asks for the disk before the slow part (Imager, download, write)
 Assert-True ($source -match '(?s)\$targetDisk\s*=\s*Select-Disk\s*\$Disk.*\$imager\s*=\s*Find-Imager') 'main() selects the disk before Imager and the download'
 
