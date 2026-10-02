@@ -280,7 +280,10 @@ function ConvertTo-ArgumentString {
 function Invoke-Flash {
     param([object]$Disk, [string]$ImagePath, [string]$Hash, [string]$Imager)
     $device = "\\.\PhysicalDrive$($Disk.Number)"
-    $cliArgs = @('--cli', '--disable-telemetry')
+    # --disable-telemetry is a GUI-only option: Imager's --cli parser rejects it
+    # and exits before writing. --disable-eject keeps the card mounted so the
+    # first-boot files can be written to its boot partition afterwards.
+    $cliArgs = @('--cli', '--disable-eject')
     if ($Hash) { $cliArgs += @('--sha256', $Hash) }
     $cliArgs += @($ImagePath, $device)
     Write-Step "Flashing $([System.IO.Path]::GetFileName($ImagePath)) to $device (this takes a few minutes)"

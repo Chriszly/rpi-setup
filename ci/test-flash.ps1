@@ -68,6 +68,10 @@ Assert-True ((ConvertTo-ArgumentString @('say "hi"')) -eq '"say \"hi\""') 'Conve
 $flashBody = [regex]::Match($source, '(?s)function Invoke-Flash \{.*?\n\}').Value
 Assert-True ($flashBody -match 'Start-Process[^\n]*-Wait') "Invoke-Flash runs Imager via Start-Process -Wait (rpi-imager.exe is a GUI app; '&' returns immediately)"
 Assert-True ($flashBody -notmatch '&\s*\$(Imager|exe)\b') "Invoke-Flash never uses the call operator on the Imager binary"
+# Imager's --cli parser exits on unknown options (--disable-telemetry is GUI-only),
+# and without --disable-eject the card is ejected before the first-boot files go on.
+Assert-True ($flashBody -notmatch "'--disable-telemetry'") "Invoke-Flash does not pass the GUI-only --disable-telemetry to Imager's --cli mode"
+Assert-True ($flashBody -match "'--disable-eject'") "Invoke-Flash passes --disable-eject so the boot partition stays mounted"
 
 # --- main() must not assign the selected disk to $disk (collides with [int]$Disk)
 Assert-True ($source -match '\$targetDisk\s*=\s*Select-Disk\s*\$Disk') "main() assigns Select-Disk result to `$targetDisk (avoids [int]`$Disk collision)"
