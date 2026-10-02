@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# test-task-teamspeak.sh - unit tests for teamspeak_server_port in
-# tasks/teamspeak.sh: which voice port the server listens on inside the
-# container (and is recorded in voice-port) for new and existing servers.
+# test-task-teamspeak.sh - unit tests for tasks/teamspeak.sh: which voice port
+# the server listens on inside the container (and is recorded in voice-port)
+# for new and existing servers, and reading the privilege key from its log.
 #
 # Run: bash ci/test-task-teamspeak.sh
 set -euo pipefail
@@ -37,5 +37,19 @@ printf 'abc\n' >"$d/voice-port"
 assert_fails "broken record dies" teamspeak_server_port "$d" 0 9987
 printf '70000\n' >"$d/voice-port"
 assert_fails "out-of-range record dies" teamspeak_server_port "$d" 0 9987
+
+# --- privilege key: the token line below the banner, not the banner -----------
+docker() {
+  printf '%s\n' '------------------------------------------------------------------' \
+    '      ServerAdmin privilege key created, please use it to gain' \
+    '      serveradmin rights for your virtualserver. please' \
+    '      also check the doc/privilegekey_guide.txt for details.' '' \
+    '       token=AbC+d/12eF=' '------------------------------------------------------------------'
+}
+assert_eq "privilege key is read from the token line" "AbC+d/12eF=" "$(teamspeak_token teamspeak)"
+docker() { echo 'TeamSpeak server starting'; }
+assert_eq "no token in the log gives an empty key" "" "$(teamspeak_token teamspeak)"
+assert_ok "no token in the log is not an error (set -e)" teamspeak_token teamspeak
+unset -f docker
 
 finish_tests
