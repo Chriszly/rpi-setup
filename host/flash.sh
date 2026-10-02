@@ -7,6 +7,8 @@
 #   * enables SSH and creates a login user (headless first boot)
 #   * optionally sets the hostname, Wi-Fi and an SSH public key for first boot
 #     (cloud-init files on Trixie images, a one-time firstrun.sh on Bookworm)
+#   * optionally creates a new SSH key for the Pi to use with GitHub and prints
+#     its public key (the private key goes only onto the card)
 #
 # The optional settings come from flags, from FLASH_* environment variables or
 # from the FLASH_* lines of config/rpi-setup.env (nothing else in it is read).
@@ -38,7 +40,7 @@ LIST_ONLY=0
 
 usage() {
   echo "Usage: $0 [-d DEVICE] [-i IMAGE] [-u USER] [-p PASS] [-k] [-l]"
-  echo "       [-n HOSTNAME] [-s WIFI_SSID] [-w WIFI_PASSWORD] [-c COUNTRY] [-a PUBKEY_FILE]"
+  echo "       [-n HOSTNAME] [-s WIFI_SSID] [-w WIFI_PASSWORD] [-c COUNTRY] [-a PUBKEY_FILE] [-g yes|no]"
   echo
   echo "  -d DEVICE   SD card device node (e.g. /dev/sda). Prompts if omitted."
   echo "  -i IMAGE    locally downloaded .img / .img.xz image (no download)."
@@ -53,6 +55,7 @@ usage() {
   echo "  -w WIFI_PASSWORD  its password (prompted, hidden, if omitted)."
   echo "  -c COUNTRY        Wi-Fi country code (regulatory domain). Default: DE"
   echo "  -a PUBKEY_FILE    SSH public key to authorize for the user, e.g. ~/.ssh/id_ed25519.pub"
+  echo "  -g yes|no         create a new SSH key for the Pi to use with GitHub (printed at the end)."
   exit 0
 }
 
@@ -240,7 +243,7 @@ ask_credentials() {
 # All optional. Values come from the flags, else from the environment, else
 # from the FLASH_* lines of config/rpi-setup.env. With none of them set the
 # card gets exactly what it got before: 'ssh' and 'userconf.txt'.
-FLASH_VARS=(FLASH_HOSTNAME FLASH_WIFI_SSID FLASH_WIFI_PASSWORD FLASH_WIFI_COUNTRY FLASH_SSH_PUBKEY_FILE)
+FLASH_VARS=(FLASH_HOSTNAME FLASH_WIFI_SSID FLASH_WIFI_PASSWORD FLASH_WIFI_COUNTRY FLASH_SSH_PUBKEY_FILE FLASH_GITHUB_KEY)
 FLASH_KEYS=""   # validated public key lines, filled by read_pubkeys
 FLASH_KEY_RE='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+AAAA[A-Za-z0-9+/]+={0,3}([[:space:]].*)?$'
 # sshd drop-in that makes sshd also read /etc/ssh/authorized_keys/<user>. Keys
@@ -251,6 +254,16 @@ FLASH_SSHD_LINE='AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 /
 # Clears the Wi-Fi rfkill block Raspberry Pi OS Lite keeps until a country is set.
 # shellcheck disable=SC2016  # expanded on the Pi, not here
 FLASH_RFKILL_UNBLOCK='rfkill unblock wifi; for f in /var/lib/systemd/rfkill/*:wlan; do [ -e "$f" ] && echo 0 >"$f"; done; true'
+# The Pi's own GitHub key (FLASH_GITHUB_KEY=yes): created on this PC in a temp
+# directory, copied to the boot partition as rpi-setup-github-key (+ .pub) and
+# deleted here. On the Pi a one-shot service moves it into the login user's
+# ~/.ssh (mode 600, owned by the user) once that user exists, and deletes it
+# from the boot partition. Mirrors host/flash.ps1.
+FLASH_GH_KEY_FILE=rpi-setup-github-key
+FLASH_GH_SCRIPT=/usr/local/sbin/rpi-setup-github-key
+FLASH_GH_UNIT=rpi-setup-github-key.service
+FLASH_GH_DIR=""      # temp directory holding the new key, removed on exit
+FLASH_GH_PUB=""      # the new public key line
 
 # Set every FLASH_* variable that is still unset from file $1 (default:
 # config/rpi-setup.env). Only FLASH_* lines are read and nothing is expanded,
@@ -274,7 +287,81 @@ load_flash_config() {
 
 # True when any first-boot setting is requested (the country alone is not one).
 want_firstboot() {
-  [[ -n "${FLASH_HOSTNAME:-}" || -n "${FLASH_WIFI_SSID:-}" || -n "${FLASH_SSH_PUBKEY_FILE:-}" ]]
+  [[ -n "${FLASH_HOSTNAME:-}" || -n "${FLASH_WIFI_SSID:-}" || -n "${FLASH_SSH_PUBKEY_FILE:-}" ||
+     "${FLASH_GITHUB_KEY:-}" == yes ]]
+}
+
+# The key-moving script for login user $1 (a validated user name).
+github_key_script() {
+  # shellcheck disable=SC2016  # expanded on the Pi, not here
+  printf '%s\n' \
+    '#!/bin/sh' \
+    '# Written by rpi-setup host/flash.sh: moves the GitHub SSH key from the boot' \
+    "# partition into the login user's ~/.ssh, then deletes it there." \
+    "U='$1'" \
+    'BOOT=/boot/firmware' \
+    '[ -d "$BOOT" ] || BOOT=/boot' \
+    'KEY="$BOOT/rpi-setup-github-key"' \
+    '[ -f "$KEY" ] || exit 0' \
+    'H="$(getent passwd "$U" | cut -d: -f6)"' \
+    '# userconf.txt creates the login user; until it exists, try again next boot.' \
+    '[ -n "$H" ] && [ -d "$H" ] || exit 0' \
+    'G="$(id -gn "$U")"' \
+    'install -d -m 0700 -o "$U" -g "$G" "$H/.ssh"' \
+    'install -m 0600 -o "$U" -g "$G" "$KEY" "$H/.ssh/id_ed25519_github"' \
+    'install -m 0644 -o "$U" -g "$G" "$KEY.pub" "$H/.ssh/id_ed25519_github.pub"' \
+    'if ! grep -qs id_ed25519_github "$H/.ssh/config"; then' \
+    '  { echo "Host github.com"; echo "  IdentityFile ~/.ssh/id_ed25519_github"; echo "  IdentitiesOnly yes"; echo "  StrictHostKeyChecking accept-new"; } >>"$H/.ssh/config"' \
+    '  chown "$U:$G" "$H/.ssh/config"' \
+    '  chmod 0600 "$H/.ssh/config"' \
+    'fi' \
+    'rm -f "$KEY" "$KEY.pub"' \
+    'systemctl disable rpi-setup-github-key.service >/dev/null 2>&1 || true'
+}
+
+# The systemd unit that runs the key-moving script.
+github_key_unit() {
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Move the rpi-setup GitHub SSH key from the boot partition to the login user' \
+    'After=local-fs.target userconfig.service' \
+    'ConditionPathExists=|/boot/firmware/rpi-setup-github-key' \
+    'ConditionPathExists=|/boot/rpi-setup-github-key' \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStart=$FLASH_GH_SCRIPT" \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target'
+}
+
+# Create a new ed25519 key without passphrase (comment $1) in a fresh temp
+# directory: FLASH_GH_DIR/id_ed25519_github(.pub). Sets FLASH_GH_PUB.
+new_github_key() {
+  command -v ssh-keygen >/dev/null 2>&1 ||
+    die 'ssh-keygen not found. Install openssh-client, or answer "no" to the GitHub key (-g no).'
+  FLASH_GH_DIR="$(mktemp -d)"
+  ssh-keygen -q -t ed25519 -N '' -C "$1" -f "$FLASH_GH_DIR/id_ed25519_github" </dev/null ||
+    die 'ssh-keygen failed to create the GitHub key.'
+  FLASH_GH_PUB="$(cat "$FLASH_GH_DIR/id_ed25519_github.pub")"
+}
+
+# Remove the temp key directory: the Pi's key is never left on this PC.
+remove_github_key() {
+  [[ -z "$FLASH_GH_DIR" ]] || rm -rf "$FLASH_GH_DIR"
+  FLASH_GH_DIR=""
+}
+
+# Print the Pi's new GitHub public key and where to add it.
+github_key_notice() {
+  echo
+  say 'New SSH key for the Pi. Add it to GitHub so the Pi can reach your repositories:'
+  echo '    https://github.com/settings/ssh/new   (or as a deploy key of one repository)'
+  echo
+  echo "    $FLASH_GH_PUB"
+  echo
+  info 'Only the card has the private key; it was not kept on this PC.'
 }
 
 # Read the public key file $1 into FLASH_KEYS. Dies unless every non-comment
@@ -324,6 +411,11 @@ validate_flash_options() {
   if [[ -n "${FLASH_SSH_PUBKEY_FILE:-}" ]]; then
     read_pubkeys "$FLASH_SSH_PUBKEY_FILE"
   fi
+  case "${FLASH_GITHUB_KEY:-}" in
+    [yY] | [yY][eE][sS] | true | 1) FLASH_GITHUB_KEY=yes ;;
+    '' | [nN] | [nN][oO] | false | 0) FLASH_GITHUB_KEY=no ;;
+    *) die "Invalid GitHub key setting '$FLASH_GITHUB_KEY'. Use yes or no." ;;
+  esac
 }
 
 # Home directory of the user who ran sudo (root's home is not where the keys are).
@@ -375,6 +467,14 @@ ask_flash_settings() {
       FLASH_SSH_PUBKEY_FILE="$(invoking_home)/${FLASH_SSH_PUBKEY_FILE#\~/}"
     fi
   fi
+  if [[ -z "${FLASH_GITHUB_KEY:-}" ]]; then
+    local answer=""
+    read -rp 'Create a new SSH key for the Pi to use with GitHub? [Y/n]: ' answer || true
+    case "$answer" in
+      [nN] | [nN][oO]) FLASH_GITHUB_KEY=no ;;
+      *) FLASH_GITHUB_KEY=yes ;;
+    esac
+  fi
 }
 
 # Ask for the Wi-Fi password when an SSID is set without one. An empty answer
@@ -422,8 +522,10 @@ write_cloud_init() {
       echo "hostname: $(yaml_quote "$FLASH_HOSTNAME")"
       echo 'manage_etc_hosts: true'
     fi
-    if [[ -n "$FLASH_KEYS" ]]; then
+    if [[ -n "$FLASH_KEYS" || "${FLASH_GITHUB_KEY:-}" == yes ]]; then
       echo 'write_files:'
+    fi
+    if [[ -n "$FLASH_KEYS" ]]; then
       echo "  - path: $FLASH_SSHD_CONF"
       echo "    permissions: '0644'"
       echo '    content: |'
@@ -435,9 +537,28 @@ write_cloud_init() {
         [[ -z "$key" ]] || echo "      $key"
       done <<<"$FLASH_KEYS"
     fi
-    if [[ -n "${FLASH_WIFI_SSID:-}" ]]; then
+    if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
+      # Only the script and its unit: the private key itself stays out of
+      # user-data, which remains on the boot partition.
+      echo "  - path: $FLASH_GH_SCRIPT"
+      echo "    permissions: '0755'"
+      echo '    content: |'
+      github_key_script "$user" | sed 's/^/      /'
+      echo "  - path: /etc/systemd/system/$FLASH_GH_UNIT"
+      echo "    permissions: '0644'"
+      echo '    content: |'
+      github_key_unit | sed 's/^./      &/'
+    fi
+    if [[ -n "${FLASH_WIFI_SSID:-}" || "${FLASH_GITHUB_KEY:-}" == yes ]]; then
       echo 'runcmd:'
+    fi
+    if [[ -n "${FLASH_WIFI_SSID:-}" ]]; then
       echo "  - [sh, -c, $(yaml_quote "$FLASH_RFKILL_UNBLOCK")]"
+    fi
+    if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
+      echo '  - [systemctl, daemon-reload]'
+      echo "  - [systemctl, enable, $FLASH_GH_UNIT]"
+      echo "  - [systemctl, start, --no-block, $FLASH_GH_UNIT]"
     fi
   } >"$dir/user-data"
 
@@ -542,6 +663,17 @@ write_firstrun() {
       echo 'chmod 0600 "$NM/preconfigured.nmconnection"'
       echo "$FLASH_RFKILL_UNBLOCK"
     fi
+    if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
+      # Runs on the next boot, after userconf.txt has created the login user.
+      echo "cat >$FLASH_GH_SCRIPT <<'RPI_SETUP_EOF'"
+      github_key_script "$user"
+      echo 'RPI_SETUP_EOF'
+      echo "chmod 0755 $FLASH_GH_SCRIPT"
+      echo "cat >/etc/systemd/system/$FLASH_GH_UNIT <<'RPI_SETUP_EOF'"
+      github_key_unit
+      echo 'RPI_SETUP_EOF'
+      echo "systemctl enable $FLASH_GH_UNIT"
+    fi
     echo 'rm -f "$BOOT/firstrun.sh"'
     echo 'sed -i "s| systemd.run.*||g" "$BOOT/cmdline.txt"'
     echo 'exit 0'
@@ -562,6 +694,10 @@ write_firstboot_config() {
   if [[ -n "${FLASH_WIFI_SSID:-}" ]]; then
     set_cmdline_regdom "$dir" "$FLASH_WIFI_COUNTRY"
   fi
+  if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
+    cp "$FLASH_GH_DIR/id_ed25519_github" "$dir/$FLASH_GH_KEY_FILE"
+    cp "$FLASH_GH_DIR/id_ed25519_github.pub" "$dir/$FLASH_GH_KEY_FILE.pub"
+  fi
   # A boot partition seeded for cloud-init (Trixie images).
   if [[ -e "$dir/user-data" || -e "$dir/meta-data" ]]; then
     write_cloud_init "$dir" "$user"
@@ -573,12 +709,13 @@ write_firstboot_config() {
   [[ -z "${FLASH_HOSTNAME:-}" ]] || info "Hostname: $FLASH_HOSTNAME"
   [[ -z "${FLASH_WIFI_SSID:-}" ]] || info "Wi-Fi: '$FLASH_WIFI_SSID' (country $FLASH_WIFI_COUNTRY)"
   [[ -z "$FLASH_KEYS" ]] || info "SSH key(s) from $FLASH_SSH_PUBKEY_FILE authorized for '$user'"
+  [[ "${FLASH_GITHUB_KEY:-}" != yes ]] || info "New GitHub SSH key: moves to ~/.ssh/id_ed25519_github of '$user' on first boot"
 }
 
 # --- main ---------------------------------------------------------------
 main() {
   local opt
-  while getopts "d:i:u:p:kln:s:w:c:a:h" opt; do
+  while getopts "d:i:u:p:kln:s:w:c:a:g:h" opt; do
     case "$opt" in
       d) DEV="$OPTARG" ;;
       i) IMAGE="$OPTARG" ;;
@@ -591,6 +728,7 @@ main() {
       w) FLASH_WIFI_PASSWORD="$OPTARG" ;;
       c) FLASH_WIFI_COUNTRY="$OPTARG" ;;
       a) FLASH_SSH_PUBKEY_FILE="$OPTARG" ;;
+      g) FLASH_GITHUB_KEY="$OPTARG" ;;
       *) usage ;;
     esac
   done
@@ -613,6 +751,10 @@ main() {
   if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
     ask_credentials
     pass_hash="$(generate_hash "$PASS")"
+  fi
+  if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
+    trap remove_github_key EXIT
+    new_github_key "$USER@${FLASH_HOSTNAME:-raspberrypi}"
   fi
 
   # Pick the card last among the questions, so the slow part (download,
@@ -679,6 +821,7 @@ main() {
     echo 'Then on the Pi:'
     echo '    git clone https://github.com/Chriszly/rpi-setup.git'
     echo '    cd rpi-setup && sudo bash setup.sh'
+    [[ -z "$FLASH_GH_PUB" ]] || github_key_notice
   fi
 }
 

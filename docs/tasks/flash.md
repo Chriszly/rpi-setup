@@ -28,6 +28,7 @@ card is written with user and SSH only.
 | `FLASH_WIFI_PASSWORD` | `-w` | `-WifiPassword` | asked, hidden | Its password, 8-63 characters. |
 | `FLASH_WIFI_COUNTRY` | `-c` | `-WifiCountry` | `DE` | Wi-Fi country code (regulatory domain). |
 | `FLASH_SSH_PUBKEY_FILE` | `-a` | `-SshPublicKeyFile` | password login only | Your SSH **public** key, e.g. `~/.ssh/id_ed25519.pub`. |
+| `FLASH_GITHUB_KEY` | `-g` | `-GitHubKey` | asked (Enter = `yes`); `no` without a terminal | `yes` creates a new SSH key for the Pi to use with GitHub and prints its public key at the end, to add at github.com/settings/keys. |
 
 The other options (disk, image, user, password, skipping the user setup) are
 flags only; see the guides.
@@ -39,6 +40,15 @@ flags only; see the guides.
   your shell history.
 - On Trixie images the settings are written as cloud-init files, on Bookworm
   as a one-time `firstrun.sh` (the Pi reboots once on first boot).
+- The Pi's GitHub key (`FLASH_GITHUB_KEY=yes`) is created on the PC in a
+  temporary folder, copied to the card and deleted from the PC, so only the
+  card and then the Pi have it. Until the first boot it sits on the card's
+  boot partition as `rpi-setup-github-key`; a one-shot service then moves it
+  to `~/.ssh/id_ed25519_github` of the login user (mode 600, owned by the
+  user), deletes it from the boot partition and adds a `github.com` entry to
+  `~/.ssh/config`, so `git clone git@github.com:...` works on the Pi. Add the
+  printed public key to your account (Settings > SSH and GPG keys) or as a
+  deploy key of one repository.
 - The SSH key is stored in `/etc/ssh/authorized_keys/<user>` (read by sshd
   in addition to `~/.ssh/authorized_keys`). It is enough for the `base`
   task's `BASE_SSH_PASSWORD_AUTH=no`.

@@ -5,6 +5,9 @@
 #   * verifies its SHA-256 checksum
 #   * writes it to an SD card with Raspberry Pi Imager
 #   * enables SSH and creates a login user (headless first boot)
+#   * optionally sets hostname, Wi-Fi and an SSH public key, and creates a new
+#     SSH key for the Pi to use with GitHub (printed at the end; the private
+#     key goes only onto the card)
 #
 # Any installed Raspberry Pi Imager is used. If none is installed, the latest
 # installer is downloaded and installed silently (unless -SkipImagerInstall).
@@ -55,7 +58,9 @@ param(
     # Wi-Fi country code (regulatory domain). Default: DE
     [string]$WifiCountry,
     # SSH public key file to authorize for the user, e.g. $HOME\.ssh\id_ed25519.pub
-    [string]$SshPublicKeyFile
+    [string]$SshPublicKeyFile,
+    # Create a new SSH key for the Pi to use with GitHub: yes or no (asked if omitted).
+    [string]$GitHubKey
 )
 
 $ErrorActionPreference = 'Stop'
@@ -401,7 +406,7 @@ function Add-FirstBootFiles {
 # variable, else the FLASH_* line of config\rpi-setup.env. With none set the
 # card gets exactly what it got before: 'ssh' and 'userconf.txt'.
 # Mirrors host/flash.sh; ci/test-task-flash.sh tests the bash version.
-$Script:FlashNames = @('FLASH_HOSTNAME', 'FLASH_WIFI_SSID', 'FLASH_WIFI_PASSWORD', 'FLASH_WIFI_COUNTRY', 'FLASH_SSH_PUBKEY_FILE')
+$Script:FlashNames = @('FLASH_HOSTNAME', 'FLASH_WIFI_SSID', 'FLASH_WIFI_PASSWORD', 'FLASH_WIFI_COUNTRY', 'FLASH_SSH_PUBKEY_FILE', 'FLASH_GITHUB_KEY')
 $Script:FlashKeyPattern = '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\s+AAAA[A-Za-z0-9+/]+={0,3}(\s.*)?$'
 # sshd drop-in that makes sshd also read /etc/ssh/authorized_keys/<user>; keys
 # there do not depend on when userconf.txt creates or renames the login user.
@@ -409,6 +414,89 @@ $Script:FlashSshdConf = '/etc/ssh/sshd_config.d/10-rpi-setup-authorized-keys.con
 $Script:FlashSshdLine = 'AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 /etc/ssh/authorized_keys/%u'
 # Clears the Wi-Fi rfkill block Raspberry Pi OS Lite keeps until a country is set.
 $Script:FlashRfkillUnblock = 'rfkill unblock wifi; for f in /var/lib/systemd/rfkill/*:wlan; do [ -e "$f" ] && echo 0 >"$f"; done; true'
+# The Pi's own GitHub key (FLASH_GITHUB_KEY=yes): created on this PC in a temp
+# folder, copied to the boot partition as $FlashGitHubKeyFile (+ .pub) and
+# deleted here. On the Pi a one-shot service moves it into the login user's
+# ~/.ssh (mode 600, owned by the user) once that user exists, and deletes it
+# from the boot partition. Mirrors host/flash.sh.
+$Script:FlashGitHubKeyFile = 'rpi-setup-github-key'
+$Script:FlashGitHubKeyScriptPath = '/usr/local/sbin/rpi-setup-github-key'
+$Script:FlashGitHubKeyUnit = 'rpi-setup-github-key.service'
+$Script:FlashGitHubKeyScriptBody = @(
+    'BOOT=/boot/firmware',
+    '[ -d "$BOOT" ] || BOOT=/boot',
+    'KEY="$BOOT/rpi-setup-github-key"',
+    '[ -f "$KEY" ] || exit 0',
+    'H="$(getent passwd "$U" | cut -d: -f6)"',
+    '# userconf.txt creates the login user; until it exists, try again next boot.',
+    '[ -n "$H" ] && [ -d "$H" ] || exit 0',
+    'G="$(id -gn "$U")"',
+    'install -d -m 0700 -o "$U" -g "$G" "$H/.ssh"',
+    'install -m 0600 -o "$U" -g "$G" "$KEY" "$H/.ssh/id_ed25519_github"',
+    'install -m 0644 -o "$U" -g "$G" "$KEY.pub" "$H/.ssh/id_ed25519_github.pub"',
+    'if ! grep -qs id_ed25519_github "$H/.ssh/config"; then',
+    '  { echo "Host github.com"; echo "  IdentityFile ~/.ssh/id_ed25519_github"; echo "  IdentitiesOnly yes"; echo "  StrictHostKeyChecking accept-new"; } >>"$H/.ssh/config"',
+    '  chown "$U:$G" "$H/.ssh/config"',
+    '  chmod 0600 "$H/.ssh/config"',
+    'fi',
+    'rm -f "$KEY" "$KEY.pub"',
+    'systemctl disable rpi-setup-github-key.service >/dev/null 2>&1 || true'
+)
+$Script:FlashGitHubKeyUnitLines = @(
+    '[Unit]',
+    'Description=Move the rpi-setup GitHub SSH key from the boot partition to the login user',
+    'After=local-fs.target userconfig.service',
+    'ConditionPathExists=|/boot/firmware/rpi-setup-github-key',
+    'ConditionPathExists=|/boot/rpi-setup-github-key',
+    '',
+    '[Service]',
+    'Type=oneshot',
+    "ExecStart=$Script:FlashGitHubKeyScriptPath",
+    '',
+    '[Install]',
+    'WantedBy=multi-user.target'
+)
+
+# The key-moving script for login user $UserName (a validated user name).
+function Get-GitHubKeyScript {
+    param([string]$UserName)
+    return @(
+        '#!/bin/sh',
+        '# Written by rpi-setup host/flash.ps1: moves the GitHub SSH key from the boot',
+        "# partition into the login user's ~/.ssh, then deletes it there.",
+        "U='$UserName'"
+    ) + $Script:FlashGitHubKeyScriptBody
+}
+
+# ssh-keygen.exe from Windows' OpenSSH client or Git for Windows, or $null.
+function Find-SshKeygen {
+    $c = Get-Command ssh-keygen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    foreach ($p in @("$env:SystemRoot\System32\OpenSSH\ssh-keygen.exe", "$env:ProgramFiles\Git\usr\bin\ssh-keygen.exe")) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
+# Create a new ed25519 key without passphrase in a fresh temp folder. Returns
+# @{ Dir; Private; Public } (the caller deletes Dir once the key is on the card).
+function New-GitHubKey {
+    param([string]$Comment)
+    $keygen = Find-SshKeygen
+    if (-not $keygen) { Fail 'ssh-keygen not found. Install the Windows OpenSSH client or Git for Windows, or answer "no" to the GitHub key.' }
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('rpi-setup-key-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $key = Join-Path $dir 'id_ed25519_github'
+    # Start-Process takes the command line as written, so the empty passphrase
+    # survives as "" (PowerShell 5.1 drops empty arguments to native programs).
+    $argLine = '-q -t ed25519 -N "" -C "{0}" -f "{1}"' -f $Comment, $key
+    $p = Start-Process -FilePath $keygen -ArgumentList $argLine -Wait -PassThru -NoNewWindow
+    if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath "$key.pub")) {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        Fail "ssh-keygen failed (exit code $($p.ExitCode))."
+    }
+    return @{ Dir = $dir; Private = $key; Public = ([System.IO.File]::ReadAllText("$key.pub")).Trim() }
+}
 
 # The value part of a KEY=value line, read like lib/common.sh config_value:
 # surrounding whitespace, a matching pair of quotes and a " # comment" go.
@@ -452,7 +540,8 @@ function Get-FlashSettings {
 # True when any first-boot setting is requested (the country alone is not one).
 function Test-FirstBootWanted {
     param([hashtable]$Settings)
-    return [bool]($Settings['FLASH_HOSTNAME'] -or $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_SSH_PUBKEY_FILE'])
+    return [bool]($Settings['FLASH_HOSTNAME'] -or $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_SSH_PUBKEY_FILE'] -or
+                  $Settings['FLASH_GITHUB_KEY'] -eq 'yes')
 }
 
 # The OpenSSH public key lines of $Path; fails unless every non-comment line
@@ -502,6 +591,10 @@ function Assert-FlashSettings {
     }
     $Settings['SSH_KEYS'] = @()
     if ($Settings['FLASH_SSH_PUBKEY_FILE']) { $Settings['SSH_KEYS'] = Read-PublicKeys $Settings['FLASH_SSH_PUBKEY_FILE'] }
+    $gk = ([string]$Settings['FLASH_GITHUB_KEY']).ToLowerInvariant()
+    if ($gk -in @('y', 'yes', 'true', '1')) { $gk = 'yes' } elseif ($gk -in @('', 'n', 'no', 'false', '0')) { $gk = 'no' }
+    else { Fail "Invalid GitHub key setting '$($Settings['FLASH_GITHUB_KEY'])'. Use yes or no." }
+    $Settings['FLASH_GITHUB_KEY'] = $gk
 }
 
 # The first SSH public key in $HOME\.ssh, or $null.
@@ -543,6 +636,10 @@ function Request-FlashSettings {
         }
         if ($k -match '^~') { $k = $HOME + $k.Substring(1) }
         $Settings['FLASH_SSH_PUBKEY_FILE'] = $k
+    }
+    if (-not $Settings['FLASH_GITHUB_KEY']) {
+        $a = (Read-Answer 'Create a new SSH key for the Pi to use with GitHub? [Y/n]').Trim()
+        if ($a -match '^(n|no)$') { $Settings['FLASH_GITHUB_KEY'] = 'no' } else { $Settings['FLASH_GITHUB_KEY'] = 'yes' }
     }
 }
 
@@ -605,8 +702,9 @@ function Write-CloudInit {
         $ud += "hostname: $(ConvertTo-YamlQuoted $Settings['FLASH_HOSTNAME'])"
         $ud += 'manage_etc_hosts: true'
     }
+    $wantKey = $Settings['FLASH_GITHUB_KEY'] -eq 'yes'
+    if ($Settings['SSH_KEYS'].Count -gt 0 -or $wantKey) { $ud += 'write_files:' }
     if ($Settings['SSH_KEYS'].Count -gt 0) {
-        $ud += 'write_files:'
         $ud += "  - path: $Script:FlashSshdConf"
         $ud += "    permissions: '0644'"
         $ud += '    content: |'
@@ -616,9 +714,26 @@ function Write-CloudInit {
         $ud += '    content: |'
         foreach ($k in $Settings['SSH_KEYS']) { $ud += "      $k" }
     }
+    if ($wantKey) {
+        # Only the script and its unit: the private key itself stays out of
+        # user-data, which remains on the boot partition.
+        $ud += "  - path: $Script:FlashGitHubKeyScriptPath"
+        $ud += "    permissions: '0755'"
+        $ud += '    content: |'
+        foreach ($l in (Get-GitHubKeyScript $UserName)) { $ud += "      $l" }
+        $ud += "  - path: /etc/systemd/system/$Script:FlashGitHubKeyUnit"
+        $ud += "    permissions: '0644'"
+        $ud += '    content: |'
+        foreach ($l in $Script:FlashGitHubKeyUnitLines) { if ($l) { $ud += "      $l" } else { $ud += '' } }
+    }
+    if ($Settings['FLASH_WIFI_SSID'] -or $wantKey) { $ud += 'runcmd:' }
     if ($Settings['FLASH_WIFI_SSID']) {
-        $ud += 'runcmd:'
         $ud += "  - [sh, -c, $(ConvertTo-YamlQuoted $Script:FlashRfkillUnblock)]"
+    }
+    if ($wantKey) {
+        $ud += '  - [systemctl, daemon-reload]'
+        $ud += "  - [systemctl, enable, $Script:FlashGitHubKeyUnit]"
+        $ud += "  - [systemctl, start, --no-block, $Script:FlashGitHubKeyUnit]"
     }
     Write-UnixFile (Join-Path $Root 'user-data') $ud
 
@@ -717,6 +832,17 @@ function Write-FirstRun {
             $Script:FlashRfkillUnblock
         )
     }
+    if ($Settings['FLASH_GITHUB_KEY'] -eq 'yes') {
+        # Runs on the next boot, after userconf.txt has created the login user.
+        $fr += "cat >$Script:FlashGitHubKeyScriptPath <<'RPI_SETUP_EOF'"
+        $fr += Get-GitHubKeyScript $UserName
+        $fr += 'RPI_SETUP_EOF'
+        $fr += "chmod 0755 $Script:FlashGitHubKeyScriptPath"
+        $fr += "cat >/etc/systemd/system/$Script:FlashGitHubKeyUnit <<'RPI_SETUP_EOF'"
+        $fr += $Script:FlashGitHubKeyUnitLines
+        $fr += 'RPI_SETUP_EOF'
+        $fr += "systemctl enable $Script:FlashGitHubKeyUnit"
+    }
     $fr += @(
         'rm -f "$BOOT/firstrun.sh"',
         'sed -i "s| systemd.run.*||g" "$BOOT/cmdline.txt"',
@@ -736,6 +862,12 @@ function Write-FirstBootSettings {
     param([string]$Root, [string]$UserName, [hashtable]$Settings)
     if (-not (Test-FirstBootWanted $Settings)) { return }
     if ($Settings['FLASH_WIFI_SSID']) { Set-CmdlineRegdom -Root $Root -Country $Settings['FLASH_WIFI_COUNTRY'] }
+    if ($Settings['FLASH_GITHUB_KEY'] -eq 'yes') {
+        $key = $Settings['GITHUB_KEY']
+        $dest = Join-Path $Root $Script:FlashGitHubKeyFile
+        Write-UnixFile $dest (([System.IO.File]::ReadAllText($key.Private) -replace "`r", '').TrimEnd("`n") -split "`n")
+        Write-UnixFile "$dest.pub" @($key.Public)
+    }
     if ((Test-Path -LiteralPath (Join-Path $Root 'user-data')) -or (Test-Path -LiteralPath (Join-Path $Root 'meta-data'))) {
         Write-CloudInit -Root $Root -UserName $UserName -Settings $Settings
         $what = "'user-data'"
@@ -748,6 +880,19 @@ function Write-FirstBootSettings {
     if ($Settings['FLASH_HOSTNAME']) { Write-Info "Hostname: $($Settings['FLASH_HOSTNAME'])" }
     if ($Settings['FLASH_WIFI_SSID']) { Write-Info "Wi-Fi: '$($Settings['FLASH_WIFI_SSID'])' (country $($Settings['FLASH_WIFI_COUNTRY']))" }
     if ($Settings['SSH_KEYS'].Count -gt 0) { Write-Info "SSH key(s) from $($Settings['FLASH_SSH_PUBKEY_FILE']) authorized for '$UserName'" }
+    if ($Settings['FLASH_GITHUB_KEY'] -eq 'yes') { Write-Info "New GitHub SSH key: moves to ~/.ssh/id_ed25519_github of '$UserName' on first boot" }
+}
+
+# Print the Pi's new GitHub public key and where to add it.
+function Write-GitHubKeyNotice {
+    param([string]$PublicKey)
+    Write-Host ''
+    Write-Step 'New SSH key for the Pi. Add it to GitHub so the Pi can reach your repositories:'
+    Write-Host '    https://github.com/settings/ssh/new   (or as a deploy key of one repository)'
+    Write-Host ''
+    Write-Host "    $PublicKey"
+    Write-Host ''
+    Write-Info 'Only the card has the private key; it was not kept on this PC.'
 }
 
 # --- main -------------------------------------------------------------
@@ -766,6 +911,7 @@ try {
         FLASH_WIFI_PASSWORD   = $WifiPassword
         FLASH_WIFI_COUNTRY    = $WifiCountry
         FLASH_SSH_PUBKEY_FILE = $SshPublicKeyFile
+        FLASH_GITHUB_KEY      = $GitHubKey
     }
     $firstBoot = Get-FlashSettings -Given $given -FromFile (Read-FlashConfig (Join-Path $configDir 'rpi-setup.env'))
     if ($SkipCustomize -and (Test-FirstBootWanted $firstBoot)) {
@@ -779,6 +925,11 @@ try {
     if (-not $SkipCustomize) {
         $cred = Get-Credentials -UserName $UserName -Password $Password
         $passHash = New-CryptHash $cred.Pass
+    }
+    if ($firstBoot['FLASH_GITHUB_KEY'] -eq 'yes') {
+        $keyHost = $firstBoot['FLASH_HOSTNAME']
+        if (-not $keyHost) { $keyHost = 'raspberrypi' }
+        $firstBoot['GITHUB_KEY'] = New-GitHubKey -Comment ("{0}@{1}" -f $cred.User, $keyHost)
     }
 
     # Pick the card last among the questions, so the slow part (Imager,
@@ -812,9 +963,14 @@ try {
         Write-Info 'Then on the Pi:'
         Write-Host '    git clone https://github.com/Chriszly/rpi-setup.git'
         Write-Host '    cd rpi-setup && sudo bash setup.sh'
+        if ($firstBoot['GITHUB_KEY']) { Write-GitHubKeyNotice $firstBoot['GITHUB_KEY'].Public }
     }
 }
 finally {
+    # The Pi's GitHub key is never left on this PC, whether the run succeeded or not.
+    if ($firstBoot -and $firstBoot['GITHUB_KEY']) {
+        Remove-Item -LiteralPath $firstBoot['GITHUB_KEY'].Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     # Cleanup is never skipped: once the script installed Imager, it is
     # removed on success AND on any failure, and the cached installers are
     # cleared, so the next run starts clean without stale artifacts.

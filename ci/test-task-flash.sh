@@ -31,7 +31,7 @@ new_bootfs() {
 }
 
 reset_flash_vars() {
-    unset FLASH_HOSTNAME FLASH_WIFI_SSID FLASH_WIFI_PASSWORD FLASH_WIFI_COUNTRY FLASH_SSH_PUBKEY_FILE
+    unset FLASH_HOSTNAME FLASH_WIFI_SSID FLASH_WIFI_PASSWORD FLASH_WIFI_COUNTRY FLASH_SSH_PUBKEY_FILE FLASH_GITHUB_KEY
     FLASH_KEYS=""
 }
 
@@ -272,23 +272,66 @@ can_prompt() { return 0; }
 default_pubkey() { echo /home/alice/.ssh/id_ed25519.pub; }
 invoking_home() { echo /home/alice; }
 reset_flash_vars
-ask_flash_settings <<<$'homepi\n\n' >/dev/null 2>&1   # hostname, no Wi-Fi, default key
+ask_flash_settings <<<$'homepi\n\n\n\n' >/dev/null 2>&1   # hostname, no Wi-Fi, default key, GitHub key
 assert_eq "ask_flash_settings takes the typed hostname" "homepi" "$FLASH_HOSTNAME"
 assert_eq "ask_flash_settings: empty Wi-Fi name means cable only" "" "$FLASH_WIFI_SSID"
 assert_eq "ask_flash_settings: no country asked without Wi-Fi" "" "${FLASH_WIFI_COUNTRY:-}"
 assert_eq "ask_flash_settings: Enter takes the key found in ~/.ssh" "/home/alice/.ssh/id_ed25519.pub" "$FLASH_SSH_PUBKEY_FILE"
+assert_eq "ask_flash_settings: Enter creates a GitHub key" "yes" "$FLASH_GITHUB_KEY"
 reset_flash_vars
 FLASH_HOSTNAME=given
-ask_flash_settings <<<$'My WiFi\nat\nnone\n' >/dev/null 2>&1   # no hostname question: it was given
+ask_flash_settings <<<$'My WiFi\nat\nnone\nn\n' >/dev/null 2>&1   # no hostname question: it was given
 assert_eq "ask_flash_settings does not ask for a value that was given" "given" "$FLASH_HOSTNAME"
 assert_eq "ask_flash_settings asks for the Wi-Fi name" "My WiFi" "$FLASH_WIFI_SSID"
 assert_eq "ask_flash_settings asks for the country after a Wi-Fi name" "at" "$FLASH_WIFI_COUNTRY"
 assert_eq "ask_flash_settings: 'none' means password login only" "" "$FLASH_SSH_PUBKEY_FILE"
+assert_eq "ask_flash_settings: 'n' means no GitHub key" "no" "$FLASH_GITHUB_KEY"
 reset_flash_vars
 ask_flash_settings <<<$'\n\n~/keys/pi.pub\n' >/dev/null 2>&1
 assert_eq "ask_flash_settings expands a typed ~/ to the invoking user's home" "/home/alice/keys/pi.pub" "$FLASH_SSH_PUBKEY_FILE"
 reset_flash_vars
 eval "$saved_helpers"   # restore the real helpers
+
+# --- GitHub key: created in a temp directory, copied to the card, kept out of user-data
+reset_flash_vars
+FLASH_GITHUB_KEY=Y
+validate_flash_options
+assert_eq "a yes-like GitHub key setting becomes yes" "yes" "$FLASH_GITHUB_KEY"
+assert_ok "want_firstboot is true with only the GitHub key" want_firstboot
+FLASH_GITHUB_KEY=maybe
+assert_fails "an invalid GitHub key setting is refused" validate_flash_options
+FLASH_GITHUB_KEY=yes
+if command -v ssh-keygen >/dev/null 2>&1; then
+    new_github_key pi@homepi
+    gh_dir="$FLASH_GH_DIR"
+    assert_contains "new_github_key creates an ed25519 key with the comment" "pi@homepi" "$FLASH_GH_PUB"
+    assert_eq "new_github_key's key starts with ssh-ed25519" "ssh-ed25519" "${FLASH_GH_PUB%% *}"
+    for img in trixie bookworm; do
+        d="$(new_bootfs "$img")"
+        write_firstboot_config "$d" pi >/dev/null 2>&1
+        assert_eq "$img: the private key is copied to the boot partition" \
+            "$(cat "$gh_dir/id_ed25519_github")" "$(cat "$d/rpi-setup-github-key")"
+        assert_eq "$img: the public key is copied next to it" "$FLASH_GH_PUB" "$(cat "$d/rpi-setup-github-key.pub")"
+        f="$d/user-data"; [[ "$img" == trixie ]] || f="$d/firstrun.sh"
+        assert_fails "$img: the first-boot file does not hold the private key" grep -q 'PRIVATE KEY' "$f"
+        assert_ok "$img: the key-moving script sets mode 600 and the user as owner" grep -q 'install -m 0600 -o "$U"' "$f"
+        assert_ok "$img: the key-moving script is for the login user" grep -q "U='pi'" "$f"
+        [[ "$img" == trixie ]] || assert_ok "bookworm: firstrun.sh with the GitHub key is valid bash" bash -n "$f"
+    done
+    d="$(new_bootfs trixie)"; write_firstboot_config "$d" pi >/dev/null 2>&1
+    assert_ok "trixie: user-data enables the one-shot service" grep -qx '  - \[systemctl, enable, rpi-setup-github-key.service\]' "$d/user-data"
+    if [[ "$have_yaml" -eq 1 ]]; then
+        assert_eq "trixie: user-data with the GitHub key is valid YAML" "/usr/local/sbin/rpi-setup-github-key" \
+            "$(yaml_get "$d/user-data" "d['write_files'][0]['path']")"
+        yaml_get "$d/user-data" "d['write_files'][0]['content']" >"$TMP/mover.sh"
+        assert_ok "trixie: the key-moving script is valid sh" sh -n "$TMP/mover.sh"
+    fi
+    remove_github_key
+    assert_eq "remove_github_key deletes the temp key directory" "gone" "$([[ -e "$gh_dir" ]] && echo there || echo gone)"
+else
+    skip "GitHub key cases need ssh-keygen"
+fi
+reset_flash_vars
 
 # --- CLI ---------------------------------------------------------------------------
 help="$(bash "$ROOT/host/flash.sh" -h 2>&1)"

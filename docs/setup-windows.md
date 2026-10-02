@@ -67,12 +67,14 @@ default shown in brackets):
    it also asks for the Wi-Fi password (hidden) and country (default `DE`).
 3. SSH public key file to authorize (default: the key found in
    `$HOME\.ssh`, `none` for password login only).
-4. A username (1-32 lowercase letters, digits, `_` or `-`).
-5. A password (at least 8 characters, ASCII, no `:`, hidden).
-6. The target disk, from a numbered list of removable drives with model,
+4. Whether to create a new SSH key for the Pi to use with GitHub (default
+   yes; its public key is printed at the end, to add on GitHub).
+5. A username (1-32 lowercase letters, digits, `_` or `-`).
+6. A password (at least 8 characters, ASCII, no `:`, hidden).
+7. The target disk, from a numbered list of removable drives with model,
    size, bus and drive letters, e.g.
    `1) PhysicalDrive1  Generic MassStorageClass  119.2 GB  (USB)  D: SDCARD`.
-7. `yes` to confirm it will DESTROY all data on that disk.
+8. `yes` to confirm it will DESTROY all data on that disk.
 
 Then it installs Imager if needed, downloads and checks the image and writes
 the card without asking anything else. A value passed as a switch, an
@@ -98,6 +100,7 @@ All switches:
 | `-WifiPassword`     | Its password (prompted, hidden, if omitted; empty = open network)   |
 | `-WifiCountry`      | Wi-Fi country code (regulatory domain); default `DE`                |
 | `-SshPublicKeyFile` | SSH public key to authorize for the user, e.g. `$HOME\.ssh\id_ed25519.pub` |
+| `-GitHubKey yes`/`no` | Create a new SSH key for the Pi to use with GitHub (asked if omitted) |
 
 ### Optional: host name, Wi-Fi and SSH key
 
@@ -111,7 +114,8 @@ ssh pi@homepi.local        # a few minutes later
 ```
 
 Instead of switches you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
-`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` as
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY`, `FLASH_SSH_PUBKEY_FILE` and
+`FLASH_GITHUB_KEY` as
 environment variables (`$env:FLASH_HOSTNAME = 'homepi'`) or in
 `config\rpi-setup.env` next to the scripts (see the `flash` section at the end
 of `config\rpi-setup.env.example`; only the `FLASH_*` lines are read).

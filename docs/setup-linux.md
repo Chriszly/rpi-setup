@@ -69,10 +69,12 @@ default shown in brackets):
    it also asks for the Wi-Fi password (hidden) and country (default `DE`).
 3. SSH public key file to authorize (default: the key found in your
    `~/.ssh`, `none` for password login only).
-4. A username and password (same rules as on Windows).
-5. The target disk, from the listed candidates with size, model and bus (a
+4. Whether to create a new SSH key for the Pi to use with GitHub (default
+   yes; its public key is printed at the end, to add on GitHub).
+5. A username and password (same rules as on Windows).
+6. The target disk, from the listed candidates with size, model and bus (a
    number, or a full `/dev/node` such as `/dev/sda`).
-6. `yes` to confirm it will DESTROY all data on that disk.
+7. `yes` to confirm it will DESTROY all data on that disk.
 
 Then it downloads and checks the image and writes the card without asking
 anything else. A value passed as an option, an environment variable or in
@@ -98,6 +100,7 @@ All options:
 | `-w PASSWORD`     | Its password (prompted, hidden, if omitted; empty = open network) |
 | `-c COUNTRY`      | Wi-Fi country code (regulatory domain); default `DE`           |
 | `-a KEYFILE`      | SSH public key to authorize for the user, e.g. `~/.ssh/id_ed25519.pub` |
+| `-g yes`/`no`     | Create a new SSH key for the Pi to use with GitHub (asked if omitted) |
 
 ### Optional: host name, Wi-Fi and SSH key
 
@@ -110,7 +113,8 @@ ssh pi@homepi.local        # a few minutes later
 ```
 
 Instead of flags you can set `FLASH_HOSTNAME`, `FLASH_WIFI_SSID`,
-`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY` and `FLASH_SSH_PUBKEY_FILE` in the
+`FLASH_WIFI_PASSWORD`, `FLASH_WIFI_COUNTRY`, `FLASH_SSH_PUBKEY_FILE` and
+`FLASH_GITHUB_KEY` in the
 environment (`sudo FLASH_HOSTNAME=homepi ./host/flash.sh`, since `sudo` drops
 other variables) or in `config/rpi-setup.env` next to the scripts (see the
 `flash` section at the end of `config/rpi-setup.env.example`; only the

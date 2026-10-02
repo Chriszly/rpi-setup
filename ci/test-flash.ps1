@@ -81,21 +81,58 @@ $defaultKey = 'C:\keys\id_ed25519.pub'
 function Get-DefaultPublicKey { $defaultKey }
 try {
     $s = @{ FLASH_HOSTNAME = ''; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
-    $script:answers = @('homepi', '', '')          # hostname, no Wi-Fi, default key
+    $script:answers = @('homepi', '', '', '')      # hostname, no Wi-Fi, default key, GitHub key (Enter = yes)
     Request-FlashSettings $s
     Assert-True ($s['FLASH_HOSTNAME'] -eq 'homepi') 'Request-FlashSettings takes the typed hostname'
     Assert-True (-not $s['FLASH_WIFI_SSID'] -and -not $s['FLASH_WIFI_COUNTRY']) 'Request-FlashSettings: empty Wi-Fi name means cable only, no country asked'
     Assert-True ($s['FLASH_SSH_PUBKEY_FILE'] -eq $defaultKey) 'Request-FlashSettings: Enter takes the key found in ~\.ssh'
+    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'yes') 'Request-FlashSettings: Enter creates a GitHub key'
 
     $s = @{ FLASH_HOSTNAME = 'given'; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = '' }
-    $script:answers = @('My WiFi', 'at', 'none')   # no hostname question: it was given
+    $script:answers = @('My WiFi', 'at', 'none', 'n')   # no hostname question: it was given
     Request-FlashSettings $s
     Assert-True ($s['FLASH_HOSTNAME'] -eq 'given') 'Request-FlashSettings does not ask for a value that was given'
     Assert-True ($s['FLASH_WIFI_SSID'] -eq 'My WiFi' -and $s['FLASH_WIFI_COUNTRY'] -eq 'at') 'Request-FlashSettings asks for the country after a Wi-Fi name'
     Assert-True (-not $s['FLASH_SSH_PUBKEY_FILE']) "Request-FlashSettings: 'none' means password login only"
+    Assert-True ($s['FLASH_GITHUB_KEY'] -eq 'no') "Request-FlashSettings: 'n' means no GitHub key"
 } finally {
     Remove-Item function:Read-Answer, function:Test-CanPrompt, function:Get-DefaultPublicKey -ErrorAction SilentlyContinue
 }
+
+# --- GitHub key: created in a temp folder, copied to the card, kept out of user-data
+$boot = Join-Path ([IO.Path]::GetTempPath()) ("flash_boot_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $boot | Out-Null
+$gh = $null
+try {
+    Set-Content -LiteralPath (Join-Path $boot 'meta-data') -Value ''      # a cloud-init (Trixie) card
+    $gh = New-GitHubKey -Comment 'pi@homepi'
+    Assert-True ($gh.Public -match '^ssh-ed25519 AAAA\S+ pi@homepi$') 'New-GitHubKey creates an ed25519 key with the user@host comment'
+    $privText = [IO.File]::ReadAllText($gh.Private)
+    Assert-True ($privText -match 'BEGIN OPENSSH PRIVATE KEY') 'New-GitHubKey writes an unencrypted OpenSSH private key'
+    $s = @{ FLASH_HOSTNAME = 'homepi'; FLASH_WIFI_SSID = ''; FLASH_WIFI_PASSWORD = ''; FLASH_WIFI_COUNTRY = ''; FLASH_SSH_PUBKEY_FILE = ''; FLASH_GITHUB_KEY = 'yes' }
+    Assert-FlashSettings $s
+    $s['GITHUB_KEY'] = $gh
+    Write-FirstBootSettings -Root $boot -UserName 'pi' -Settings $s
+    $cardKey = [IO.File]::ReadAllText((Join-Path $boot 'rpi-setup-github-key'))
+    Assert-True ($cardKey -eq ($privText -replace "`r", '')) 'the private key is copied to the boot partition with LF line endings'
+    Assert-True ([IO.File]::ReadAllText((Join-Path $boot 'rpi-setup-github-key.pub')) -eq "$($gh.Public)`n") 'the public key is copied next to it'
+    $ud = [IO.File]::ReadAllText((Join-Path $boot 'user-data'))
+    Assert-True ($ud -notmatch 'PRIVATE KEY') 'user-data does not contain the private key'
+    Assert-True ($ud -match "(?m)^  - path: /usr/local/sbin/rpi-setup-github-key$" -and $ud -match "(?m)^      U='pi'$") 'user-data installs the key-moving script for the login user'
+    Assert-True ($ud -match 'install -m 0600 -o "\$U"') 'the key-moving script sets mode 600 and the user as owner'
+    Assert-True ($ud -match '(?m)^  - \[systemctl, enable, rpi-setup-github-key\.service\]$') 'user-data enables the one-shot service'
+    Assert-True ($ud -notmatch "`r") 'user-data has LF line endings'
+
+    Remove-Item -LiteralPath (Join-Path $boot 'meta-data'), (Join-Path $boot 'user-data')
+    Set-Content -LiteralPath (Join-Path $boot 'cmdline.txt') -Value 'console=tty1 root=PARTUUID=x rootwait'
+    Write-FirstBootSettings -Root $boot -UserName 'pi' -Settings $s
+    $fr = [IO.File]::ReadAllText((Join-Path $boot 'firstrun.sh'))
+    Assert-True ($fr -match "(?m)^systemctl enable rpi-setup-github-key\.service$" -and $fr -notmatch 'PRIVATE KEY') 'firstrun.sh (Bookworm) installs and enables the service, without the private key'
+} finally {
+    if ($gh) { Remove-Item -LiteralPath $gh.Dir -Recurse -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $boot -Recurse -Force -ErrorAction SilentlyContinue
+}
+Assert-True ($source -match "Remove-Item -LiteralPath \`$firstBoot\['GITHUB_KEY'\]\.Dir") 'main() deletes the temp key folder in its finally block'
 
 # --- main() asks for the disk before the slow part (Imager, download, write)
 Assert-True ($source -match '(?s)\$targetDisk\s*=\s*Select-Disk\s*\$Disk.*\$imager\s*=\s*Find-Imager') 'main() selects the disk before Imager and the download'
