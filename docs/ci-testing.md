@@ -39,10 +39,10 @@ quirks). The workflow uses several increasingly faithful layers:
 - **`provision-gate`** is the per-PR gate. It boots the image with systemd as
   PID 1 (`ethanjli/pinspawn-action` with `boot: true`) inside a
   `systemd-nspawn` container on an `ubuntu-latest` runner. Systemd PID 1 is
-  essential: several tasks rely on `systemctl` (`web`, `monitoring`, `samba`),
+  essential: several tasks rely on `systemctl` (`web`, `samba`),
   which fails in a plain chroot-style container that never boots an init program.
   Each release runs as two parallel jobs, `system` (`base samba`) and `web`
-  (`web monitoring pihole`): package installs under arm64 emulation dominate
+  (`web pihole`): package installs under arm64 emulation dominate
   the gate, so splitting them roughly halves its wall time. A small `changes`
   job (`dorny/paths-filter`) skips the gate for PRs that touch none of
   `setup.sh`, `lib/`, `tasks/`, `ci/provision.sh`, this workflow or
@@ -68,15 +68,14 @@ itself) changes; `pr-template-validation.yml` checks the PR description.
 All three provisioning jobs run [`ci/provision.sh`](../ci/provision.sh) with a
 `PROVISION_PROFILE` (`container-system`, `container-web`, `full` or `docker`).
 Its `case` block is the single source of truth for each profile's tasks,
-services, containers and endpoints. `tailscale` is deliberately excluded
-everywhere - see [Interactive tasks](#interactive-tasks).
+services, containers and endpoints.
 
 After provisioning, every profile does:
 
 1. `systemctl is-active` for each service in the profile.
 2. `docker ps` and a running-state check for each expected container.
-3. `curl --retry` against each web endpoint (Netdata and NetAlertX
-   take a while to listen). Endpoints are requested on the machine's LAN
+3. `curl --retry` against each web endpoint (NetAlertX takes a while to
+   listen). Endpoints are requested on the machine's LAN
    address (`hostname -I`), not `localhost`, so a service that only listens on
    loopback fails here the way it would for a user on another PC.
 4. A **settings check**: the run takes its settings from a central
@@ -111,7 +110,6 @@ expected service and `docker logs` for every expected container into
 |-------------|-----------------------------------------------------------------------------|
 | `samba`     | `SAMBA_PASSWORD=testpw` in the settings file on the first run; without it the task would generate a password, never prompt. |
 | `pihole`    | Skips itself inside a container (Pi-hole needs port 53), so its unattended install is only exercised on a real Pi. |
-| `tailscale` | **Excluded** - `tailscale up` blocks waiting for interactive login.         |
 
 Because the container/VM runs as `root`, `real_user()` resolves to `root`, so
 `samba` configures `/home/root/nas-share` and warns. That is expected and
@@ -166,9 +164,7 @@ the image's `/opt/rpi-setup` instead, since QEMU has no bind mounts.
 - **No systemd sandboxing in the gate.** Units that use mount-namespace
   sandboxing (`ProtectSystem=`, `PrivateTmp=`, `LogNamespace=` ...) fail with
   "Failed at step NAMESPACE" in the nspawn container; `systemd-logind` does
-  too. `ci/provision.sh` replaces the `netdata` unit (whose upstream package, used
-  on Trixie, is sandboxed) with a copy minus those lines, inside containers
-  only.
+  too. No task the gate runs installs such a unit.
 - **No Docker in the gate.** Docker cannot run inside the nspawn container, so
   the gate's profiles skip `docker`, `netalertx` and `teamspeak`. Those
   tasks get x86 coverage from `docker-smoke` and arm64 coverage only from the
@@ -223,8 +219,8 @@ The GitHub Actions workflow is the supported path though; it installs
 ## Adding or changing tasks
 
 - If a task gains a new interactive prompt, feed it via an env var in
-  `run_setup()` in `ci/provision.sh`, or exclude it from CI (with a documented
-  reason) like `tailscale`.
+  `run_setup()` in `ci/provision.sh`, or exclude it from CI with a documented
+  reason.
 - If a task's verification needs a new service, container or port, extend the
   matching profile's `SERVICES`, `CONTAINERS` or `ENDPOINTS` list in
   `ci/provision.sh`. There is nothing to change in the workflow.

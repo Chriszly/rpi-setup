@@ -22,7 +22,7 @@ task's ports are opened. It looks at what is installed when it runs.
 ## What gets opened
 
 Always allowed: SSH, ping, loopback, everything over Tailscale
-(`tailscale0`), Docker's networks, mDNS (`<host>.local`) and replies to
+(`tailscale0`, if you installed it yourself), Docker's networks, mDNS (`<host>.local`) and replies to
 connections the Pi started.
 
 | Service (when installed, natively or in its container) | Ports | Who may connect |
@@ -31,11 +31,10 @@ connections the Pi started.
 | Pi-hole DHCP (when its DHCP server is on) | 67/udp, 547/udp for IPv6 | anyone |
 | Pi-hole admin | its web port (80 or 8080) | `FIREWALL_ALLOW_FROM` |
 | nginx (`web`) | its listen ports | `FIREWALL_ALLOW_FROM` |
-| Netdata (`monitoring`) | `MONITORING_PORT` (not when bound to 127.0.0.1) | `FIREWALL_ALLOW_FROM` |
 | NetAlertX | `NETALERTX_PORT` and 20212 (its API) | `FIREWALL_ALLOW_FROM` |
 | TeamSpeak | voice, file and query ports | anyone |
 | Samba | 445/tcp, 139/tcp, 137/udp, 138/udp | anyone |
-| Tailscale | 41641/udp | anyone |
+| Tailscale (installed by hand) | 41641/udp | anyone |
 
 ## What it installs
 

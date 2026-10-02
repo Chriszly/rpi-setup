@@ -266,17 +266,6 @@ check_tasks() {
     fi
   fi
 
-  if task_in_container monitoring netdata || unit_exists netdata; then
-    found=1; check_config monitoring
-    local mport mhost="$host"
-    mport="$(port_setting MONITORING_PORT 19999)"
-    if task_in_container monitoring netdata; then check_container netdata
-    else check_service netdata "monitoring"
-    fi
-    case "${MONITORING_BIND:-0.0.0.0}" in 127.0.0.1|localhost) mhost=localhost ;; esac
-    check_http "monitoring: web" "http://$mhost:$mport/"
-  fi
-
   if task_in_container web || unit_exists nginx; then
     found=1; check_config web
     local wport site=/etc/nginx/sites-available/default
@@ -318,20 +307,6 @@ check_tasks() {
     local share="${SAMBA_SHARE_NAME:-nas-share}"
     if grep -qF "[$share]" /etc/samba/smb.conf 2>/dev/null; then report OK "samba: share" "[$share] in smb.conf"
     else report WARN "samba: share" "[$share] not found in /etc/samba/smb.conf"
-    fi
-  fi
-
-  if task_in_container tailscale; then
-    found=1
-    check_container tailscale
-    if docker exec tailscale tailscale status >/dev/null 2>&1; then report OK "tailscale: login" "logged in"
-    else report WARN "tailscale: login" "not logged in (sudo docker exec tailscale tailscale up)"
-    fi
-  elif have tailscale; then
-    found=1
-    check_service tailscaled "tailscale"
-    if tailscale status >/dev/null 2>&1; then report OK "tailscale: login" "logged in"
-    else report WARN "tailscale: login" "not logged in (sudo tailscale up)"
     fi
   fi
 

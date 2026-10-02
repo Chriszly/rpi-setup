@@ -31,19 +31,19 @@ case "$PROFILE" in
         ENDPOINTS=()
         ;;
     container-web)
-        TASKS=(web monitoring pihole)
-        SERVICES=(nginx netdata)
+        TASKS=(web pihole)
+        SERVICES=(nginx)
         ENABLED=()
         CONTAINERS=()
-        ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12")
+        ENDPOINTS=("http://LANIP:80:12")
         ;;
-    # Every task except tailscale (QEMU VM).
+    # The service tasks (QEMU VM).
     full)
-        TASKS=(base docker samba web monitoring pihole netalertx teamspeak)
-        SERVICES=(docker smbd nginx netdata fail2ban)
+        TASKS=(base docker samba web pihole netalertx teamspeak)
+        SERVICES=(docker smbd nginx fail2ban)
         ENABLED=(ssh)
         CONTAINERS=(netalertx teamspeak)
-        ENDPOINTS=("http://LANIP:19999:60" "http://LANIP:80:12" "http://LANIP:20211:120")
+        ENDPOINTS=("http://LANIP:80:12" "http://LANIP:20211:120")
         ;;
     # Only the Docker-based tasks (plain runner).
     docker)
@@ -102,7 +102,6 @@ write_ci_config() {
         echo "WEB_TITLE='$CI_WEB_TITLE'"
         echo "BASE_TIMEZONE=Europe/Berlin"
         echo "BASE_JOURNAL_MAX_SIZE=50M"
-        echo "MONITORING_TELEMETRY=no"
         [[ "$mode" == rerun ]] || echo "SAMBA_PASSWORD=testpw"
     } >"$CI_CONFIG_DIR/rpi-setup.env"
     chmod 0600 "$CI_CONFIG_DIR/rpi-setup.env"
@@ -197,24 +196,6 @@ verify_endpoints() {
     done
 }
 
-# The nspawn gate (x86 runner, arm64 guest under qemu-user) cannot set up the
-# mount namespaces that systemd sandboxing options need: units using them die
-# with "Failed at step NAMESPACE" (systemd-logind does too). Netdata's own
-# package, which "monitoring" installs on Trixie, is sandboxed that way, so in
-# containers only, replace its unit with a copy minus the sandboxing lines.
-# Real Pis and the QEMU VM keep the unit as shipped.
-unsandbox_in_container() {
-    in_container || return 0
-    local unit=netdata.service frag
-    frag="$(systemctl show -P FragmentPath "$unit" 2>/dev/null)" || return 0
-    [[ -n "$frag" && -f "$frag" && "$frag" != /etc/* ]] || return 0
-    grep -Ev '^[[:space:]]*(Protect[A-Za-z]*|Private[A-Za-z]*|ProcSubset|LogNamespace|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ReadWriteDirectories|ReadOnlyDirectories|InaccessibleDirectories|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountAPIVFS|RestrictFileSystems)=' \
-        "$frag" >"/etc/systemd/system/$unit"
-    echo "=== CI: using an unsandboxed copy of $frag ==="
-    systemctl daemon-reload
-    systemctl restart "$unit" || true
-}
-
 # Every package install ends in "systemctl daemon-reload", and on Trixie in the
 # nspawn gate each reload took ~16 s (36 reloads, ~9.5 of the ~16 min of the
 # "system" half). Nearly all of it is rpi-swap-generator, which takes ~11 s
@@ -261,7 +242,6 @@ main() {
 
     echo "=== Provisioning ==="
     run_setup "$workdir"
-    unsandbox_in_container
     verify_services
     verify_containers
     verify_endpoints

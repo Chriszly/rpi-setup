@@ -1,7 +1,7 @@
 # backup - nightly backup
 
 Archives everything rpi-setup created every night, so a dead SD card is not
-the end: container data, Pi-hole, Samba, SSH, nginx and Netdata settings,
+the end: container data, Pi-hole, Samba, SSH and nginx settings,
 rpi-setup's own state (UIDs, generated passwords) and its config.
 
 ```bash
@@ -24,11 +24,9 @@ The task installs a systemd timer and makes a first backup straight away.
 Whatever exists of: `/opt/<task>/` for every rpi-setup container (compose
 file and data), `/etc/pihole`, `/etc/samba/smb.conf`,
 `/var/lib/samba/private` (Samba passwords), `/var/lib/rpi-setup`,
-`/etc/nginx/sites-available`, `/etc/netdata`, `/etc/ssh/sshd_config.d`, the
+`/etc/nginx/sites-available`, `/etc/ssh/sshd_config.d`, the
 rpi-setup `config/` folder, and with `BACKUP_INCLUDE_SHARE=yes` the share
-folder (also when Samba runs in its container). Netdata's metrics cache in a
-container (`/opt/monitoring/cache`) is left out; it is large and rebuilt on
-its own.
+folder (also when Samba runs in its container).
 
 ## What it installs
 

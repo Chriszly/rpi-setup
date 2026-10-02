@@ -274,14 +274,6 @@ firewall_service_ports() {
     [[ -n "$p" ]] || p="${WEB_PORT:-80}"
     for p in $p; do printf '%s/tcp web nginx\n' "$p"; done
   fi
-  if apt_installed netdata || task_in_container monitoring netdata; then
-    load_task_config monitoring >/dev/null
-    : "${MONITORING_PORT:=19999}" "${MONITORING_BIND:=0.0.0.0}"
-    require_port MONITORING_PORT
-    if [[ "$MONITORING_BIND" != 127.0.0.1 && "$MONITORING_BIND" != localhost ]]; then
-      printf '%s/tcp web netdata\n' "$MONITORING_PORT"
-    fi
-  fi
   if [[ -f /opt/netalertx/docker-compose.yml ]]; then
     load_task_config netalertx >/dev/null
     : "${NETALERTX_PORT:=20211}"
@@ -302,7 +294,7 @@ firewall_service_ports() {
   if apt_installed samba || task_in_container samba; then
     printf '445/tcp open samba\n139/tcp open samba\n137/udp open samba-netbios\n138/udp open samba-netbios\n'
   fi
-  if command -v tailscale >/dev/null 2>&1 || task_in_container tailscale; then
+  if command -v tailscale >/dev/null 2>&1; then
     printf '41641/udp open tailscale-direct\n'
   fi
 }

@@ -37,16 +37,13 @@ nano config/rpi-setup.env
 
 If the repository is private, clone as shown in Step 4 of
 [docs/setup-linux.md](setup-linux.md). Fill in what you want to test (see the
-comments in the file). Leave
-`TAILSCALE_AUTHKEY` empty unless you want to test Tailscale.
+comments in the file).
 
 ## 4. Run all tasks
 
 ```bash
-sudo bash setup.sh base docker samba web monitoring pihole netalertx teamspeak 2>&1 | tee ~/run1.log
+sudo bash setup.sh base docker samba web pihole netalertx teamspeak 2>&1 | tee ~/run1.log
 ```
-
-Add `tailscale` to the list if you want to test it too.
 
 - [ ] Did every task end with `[+] Complete: <task>`?
 - [ ] How long did the run take?
@@ -62,12 +59,12 @@ sudo bash check.sh | tee ~/check1.txt
 
 `check.sh` changes nothing. It prints one line per check (OK, WARN or FAIL)
 and a summary. Also open the web pages it lists from another PC on your
-network (Netdata, the nginx page, Pi-hole admin, NetAlertX).
+network (the nginx page, Pi-hole admin, NetAlertX).
 
 ## 6. Re-run everything (idempotency)
 
 ```bash
-sudo bash setup.sh base docker samba web monitoring pihole netalertx teamspeak 2>&1 | tee ~/run2.log
+sudo bash setup.sh base docker samba web pihole netalertx teamspeak 2>&1 | tee ~/run2.log
 sudo bash check.sh | tee ~/check2.txt
 ```
 

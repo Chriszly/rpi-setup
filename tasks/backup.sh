@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Task: backup - nightly archive of everything rpi-setup created, so a failed
-# SD card is not the end: container data, Pi-hole, Samba, SSH, nginx, Netdata
+# SD card is not the end: container data, Pi-hole, Samba, SSH and nginx
 # settings, rpi-setup's own state (UIDs, generated passwords) and its config.
 # Settings: BACKUP_* in config/rpi-setup.env (names in config/tasks/backup.env).
 set -euo pipefail
@@ -139,7 +139,7 @@ backup_run_paths() {
       [[ -f "$d/docker-compose.yml" || -f "$d/docker-compose.yml.disabled" ]] && printf '%s\n' "${d#"$root"/}"
     done
     for p in etc/pihole etc/samba/smb.conf var/lib/samba/private var/lib/rpi-setup \
-             etc/nginx/sites-available etc/netdata etc/ssh/sshd_config.d; do
+             etc/nginx/sites-available etc/ssh/sshd_config.d; do
       printf '%s\n' "$p"
     done
     for p in "${BK_CONFIG_DIRS[@]}"; do
@@ -198,9 +198,6 @@ backup_run() {
   dest_rel="${dest_rel#"$(cd "$root" && pwd -P)"}"
   dest_rel="${dest_rel#/}"
   [[ -z "$dest_rel" ]] || exclude=(--exclude="$dest_rel")
-  # Netdata's metrics database (MONITORING_DOCKER=yes); like /var/cache/netdata
-  # of a native install it is large and rebuilt on its own.
-  exclude+=(--exclude=opt/monitoring/cache)
   printf 'rpi-setup-backup: %s\n' "${paths[@]}" >&2
   # Exit status 1 only means a file changed while it was read (a live
   # container writing); anything else is a real failure.
