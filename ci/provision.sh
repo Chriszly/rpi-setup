@@ -33,15 +33,15 @@ case "$PROFILE" in
     container-web)
         TASKS=(web pihole)
         SERVICES=(nginx)
-        ENABLED=()
+        ENABLED=(rpi-setup-web-links.timer)
         CONTAINERS=()
-        ENDPOINTS=("http://LANIP:80:12")
+        ENDPOINTS=("http://LANIP:80:12" "http://LANIP:80/services.json:12")
         ;;
     # The service tasks (QEMU VM).
     full)
         TASKS=(base docker samba web pihole netalertx teamspeak)
         SERVICES=(docker smbd nginx fail2ban)
-        ENABLED=(ssh)
+        ENABLED=(ssh rpi-setup-web-links.timer)
         CONTAINERS=(netalertx teamspeak)
         ENDPOINTS=("http://LANIP:80:12" "http://LANIP:20211:120")
         ;;

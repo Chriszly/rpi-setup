@@ -11,7 +11,7 @@ set -euo pipefail
 
 PORT=8090
 setup() { env "$@" bash "$ROOT/setup.sh" web; }
-page() { curl -fsS --max-time 5 "http://127.0.0.1:${1:-$PORT}/" 2>/dev/null || true; }
+page() { curl -fsS --max-time 5 "http://127.0.0.1:${1:-$PORT}/${2:-}" 2>/dev/null || true; }
 started() { docker inspect -f '{{.State.StartedAt}}' web 2>/dev/null || true; }
 
 setup WEB_DOCKER=no WEB_PORT=$PORT
@@ -23,6 +23,8 @@ assert_eq "the container serves the native page on the native port" "my own page
 assert_fails "native nginx is stopped" systemctl is-active --quiet nginx
 assert_eq "the container runs as 'web'" "running" "$(docker inspect -f '{{.State.Status}}' web 2>/dev/null)"
 assert_contains "nginx listens on $PORT in the container's config" "listen $PORT;" "$(cat /opt/web/conf/default.conf)"
+assert_contains "the container serves the service list" '"services":[' "$(page "$PORT" services.json)"
+assert_ok "the service list timer is on" systemctl is-enabled --quiet rpi-setup-web-links.timer
 
 before="$(started)"
 setup WEB_DOCKER=yes

@@ -1,7 +1,8 @@
 # web - nginx
 
-Installs the [nginx](https://nginx.org/) web server with a simple start page,
-ready for your own pages or as a reverse proxy.
+Installs the [nginx](https://nginx.org/) web server with a start page that
+links every web page running on the Pi (Pi-hole, NetAlertX, usage-control and
+any other container), ready for your own pages or as a reverse proxy.
 
 ```bash
 sudo bash setup.sh web
@@ -22,10 +23,46 @@ sudo bash setup.sh web
 - The listen port of the default site, `/etc/nginx/sites-available/default`.
 - The start page `/var/www/html/index.html`. A page you put there yourself is
   never overwritten.
+- `/usr/local/sbin/rpi-setup-web-links` and the `rpi-setup-web-links.timer`
+  that runs it every minute. It writes the list of web pages,
+  `services.json`, next to the start page ([below](#the-start-page)).
 
 ## Reach it
 
 `http://<pi>` (or `http://<pi>:8080`); the task prints the address.
+
+## The start page
+
+The page follows the light or dark setting of your browser or system on its
+own. It shows one card per web page on the Pi, with a green dot when it
+answers and a red one when it does not, and links each one on the address you
+opened the page with (`raspi.local` or the IP address).
+
+The list comes from `services.json`, which the timer rewrites every minute
+(only when something changed); the page reads it again every 30 seconds. So a
+service you set up later shows up without touching the page. It lists:
+
+- Pi-hole's admin page, in its container or on the host, on the port Pi-hole
+  really uses.
+- The containers of rpi-setup's tasks that have a web page: NetAlertX and
+  usage-control. TeamSpeak and Samba have none, and nginx is the page itself.
+- Any other running container that publishes a port on the LAN which answers
+  HTTP, under the container's name. Ports published on `127.0.0.1` only are
+  left out.
+
+A container can name its own card with Docker labels, which also lists a
+container on the host network (it publishes no ports):
+
+```yaml
+    labels:
+      rpi-setup.link.port: "8123"          # port on the Pi; required
+      rpi-setup.link.name: "Home Assistant" # default: the container name
+      rpi-setup.link.path: "/"              # default: /
+      rpi-setup.link.description: "Smart home"
+```
+
+`rpi-setup.link: "no"` hides a container from the list. Refresh the list
+right away with `sudo rpi-setup-web-links`.
 
 ## Run it in Docker
 
@@ -46,5 +83,8 @@ Docker is installed first if it is missing.
 - Pi-hole and nginx can run together: whichever comes second moves to port
   8080.
 - With the `firewall` task, the port is open only to `FIREWALL_ALLOW_FROM`
-  (and Tailscale) when that is set.
-- Turn it off with `sudo systemctl disable --now nginx`.
+  when that is set.
+- Turn it off with `sudo systemctl disable --now nginx` (and the list with
+  `sudo systemctl disable --now rpi-setup-web-links.timer`).
+- With your own `index.html` the list is still written, so your page can
+  read `services.json` too.
