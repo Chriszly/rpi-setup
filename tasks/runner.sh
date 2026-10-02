@@ -146,11 +146,18 @@ runner_deploy_script() {
   printf 'DP_LOCK=/run/rpi-setup-deploy.lock\n'
   printf 'DP_RUNNER_USER=%q\n' "$RPI_RUNNER_USER"
   declare -f deploy_run_git deploy_run_args deploy_run_owner deploy_run_check_config \
-    deploy_run_tasks deploy_run_config deploy_run
+    deploy_run_tasks deploy_run_config deploy_run_errors deploy_run
   printf 'deploy_run "$@"\n'
 }
 
 # --- Code of the deploy command (uses only DP_* variables and plain tools) ---
+
+# The error lines ("[x] ...", what die printed) of log $1, so the workflow log
+# says why a task failed. The rest of the log stays on the Pi: it can hold
+# generated passwords, which no error line prints.
+deploy_run_errors() {
+  sed -n -e 's/\x1b\[[0-9;]*m//g' -e 's/^\[x\] \(.*\)/rpi-setup-deploy: error: \1/p' "$1" >&2
+}
 
 # git in $DP_DIR as the user who owns the checkout, so root never leaves
 # root-owned files in it.
@@ -293,6 +300,7 @@ deploy_run() {
     ( umask 077
       bash "$DP_DIR/update.sh" --containers-only </dev/null >"$log" 2>&1 ) || rc=$?
     sed -n '/^Summary:/,$p' "$log"
+    [[ $rc -eq 0 ]] || deploy_run_errors "$log"
     [[ $rc -eq 0 ]] || echo "rpi-setup-deploy: update.sh failed (exit $rc); details on the Pi: sudo less $log" >&2
     if [[ ${#tasks[@]} -eq 0 ]]; then
       echo 'rpi-setup-deploy: no new tasks'
@@ -309,6 +317,7 @@ deploy_run() {
     SUDO_USER="$owner" SUDO_UID="$(id -u "$owner")" SUDO_GID="$(id -g "$owner")" \
       RPI_SETUP_CONFIG_DIR="$DP_CONFIG_DIR" bash "$DP_DIR/setup.sh" "${tasks[@]}" </dev/null >"$log" 2>&1 ) || src=$?
   sed -n '/^Summary:/,$p' "$log"
+  [[ $src -eq 0 ]] || deploy_run_errors "$log"
   [[ $src -eq 0 ]] || echo "rpi-setup-deploy: setup.sh failed (exit $src); details on the Pi: sudo less $log" >&2
   [[ $src -eq 0 ]] || rc=$src
   return "$rc"
