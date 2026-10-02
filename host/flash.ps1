@@ -226,13 +226,15 @@ function Get-Image {
 function Select-Disk {
     param([int]$Requested)
 
-    $disks = Get-Disk | Where-Object {
-        ($_.IsRemovable -or $_.BusType -in @('SD', 'eMMC')) -and -not $_.IsSystem
-    } | Sort-Object Number
+    # Get-Disk has no IsRemovable property; card readers show up as BusType USB,
+    # SD or MMC. Size 0 is an empty slot of a multi-slot reader.
+    $disks = @(Get-Disk | Where-Object {
+        $_.BusType -in @('USB', 'SD', 'MMC') -and -not $_.IsSystem -and -not $_.IsBoot -and $_.Size -gt 0
+    } | Sort-Object Number)
 
     if ($disks.Count -eq 0) {
         Write-Warn 'No removable SD/USB disk detected. Make sure your card reader is plugged in and the card is inserted.'
-        $disks = Get-Disk | Where-Object { -not $_.IsSystem } | Sort-Object Number
+        $disks = @(Get-Disk | Where-Object { -not $_.IsSystem -and -not $_.IsBoot -and $_.Size -gt 0 } | Sort-Object Number)
         if ($disks.Count -eq 0) { Fail 'No writable disks found.' }
     }
 
