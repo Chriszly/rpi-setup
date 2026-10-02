@@ -119,7 +119,8 @@ EOF
     fi
     return
   fi
-  token="$(wait_for_log "$name" 'privilege key')"
+  wait_for_log "$name" 'token=' >/dev/null
+  token="$(teamspeak_token "$name")"
 
   say "TeamSpeak 6 server ready at ${ip:-<pi-ip>}:${TEAMSPEAK_VOICE_PORT} (file transfer :${TEAMSPEAK_FILE_PORT}, web query :${TEAMSPEAK_QUERY_PORT})"
   if [[ -n "$token" ]]; then
@@ -127,7 +128,14 @@ EOF
     printf '  %s\n' "$token"
   else
     warn "Could not spot the ServerAdmin privilege key in the logs yet."
-    say "Find it later with: docker logs $name"
+    say "Find it later with: sudo docker logs $name 2>&1 | grep -A6 'privilege key'"
   fi
   say "Connect with the TeamSpeak 6 client and enter the privilege key when asked."
+}
+
+# The ServerAdmin privilege key from container $1's log. The server prints it a
+# few lines below its "privilege key created" banner, as token=<key>.
+teamspeak_token() {
+  docker logs "$1" 2>&1 | grep -oE 'token=[^[:space:]]+' | tail -n1 | cut -d= -f2-
+  return 0
 }
