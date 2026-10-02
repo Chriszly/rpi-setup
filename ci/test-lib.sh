@@ -109,13 +109,12 @@ unset -f ss
 
 # --- lib/common.sh: task_in_container (docker mocked) -------------------------
 ctr="$(mktemp -d)"
-install -d "$ctr/web" "$ctr/monitoring" "$ctr/samba"
-touch "$ctr/web/docker-compose.yml" "$ctr/monitoring/docker-compose.yml"
-docker() { [[ "$1 $2 $3" == "inspect --type container" && " web netdata " == *" $4 "* ]]; }
+install -d "$ctr/web" "$ctr/pihole" "$ctr/samba"
+touch "$ctr/web/docker-compose.yml" "$ctr/pihole/docker-compose.yml"
+docker() { [[ "$1 $2 $3" == "inspect --type container" && " web " == *" $4 "* ]]; }
 RPI_SETUP_CONTAINER_ROOT="$ctr"
 assert_ok "task_in_container: compose file and container" task_in_container web
-assert_ok "task_in_container: container named differently" task_in_container monitoring netdata
-assert_fails "task_in_container: container removed (back to native)" task_in_container monitoring
+assert_fails "task_in_container: container removed (back to native)" task_in_container pihole
 assert_fails "task_in_container: no compose file" task_in_container samba
 unset RPI_SETUP_CONTAINER_ROOT
 unset -f docker
@@ -258,16 +257,6 @@ assert_fails "write_if_changed reports unchanged"      eval "echo a | write_if_c
 assert_eq    "write_if_changed applies the mode"       "600" "$(stat -c %a "$tmp/f")"
 assert_ok    "write_if_changed reports a change"       eval "echo b | write_if_changed '$tmp/f'"
 assert_eq    "write_if_changed wrote the new content"  "b" "$(cat "$tmp/f")"
-
-printf '[global]\n\tworkgroup = W\n[web]\n\t# default port = 1\n\tbind to = x\n' >"$tmp/ini"
-assert_ok    "ini_set adds a key to a section" ini_set "$tmp/ini" web 'default port' 2000
-assert_contains "ini_set skips commented keys" $'\t# default port = 1' "$(cat "$tmp/ini")"
-assert_contains "ini_set wrote the key" $'\tdefault port = 2000' "$(cat "$tmp/ini")"
-assert_fails "ini_set is idempotent" ini_set "$tmp/ini" web 'default port' 2000
-assert_ok    "ini_set replaces a value" ini_set "$tmp/ini" web 'bind to' 127.0.0.1
-assert_eq    "ini_set leaves one line per key" "1" "$(grep -c 'bind to' "$tmp/ini")"
-assert_ok    "ini_set appends a missing section" ini_set "$tmp/ini" new k v
-assert_contains "ini_set appended the section" $'[new]\n\tk = v' "$(cat "$tmp/ini")"
 
 printf 'dtparam=audio=on\n[all]\n' >"$tmp/config.txt"
 assert_fails "boot_config_block leaves config.txt alone without options" eval "printf '' | boot_config_block '$tmp/config.txt'"

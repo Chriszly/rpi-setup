@@ -61,10 +61,10 @@ assert_eq "http 401 with any is OK" OK "$(http_status 401 any)"
 assert_eq "http 000 with any is FAIL" FAIL "$(http_status 000 any)"
 
 # --- port_setting ---------------------------------------------------------------
-assert_eq "port_setting uses the default when unset" 19999 "$(unset MONITORING_PORT; port_setting MONITORING_PORT 19999)"
-assert_eq "port_setting uses a valid value" 20000 "$(MONITORING_PORT=20000 port_setting MONITORING_PORT 19999)"
-assert_eq "port_setting ignores an invalid value" 19999 "$(MONITORING_PORT=99999 port_setting MONITORING_PORT 19999)"
-assert_eq "port_setting ignores text" 19999 "$(MONITORING_PORT=abc port_setting MONITORING_PORT 19999)"
+assert_eq "port_setting uses the default when unset" 20211 "$(unset NETALERTX_PORT; port_setting NETALERTX_PORT 20211)"
+assert_eq "port_setting uses a valid value" 20000 "$(NETALERTX_PORT=20000 port_setting NETALERTX_PORT 20211)"
+assert_eq "port_setting ignores an invalid value" 20211 "$(NETALERTX_PORT=99999 port_setting NETALERTX_PORT 20211)"
+assert_eq "port_setting ignores text" 20211 "$(NETALERTX_PORT=abc port_setting NETALERTX_PORT 20211)"
 
 # --- report / summary -----------------------------------------------------------
 out="$(report OK ssh "service ssh active, enabled")"
@@ -101,16 +101,15 @@ unset -f systemctl
 
 # --- check_tasks in container mode (<TASK>_DOCKER=yes, docker stubbed) ----------
 ctr="$(mktemp -d)"
-for t in web monitoring pihole samba tailscale; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compose.yml"; done
+for t in web pihole samba; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compose.yml"; done
 install -d "$ctr/web/conf" "$ctr/samba/data"
 printf 'server {\n    listen 8088;\n}\n' >"$ctr/web/conf/default.conf"
 printf 'share:\n  - name: "nas-share"\n' >"$ctr/samba/data/config.yml"
 docker() {
   case "$1 ${2:-}" in
-    "inspect --type") [[ " web netdata pihole samba tailscale " == *" ${4:-} "* ]] ;;
+    "inspect --type") [[ " web pihole samba " == *" ${4:-} "* ]] ;;
     "inspect -f") echo running ;;
     "exec pihole") echo '8089o,[::]:8089o' ;;
-    "exec tailscale") return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -119,13 +118,12 @@ ss() { echo 'LISTEN 0 0 *:x *:*'; }
 unit_exists() { return 1; }
 apt_installed() { return 1; }
 out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" RPI_SETUP_CONFIG_DIR="$ctr/cfg" check_tasks 2>&1)"
-for c in web netdata pihole samba tailscale; do
+for c in web pihole samba; do
   assert_contains "container mode: $c is checked as a container" "container $c" "$out"
 done
 assert_contains "container mode: web port from the container's site" ":8088/" "$out"
 assert_contains "container mode: Pi-hole port from FTL in the container" ":8089/admin/" "$out"
 assert_contains "container mode: samba share from config.yml" "[nas-share] in the container's config.yml" "$out"
-assert_contains "container mode: tailscale login through the container" "logged in" "$out"
 assert_lacks "container mode: no native nginx check" "service nginx" "$out"
 assert_lacks "container mode: no native smbd check" "service smbd" "$out"
 unset -f docker curl ss unit_exists apt_installed

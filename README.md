@@ -61,16 +61,17 @@ how to reach it and what to watch out for.
 | [`base`](docs/tasks/base.md) | OS update, EEPROM firmware, SSH kept on, essential tools, fail2ban, daily security updates, optional key-only SSH, journal size limit | `BASE_HOSTNAME`, `BASE_TIMEZONE`, Pi 5: `BASE_PCIE_GEN3` |
 | [`docker`](docs/tasks/docker.md) | Docker Engine, buildx and Compose (apt), log rotation | none needed |
 | [`network`](docs/tasks/network.md) | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
-| [`tailscale`](docs/tasks/tailscale.md) | Tailscale WireGuard VPN (official installer) | `TAILSCALE_AUTHKEY` (else it prints a login URL) |
 | [`pihole`](docs/tasks/pihole.md) | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended | `PIHOLE_PASSWORD`, `PIHOLE_DNS` |
 | [`samba`](docs/tasks/samba.md) | Read-write NAS share `\\<pi>\nas-share` for your user | `SAMBA_PASSWORD` |
 | [`backup`](docs/tasks/backup.md) | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
 | [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) | `WEB_PORT`, `WEB_TITLE` |
-| [`monitoring`](docs/tasks/monitoring.md) | Netdata dashboard on `http://<pi>:19999` | `MONITORING_PORT` |
 | [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |
 | [`teamspeak`](docs/tasks/teamspeak.md) | TeamSpeak 6 server, voice `:9987`, file `:30033`, web query `:10080` (needs `docker`, 64-bit OS) | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` |
 | [`runner`](docs/tasks/runner.md) | GitHub runner for a manual *Deploy to Pi* button in your private settings repository ([template](templates/private-repo/README.md)) | `RUNNER_REPO`, `RUNNER_TOKEN` (once) |
 | [`firewall`](docs/tasks/firewall.md) | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
+
+No task needs an account with an outside service; `runner` only needs a
+one-time token from your own GitHub repository.
 
 The SD card settings of the flash scripts (`FLASH_*`) have their own page:
 [flash](docs/tasks/flash.md).
@@ -103,7 +104,6 @@ BASE_HOSTNAME=homepi
 BASE_TIMEZONE=Europe/Berlin
 SAMBA_PASSWORD='my secret #1'   # quote values with " #" or spaces at the ends
 PIHOLE_DNS=9.9.9.9
-TAILSCALE_AUTHKEY=tskey-auth-...
 ```
 
 - Leave a value empty, or delete the line, to get the default.
@@ -128,11 +128,11 @@ TAILSCALE_AUTHKEY=tskey-auth-...
   folder; it wins over `/etc/rpi-setup`.
 
 With the settings filled in, a whole setup runs unattended:
-`sudo bash setup.sh base docker samba pihole tailscale netalertx`. Passwords
+`sudo bash setup.sh base docker samba pihole netalertx`. Passwords
 you leave empty (`SAMBA_PASSWORD`, `PIHOLE_PASSWORD`, `NETALERTX_PASSWORD`)
 are generated on the first install, printed once and saved (root-only) in
 `/var/lib/rpi-setup/secrets/<task>.env`. Re-running a task applies changed
-settings: ports, the share, fail2ban, the Netdata bind and the containers are
+settings: ports, the share, fail2ban and the containers are
 rewritten; Pi-hole's DNS, interface and logging are only used at install
 (change them in its web UI afterwards).
 
@@ -151,10 +151,8 @@ instead of installing it with apt. Set it to `yes` and run the task again:
 - Setting it back to `no` stops the container and starts the native service.
 
 Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
-[`monitoring`](docs/tasks/monitoring.md#run-it-in-docker),
-[`pihole`](docs/tasks/pihole.md#run-it-in-docker),
-[`samba`](docs/tasks/samba.md#run-it-in-docker) and
-[`tailscale`](docs/tasks/tailscale.md#run-it-in-docker) (native recommended).
+[`pihole`](docs/tasks/pihole.md#run-it-in-docker) and
+[`samba`](docs/tasks/samba.md#run-it-in-docker).
 `netalertx` and `teamspeak` always run in Docker; `base`, `docker`, `network`,
 `backup` and `firewall` always run natively. The `firewall`, `backup` and
 `check.sh` recognise a task running in its container.
@@ -218,8 +216,8 @@ is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
 - Run with `sudo` from your normal user, not as `root`. The `docker` and
   `samba` tasks pick up your user through `SUDO_USER`. After `docker`, log out
   and back in to use `docker` without `sudo`.
-- `pihole` and `tailscale` run their official installers (`curl | sh`); both
-  print a warning first.
+- `pihole` runs its official installer (`curl | bash`) and prints a warning
+  first.
 - `network` changes the Pi's address: over SSH the session drops, so run it
   alone or last.
 - Check the `[+] Complete: <task>` lines and the summary at the end of a run;
@@ -236,12 +234,8 @@ Docker images when a task needs them:
 - [Raspberry Pi Imager](https://www.raspberrypi.com/software/) - used by
   `host/flash.ps1` to write SD cards
 - [Pi-hole](https://pi-hole.net/) - official installer (`tasks/pihole.sh`)
-- [Tailscale](https://tailscale.com/) - official install script
-  (`tasks/tailscale.sh`)
 - [Docker Engine](https://www.docker.com/) - installed from Docker's apt
   repository (`tasks/docker.sh`)
-- [Netdata](https://www.netdata.cloud/) - apt package, or Netdata's own apt
-  repository on releases that no longer ship it (`tasks/monitoring.sh`)
 - [nginx](https://nginx.org/) - apt package (`tasks/web.sh`)
 - [Samba](https://www.samba.org/) - apt package (`tasks/samba.sh`)
 - [fail2ban](https://www.fail2ban.org/) - apt package (`tasks/base.sh`)

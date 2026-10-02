@@ -182,12 +182,12 @@ require_docker() {
 container_dir() { printf '%s/%s\n' "${RPI_SETUP_CONTAINER_ROOT:-/opt}" "$1"; }
 
 # True if task $1 runs in its own container (<TASK>_DOCKER=yes): it has a
-# compose file in /opt/<task> and Docker knows container $2 (default: $1).
+# compose file in /opt/<task> and Docker knows a container of that name.
 # Switching the task back to native removes the container, so this turns false.
 task_in_container() {
   [[ -f "$(container_dir "$1")/docker-compose.yml" ]] || return 1
   have docker || return 1
-  docker inspect --type container "${2:-$1}" >/dev/null 2>&1
+  docker inspect --type container "$1" >/dev/null 2>&1
 }
 
 # Run pihole-FTL with arguments "$@" where Pi-hole runs: in its container
@@ -410,9 +410,11 @@ split_config() {
   say "Split $central into $out/<task>.env"
 }
 
-# Settings that were removed (their value is fixed now). A central file
+# Settings that were removed (fixed values or removed tasks). A central file
 # copied from an older example still has them, so they only warn.
 RETIRED_SETTINGS=' BASE_FAIL2BAN_MAXRETRY BASE_FAIL2BAN_BANTIME BASE_AUTO_REBOOT_TIME DOCKER_LOG_MAX_SIZE DOCKER_LOG_MAX_FILE PIHOLE_CONFIRM PIHOLE_UNATTENDED '
+# The tailscale and monitoring tasks were removed (they need outside accounts).
+RETIRED_SETTINGS+='TAILSCALE_DOCKER TAILSCALE_IMAGE TAILSCALE_AUTHKEY TAILSCALE_HOSTNAME TAILSCALE_SSH TAILSCALE_ADVERTISE_EXIT_NODE TAILSCALE_ADVERTISE_ROUTES TAILSCALE_ACCEPT_DNS MONITORING_PORT MONITORING_BIND MONITORING_TELEMETRY MONITORING_DOCKER MONITORING_IMAGE '
 _split_setting() {
   local n="$1" key="$2" value="$3"
   if [[ -z "${_SPLIT_KNOWN[$key]+x}" && "$RETIRED_SETTINGS" == *" $key "* ]]; then
@@ -568,32 +570,3 @@ write_if_changed() {
   return 0
 }
 
-# Set "key = value" in [section] of an INI-style file (netdata.conf,
-# smb.conf): an existing uncommented key in that section is replaced, else
-# the key is added below the section header, else the section is appended.
-# Returns 0 if the file changed.
-ini_set() {
-  local file="$1" section="$2" key="$3" value="$4"
-  [[ -f "$file" ]] || touch "$file"
-  awk -v sec="$section" -v key="$key" -v val="$value" '
-    function flush() { if (insec && !done) { print "\t" key " = " val; done = 1 } }
-    /^[[:space:]]*\[.*\][[:space:]]*$/ {
-      flush()
-      name = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", name)
-      insec = (name == sec)
-      if (insec) seen = 1
-      print; next
-    }
-    insec && !done {
-      line = $0; sub(/^[[:space:]]+/, "", line)
-      if (index(line, key) == 1) {
-        rest = substr(line, length(key) + 1)
-        if (rest ~ /^[[:space:]]*=/) { print "\t" key " = " val; done = 1; next }
-      }
-    }
-    { print }
-    END {
-      flush()
-      if (!seen) { print "[" sec "]"; print "\t" key " = " val }
-    }' "$file" | write_if_changed "$file"
-}

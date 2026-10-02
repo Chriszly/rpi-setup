@@ -64,29 +64,12 @@ assert_eq "prompt_selection writes the prompt to stderr, not stdout" "> " "$(pri
 
 # --- Task helpers -------------------------------------------------------------
 tmp="$(mktemp -d)"
-# Debian's netdata.conf ships localhost-only; the dashboard must reach the LAN.
-printf '[global]\n\tbind socket to IP = 127.0.0.1\n[web]\n\tbind to = localhost\n' >"$tmp/netdata.conf"
-assert_ok "netdata_set_bind rewrites a localhost bind" netdata_set_bind "$tmp/netdata.conf" 0.0.0.0
-assert_eq "netdata_set_bind leaves no localhost bind behind" "0" \
-    "$(grep -Ec '127\.0\.0\.1|localhost' "$tmp/netdata.conf" || true)"
-assert_contains "netdata_set_bind binds 0.0.0.0" "bind socket to IP = 0.0.0.0" "$(cat "$tmp/netdata.conf")"
-assert_fails "netdata_set_bind reports nothing to change on a re-run" netdata_set_bind "$tmp/netdata.conf" 0.0.0.0
-assert_fails "netdata_set_bind needs no file for all interfaces" netdata_set_bind "$tmp/missing.conf" 0.0.0.0
-
 printf 'server {\n\tlisten 80 default_server;\n\tlisten [::]:80 default_server;\n\t# listen 443 ssl default_server;\n}\n' >"$tmp/site"
 nginx_move_port "$tmp/site" 80 8080
 assert_contains "nginx_move_port moves the IPv4 listen" "listen 8080 default_server;" "$(cat "$tmp/site")"
 assert_contains "nginx_move_port moves the IPv6 listen" "listen [::]:8080 default_server;" "$(cat "$tmp/site")"
 assert_contains "nginx_move_port leaves other ports alone" "# listen 443 ssl" "$(cat "$tmp/site")"
 assert_eq "nginx_site_port reads the listen port" "8080" "$(nginx_site_port "$tmp/site")"
-
-printf '[global]\n\tbind socket to IP = 0.0.0.0\n' >"$tmp/nd.conf"
-assert_ok    "netdata_set_bind can keep the dashboard local" netdata_set_bind "$tmp/nd.conf" 127.0.0.1
-assert_fails "netdata_set_bind: nothing to change for the same address" netdata_set_bind "$tmp/nd.conf" 127.0.0.1
-assert_fails "netdata_set_port: 19999 needs no line" netdata_set_port "$tmp/nd.conf" 19999
-assert_ok    "netdata_set_port sets another port" netdata_set_port "$tmp/nd.conf" 20000
-assert_contains "netdata_set_port writes [web] default port" $'[web]\n\tdefault port = 20000' "$(cat "$tmp/nd.conf")"
-assert_fails "netdata_set_port is idempotent" netdata_set_port "$tmp/nd.conf" 20000
 
 # samba: an old unmarked [nas-share] section is replaced, other sections kept.
 printf '[global]\n   workgroup = W\n[nas-share]\n   path = /old\n[printers]\n   x = y\n' >"$tmp/smb.conf"
@@ -242,6 +225,10 @@ echo 'DOCKER_LOG_MAX_SIZE=10m' >>"$cfg/rpi-setup.env"
 out="$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config 2>&1)" && rc=0 || rc=$?
 assert_eq "--split-config accepts a removed setting" "0" "$rc"
 assert_contains "--split-config warns about a removed setting" "'DOCKER_LOG_MAX_SIZE' is no longer a setting" "$out"
+echo 'TAILSCALE_AUTHKEY=' >>"$cfg/rpi-setup.env"
+out="$(RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config 2>&1)" && rc=0 || rc=$?
+assert_eq "--split-config accepts a setting of a removed task" "0" "$rc"
+assert_contains "--split-config warns about a removed task's setting" "'TAILSCALE_AUTHKEY' is no longer a setting" "$out"
 echo 'DOCKER_LOG_MAX_SIZES=10m' >>"$cfg/rpi-setup.env"
 assert_fails "--split-config still stops on an unknown setting" env RPI_SETUP_CONFIG_DIR="$cfg" bash "$ROOT/setup.sh" --split-config
 rm -rf "$cfg"

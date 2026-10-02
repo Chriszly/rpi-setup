@@ -53,9 +53,8 @@ it is missing, and the `curl | bash` installer is not used.
   again. `PIHOLE_DOCKER=no` switches back.
 - Update with `sudo bash update.sh` (pulls the new image); `pihole -up` is for
   the native install only.
-- The `firewall` task (DNS, admin port, DHCP), `check.sh`, the `backup` task
-  and the `tailscale` task's automatic `TAILSCALE_ACCEPT_DNS` all recognise
-  the container.
+- The `firewall` task (DNS, admin port, DHCP), `check.sh` and the `backup`
+  task recognise the container.
 
 ## Good to know
 
@@ -64,6 +63,5 @@ it is missing, and the `curl | bash` installer is not used.
 - Pi-hole needs port 53 and does not install inside a container (CI skips it).
 - Update with `sudo bash update.sh` (runs `pihole -up`). Debug with
   `pihole -d`. Remove with `pihole uninstall`.
-- The `tailscale` task turns off the tailnet DNS on this Pi automatically.
 - With the `firewall` task, DNS (53) is open to everyone and the admin UI only
   to `FIREWALL_ALLOW_FROM`; DHCP ports are opened when Pi-hole's DHCP server is on.
