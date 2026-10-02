@@ -291,6 +291,12 @@ firewall_service_ports() {
     printf '%s/udp open teamspeak-voice\n%s/tcp open teamspeak-file\n' "$TEAMSPEAK_VOICE_PORT" "$TEAMSPEAK_FILE_PORT"
     if setting_on TEAMSPEAK_QUERY_HTTP; then printf '%s/tcp open teamspeak-query\n' "$TEAMSPEAK_QUERY_PORT"; fi
   fi
+  if [[ -f "$(container_dir usagecontrol)/docker-compose.yml" ]]; then
+    load_task_config usagecontrol >/dev/null
+    : "${USAGECONTROL_PORT:=8080}"
+    require_port USAGECONTROL_PORT
+    printf '%s/tcp web usagecontrol\n' "$USAGECONTROL_PORT"
+  fi
   if apt_installed samba || task_in_container samba; then
     printf '445/tcp open samba\n139/tcp open samba\n137/udp open samba-netbios\n138/udp open samba-netbios\n'
   fi
