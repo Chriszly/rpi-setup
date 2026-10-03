@@ -22,9 +22,12 @@ shown and it is taken down again.
 ## What it installs and changes
 
 - `/opt/usagecontrol/docker-compose.yml`.
-- The `usage-control` container, restarting on its own. It reads the Pi's
-  `/proc` and `/sys` read-only, runs as a non-root user with no capabilities
-  and a read-only file system, and changes nothing on the Pi.
+- The Docker volume `usagecontrol_data` with the history, kept when the
+  container is updated or recreated.
+- The `usage-control` container, restarting on its own. It listens on 9393
+  inside the container, published on `USAGECONTROL_PORT` over IPv4 only. It
+  reads the Pi's `/proc` and `/sys` read-only, runs as a non-root user with
+  no capabilities and a read-only file system, and changes nothing on the Pi.
 
 ## Reach it
 
