@@ -122,7 +122,7 @@ else
   assert_contains "containers: nginx port from the container's site" "8090/tcp web nginx" "$out"
   assert_contains "containers: samba" "445/tcp open samba" "$out"
   install -d "$ctr/usagecontrol"; touch "$ctr/usagecontrol/docker-compose.yml"
-  assert_contains "containers: usage-control on its default port" "8090/tcp web usagecontrol" \
+  assert_contains "containers: usage-control on its default port" "9393/tcp web usagecontrol" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   assert_contains "containers: usage-control port from its settings" "8095/tcp web usagecontrol" \
     "$(USAGECONTROL_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
