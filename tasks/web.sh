@@ -174,7 +174,7 @@ web_index_html() {
 
   function render(data) {
     var list = Array.isArray(data.services) ? data.services : [];
-    if (data.host) host.textContent = data.host;
+    host.textContent = [data.host, data.ip].filter(Boolean).join(' \u00b7 ');
     grid.textContent = '';
     list.forEach(function (s) {
       var a = el('a', 'card');
@@ -322,7 +322,7 @@ web_links_script() {
   printf 'set -euo pipefail\n'
   printf 'WL_OUT=%q\n' "$1"
   declare -f have container_dir task_in_container pihole_ftl pihole_web_ports write_if_changed \
-    web_links_run_json web_links_run_known web_links_run_ports web_links_run_http \
+    web_links_run_json web_links_run_known web_links_run_ports web_links_run_ip web_links_run_http \
     web_links_run_entry web_links_run_list web_links_run_containers web_links_run
   printf 'web_links_run\n'
 }
@@ -363,6 +363,15 @@ web_links_run_ports() {
     sed -nE '/-> (127\.|\[::1\])/d; s#^[0-9]+/tcp -> .*:([0-9]+)$#\1#p' | awk '!seen[$0]++'
 }
 
+# The Pi's LAN address: the source address of its default route (no packet
+# is sent), else the first address "hostname -I" reports, else nothing.
+web_links_run_ip() {
+  local addr
+  addr="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -n1)" || addr=""
+  [[ -n "$addr" ]] || addr="$(hostname -I 2>/dev/null | awk '{print $1}')" || addr=""
+  printf '%s\n' "$addr"
+}
+
 # HTTP status code of http://127.0.0.1:$1$2, "000" when nothing answers.
 web_links_run_http() {
   local code
@@ -401,7 +410,8 @@ web_links_run_entry() {
 web_links_run_list() {
   local -A seen=()
   local sep="" name port known title desc path hide lport lname lpath ldesc fmt
-  printf '{"host":%s,"services":[\n' "$(web_links_run_json "$(hostname 2>/dev/null || true)")"
+  printf '{"host":%s,"ip":%s,"services":[\n' "$(web_links_run_json "$(hostname 2>/dev/null || true)")" \
+    "$(web_links_run_json "$(web_links_run_ip)")"
   if task_in_container pihole || systemctl is-active --quiet pihole-FTL 2>/dev/null; then
     port="$(pihole_web_ports | head -n1)"
     [[ -z "$port" ]] ||

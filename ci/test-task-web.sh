@@ -79,7 +79,11 @@ case "$url" in
 esac
 EOF
 printf '#!/usr/bin/env bash\nexit 3\n' >"$bin/systemctl"
-printf '#!/usr/bin/env bash\necho rasPi\n' >"$bin/hostname"
+cat >"$bin/hostname" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -I ]]; then echo "192.168.60.10 172.17.0.1"; else echo rasPi; fi
+EOF
+printf '#!/usr/bin/env bash\necho "1.1.1.1 via 192.168.60.1 dev eth0 src 192.168.60.9 uid 0"\n' >"$bin/ip"
 chmod +x "$bin"/*
 
 run_links() { PATH="$bin:$PATH" RPI_SETUP_CONTAINER_ROOT="$opt" bash "$TMP/web-links"; }
@@ -90,11 +94,11 @@ if command -v python3 >/dev/null 2>&1; then
   summary="$(python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
-print(d["host"])
+print(d["host"], d["ip"])
 for s in d["services"]:
     print("%s|%s|%s|%s|%s" % (s["name"], s["description"], s["port"], s["path"], s["up"]))
 ' "$TMP/html/services.json" 2>&1)" || summary="not JSON: $summary"
-  expected='rasPi
+  expected='rasPi 192.168.60.9
 Pi-hole|Blocks ads and trackers for every device on the network|80|/admin/|True
 a"b\c||9100|/|True
 My App|Does things|9000|/ui/|True
@@ -130,9 +134,10 @@ assert_eq "script: an unchanged list is not written again" "$inode" "$(stat -c %
 assert_eq "script: unchanged containers are not written again" "$cinode" "$(stat -c %i "$TMP/html/containers.json")"
 
 printf '#!/usr/bin/env bash\nexit 1\n' >"$bin/docker"
+printf '#!/usr/bin/env bash\nexit 2\n' >"$bin/ip"
 rm -f "$opt/pihole/docker-compose.yml"
 assert_ok "script: runs without Docker" run_links
-assert_eq "list: empty without Docker or Pi-hole" $'{"host":"rasPi","services":[\n\n]}' "$(cat "$TMP/html/services.json")"
+assert_eq "list: empty without Docker or Pi-hole; the address from hostname -I without a route" $'{"host":"rasPi","ip":"192.168.60.10","services":[\n\n]}' "$(cat "$TMP/html/services.json")"
 assert_eq "containers: empty without Docker" $'{"containers":[\n\n]}' "$(cat "$TMP/html/containers.json")"
 
 finish_tests

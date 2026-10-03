@@ -35,7 +35,8 @@ sudo bash setup.sh web
 ## The start page
 
 The page follows the light or dark setting of your browser or system on its
-own. It shows one card per web page on the Pi, with a green dot when it
+own. Under the title it shows the Pi's host name and LAN IP address (the
+address of its default route). It shows one card per web page on the Pi, with a green dot when it
 answers and a red one when it does not, and links each one on the address you
 opened the page with (`raspi.local` or the IP address).
 
