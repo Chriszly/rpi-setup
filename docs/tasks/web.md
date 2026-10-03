@@ -25,7 +25,8 @@ sudo bash setup.sh web
   never overwritten.
 - `/usr/local/sbin/rpi-setup-web-links` and the `rpi-setup-web-links.timer`
   that runs it every minute. It writes the list of web pages,
-  `services.json`, next to the start page ([below](#the-start-page)).
+  `services.json`, and of Docker containers, `containers.json`, next to the
+  start page ([below](#the-start-page)).
 
 ## Reach it
 
@@ -64,6 +65,19 @@ container on the host network (it publishes no ports):
 `rpi-setup.link: "no"` hides a container from the list. Refresh the list
 right away with `sudo rpi-setup-web-links`.
 
+### Docker containers
+
+Below the cards the page lists every Docker container on the Pi, running or
+stopped: its name, image, the ports it publishes (`host:container/protocol`,
+or "host network"), and its state, with a green dot when it runs (and is
+healthy), yellow while its health check starts or it restarts, and red when
+it is stopped or unhealthy. The uptime counts up in the page itself.
+
+It comes from `containers.json`, written by the same timer from one
+`docker inspect` call. The file holds start and stop times rather than the
+uptime, so it is only rewritten when a container starts, stops or changes.
+nginx gets no access to Docker. Without Docker the section is not shown.
+
 ## Run it in Docker
 
 With `WEB_DOCKER=yes` the task runs nginx from `WEB_IMAGE` in a container
@@ -86,5 +100,7 @@ Docker is installed first if it is missing.
   when that is set.
 - Turn it off with `sudo systemctl disable --now nginx` (and the list with
   `sudo systemctl disable --now rpi-setup-web-links.timer`).
-- With your own `index.html` the list is still written, so your page can
-  read `services.json` too.
+- With your own `index.html` the lists are still written, so your page can
+  read `services.json` and `containers.json` too.
+- Anyone who can open the page sees the container names, images and ports.
+  The `firewall` task keeps the page to `FIREWALL_ALLOW_FROM`.
