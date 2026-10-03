@@ -24,6 +24,7 @@ assert_fails "native nginx is stopped" systemctl is-active --quiet nginx
 assert_eq "the container runs as 'web'" "running" "$(docker inspect -f '{{.State.Status}}' web 2>/dev/null)"
 assert_contains "nginx listens on $PORT in the container's config" "listen $PORT;" "$(cat /opt/web/conf/default.conf)"
 assert_contains "the container serves the service list" '"services":[' "$(page "$PORT" services.json)"
+assert_contains "the container overview lists the web container" '"name":"web"' "$(page "$PORT" containers.json)"
 assert_ok "the service list timer is on" systemctl is-enabled --quiet rpi-setup-web-links.timer
 
 before="$(started)"

@@ -53,6 +53,7 @@ run_web() {
   nginx -t -q || die "nginx configuration test failed; check $site"
   systemctl enable --now nginx
   systemctl reload nginx 2>/dev/null || systemctl restart nginx
+  web_links_refresh
 
   say "nginx running - open $(service_url "$(nginx_site_port "$site")") in your browser"
 }
@@ -71,8 +72,9 @@ web_index_page() {
 }
 
 # The start page, with @TITLE@ for WEB_TITLE. It follows the browser's light
-# or dark setting and lists the web pages from services.json (re-read every
-# 30 seconds), linked on the address the page was opened with.
+# or dark setting, lists the web pages from services.json, linked on the
+# address the page was opened with, and the Docker containers from
+# containers.json (both re-read every 30 seconds).
 web_index_html() {
   cat <<'HTML'
 <!DOCTYPE html>
@@ -85,12 +87,12 @@ web_index_html() {
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677;
-    --border: #dfe3ea; --accent: #c51a4a; --up: #1f9d55; --down: #b4262e;
+    --border: #dfe3ea; --accent: #c51a4a; --up: #1f9d55; --down: #b4262e; --wait: #b7791f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --card: #1b2029; --text: #e7eaf0; --muted: #9aa3b2;
-      --border: #2c3340; --accent: #ff5c86; --up: #3ccf7f; --down: #ff6b6b;
+      --border: #2c3340; --accent: #ff5c86; --up: #3ccf7f; --down: #ff6b6b; --wait: #f0b429;
     }
   }
   * { box-sizing: border-box; }
@@ -112,9 +114,26 @@ web_index_html() {
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
   .dot.up { background: var(--up); }
   .dot.down { background: var(--down); }
+  .dot.wait { background: var(--wait); }
   .desc { margin: 6px 0 10px; color: var(--muted); font-size: .95rem; }
   .addr { color: var(--accent); font-size: .9rem; word-break: break-all; }
   .note { color: var(--muted); }
+  h2 { margin: 40px 0 12px; font-size: 1.25rem; }
+  .list { border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+  .row {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    gap: 4px 16px; align-items: center; padding: 10px 16px;
+  }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row .name { font-size: 1rem; }
+  .image, .ports { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+  .ports { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+  .state { color: var(--muted); font-size: .9rem; text-align: right; }
+  @media (max-width: 600px) {
+    .row { grid-template-columns: minmax(0, 1fr) auto; }
+    .row .image { grid-column: 1 / -1; grid-row: 2; }
+    .row .state { grid-row: 1; grid-column: 2; }
+  }
   footer { margin-top: 48px; color: var(--muted); font-size: .85rem; }
   footer a { color: inherit; }
 </style>
@@ -125,15 +144,21 @@ web_index_html() {
   <p class="host" id="host"></p>
   <div class="grid" id="services"></div>
   <p class="note" id="note">Looking for web pages on this Pi...</p>
+  <section id="docker" hidden>
+    <h2>Docker containers</h2>
+    <div class="list" id="containers"></div>
+  </section>
   <noscript><p class="note">Turn on JavaScript to see the web pages on this Pi.</p></noscript>
   <footer>Provisioned by <a href="https://github.com/Chriszly/rpi-setup">rpi-setup</a>.
-    New services show up here on their own within a minute.</footer>
+    New services and containers show up here on their own within a minute.</footer>
 </main>
 <script>
 (function () {
   var grid = document.getElementById('services');
   var note = document.getElementById('note');
   var host = document.getElementById('host');
+  var docker = document.getElementById('docker');
+  var rows = document.getElementById('containers');
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -149,7 +174,7 @@ web_index_html() {
 
   function render(data) {
     var list = Array.isArray(data.services) ? data.services : [];
-    if (data.host) host.textContent = data.host;
+    host.textContent = [data.host, data.ip].filter(Boolean).join(' \u00b7 ');
     grid.textContent = '';
     list.forEach(function (s) {
       var a = el('a', 'card');
@@ -167,11 +192,66 @@ web_index_html() {
     note.textContent = list.length ? '' : 'No other web pages on this Pi yet.';
   }
 
-  function load() {
-    fetch('services.json', { cache: 'no-store' })
+  // "45 s", "12 min", "3 h", "2 d" since the ISO time t, or "" if unknown.
+  function since(t) {
+    var s = Math.floor((Date.now() - Date.parse(t)) / 1000);
+    if (!t || isNaN(s)) return '';
+    s = Math.max(s, 0);
+    if (s < 60) return s + ' s';
+    if (s < 3600) return Math.floor(s / 60) + ' min';
+    if (s < 86400) return Math.floor(s / 3600) + ' h';
+    return Math.floor(s / 86400) + ' d';
+  }
+
+  function containerState(c) {
+    var restarts = c.restarts > 0 ? ', ' + c.restarts + (c.restarts === 1 ? ' restart' : ' restarts') : '';
+    if (c.state === 'running') {
+      var up = since(c.started);
+      var health = c.health && c.health !== 'healthy' ? c.health + ', ' : '';
+      return {
+        dot: c.health === 'unhealthy' ? 'down' : c.health === 'starting' ? 'wait' : 'up',
+        text: health + (up ? 'up ' + up : 'running') + restarts
+      };
+    }
+    if (c.state === 'restarting') return { dot: 'wait', text: 'restarting' + restarts };
+    var ago = since(c.finished);
+    return { dot: c.state === 'created' ? '' : 'down', text: c.state + (ago ? ' ' + ago + ' ago' : '') };
+  }
+
+  function renderContainers(data) {
+    var list = Array.isArray(data.containers) ? data.containers : [];
+    docker.hidden = !list.length;
+    rows.textContent = '';
+    list.forEach(function (c) {
+      var st = containerState(c);
+      var row = el('div', 'row');
+      var name = el('div', 'name');
+      var dot = el('span', 'dot' + (st.dot ? ' ' + st.dot : ''));
+      dot.title = c.state + (c.health ? ', ' + c.health : '');
+      name.appendChild(dot);
+      name.appendChild(document.createTextNode(c.name));
+      row.appendChild(name);
+      var image = el('div', 'image', c.image);
+      var ports = (c.ports || []).join(' ') || (c.network === 'host' ? 'host network' : '');
+      if (ports) image.appendChild(el('div', 'ports', ports));
+      row.appendChild(image);
+      row.appendChild(el('div', 'state', st.text));
+      rows.appendChild(row);
+    });
+  }
+
+  function get(file, done, failed) {
+    fetch(file, { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(render)
-      .catch(function () { note.textContent = 'The list of web pages is not ready yet; it is retried every 30 seconds.'; });
+      .then(done)
+      .catch(failed);
+  }
+
+  function load() {
+    get('services.json', render, function () {
+      note.textContent = 'The list of web pages is not ready yet; it is retried every 30 seconds.';
+    });
+    get('containers.json', renderContainers, function () { docker.hidden = true; });
   }
 
   load();
@@ -189,8 +269,8 @@ HTML
 RPI_WEB_LINKS_SCRIPT=/usr/local/sbin/rpi-setup-web-links
 RPI_WEB_LINKS_UNIT=rpi-setup-web-links
 
-# Install the script that writes $1/services.json and a timer that runs it
-# every minute, then write the list once now.
+# Install the script that writes $1/services.json and $1/containers.json, and
+# a timer that runs it every minute.
 web_links_install() {
   local out="$1/services.json" units=0
   install -m 0755 -d "$(dirname "$RPI_WEB_LINKS_SCRIPT")"
@@ -225,7 +305,11 @@ web_links_install() {
     systemctl restart "$RPI_WEB_LINKS_UNIT.timer" 2>/dev/null || true
   fi
   systemctl enable --now "$RPI_WEB_LINKS_UNIT.timer"
-  "$RPI_WEB_LINKS_SCRIPT" || warn "Could not write $out yet; the timer tries again every minute"
+}
+
+# Write the lists now, once the services are up, instead of within a minute.
+web_links_refresh() {
+  "$RPI_WEB_LINKS_SCRIPT" || warn "Could not write the lists for the start page yet; the timer tries again every minute"
 }
 
 # Print the standalone service list script writing to $1: the web_links_run_*
@@ -238,8 +322,8 @@ web_links_script() {
   printf 'set -euo pipefail\n'
   printf 'WL_OUT=%q\n' "$1"
   declare -f have container_dir task_in_container pihole_ftl pihole_web_ports write_if_changed \
-    web_links_run_json web_links_run_known web_links_run_ports web_links_run_http \
-    web_links_run_entry web_links_run_list web_links_run
+    web_links_run_json web_links_run_known web_links_run_ports web_links_run_ip web_links_run_http \
+    web_links_run_entry web_links_run_list web_links_run_containers web_links_run
   printf 'web_links_run\n'
 }
 
@@ -277,6 +361,15 @@ web_links_run_ports() {
   fi
   docker port "$1" 2>/dev/null |
     sed -nE '/-> (127\.|\[::1\])/d; s#^[0-9]+/tcp -> .*:([0-9]+)$#\1#p' | awk '!seen[$0]++'
+}
+
+# The Pi's LAN address: the source address of its default route (no packet
+# is sent), else the first address "hostname -I" reports, else nothing.
+web_links_run_ip() {
+  local addr
+  addr="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -n1)" || addr=""
+  [[ -n "$addr" ]] || addr="$(hostname -I 2>/dev/null | awk '{print $1}')" || addr=""
+  printf '%s\n' "$addr"
 }
 
 # HTTP status code of http://127.0.0.1:$1$2, "000" when nothing answers.
@@ -317,7 +410,8 @@ web_links_run_entry() {
 web_links_run_list() {
   local -A seen=()
   local sep="" name port known title desc path hide lport lname lpath ldesc fmt
-  printf '{"host":%s,"services":[\n' "$(web_links_run_json "$(hostname 2>/dev/null || true)")"
+  printf '{"host":%s,"ip":%s,"services":[\n' "$(web_links_run_json "$(hostname 2>/dev/null || true)")" \
+    "$(web_links_run_json "$(web_links_run_ip)")"
   if task_in_container pihole || systemctl is-active --quiet pihole-FTL 2>/dev/null; then
     port="$(pihole_web_ports | head -n1)"
     [[ -z "$port" ]] ||
@@ -352,9 +446,55 @@ web_links_run_list() {
   printf '\n]}\n'
 }
 
-# Write the list to $WL_OUT; the file only changes when the list does.
+# Print containers.json: every container, running or not, by name, with its
+# image, state, health, restart count, network mode and the ports it
+# publishes. Start and stop are timestamps (the page works out the uptime),
+# so the file only changes when a container does.
+web_links_run_containers() {
+  local fmt name image state health started finished restarts net ports p host ip sep="" list
+  printf '{"containers":[\n'
+  if have docker && docker info >/dev/null 2>&1; then
+    # Written for Docker's raw JSON (HostIp, a missing Health key), which
+    # "docker inspect" falls back to when the template does not fit its types.
+    fmt=$'{{.Name}}\x1f{{.Config.Image}}\x1f{{.State.Status}}\x1f{{with index .State "Health"}}{{index . "Status"}}{{end}}\x1f'
+    fmt+=$'{{.State.StartedAt}}\x1f{{.State.FinishedAt}}\x1f{{.RestartCount}}\x1f{{.HostConfig.NetworkMode}}\x1f'
+    # shellcheck disable=SC2016 # Go template variables, not shell ones.
+    fmt+='{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}:{{.HostPort}}>{{$p}} {{end}}{{end}}'
+    while IFS=$'\x1f' read -r name image state health started finished restarts net ports; do
+      [[ -n "$name" ]] || continue
+      [[ "$restarts" =~ ^[0-9]+$ ]] || restarts=0
+      # Ports as "8090:9393/tcp", once each (IPv4 and IPv6 bindings are the same
+      # port), without those bound to localhost only.
+      list=""
+      for p in $ports; do
+        host="${p%%>*}"
+        ip="${host%:*}"
+        [[ "$ip" != 127.* && "$ip" != ::1 ]] || continue
+        p="$(web_links_run_json "${host##*:}:${p#*>}")"
+        [[ ",$list," == *",$p,"* ]] || list+="${list:+,}$p"
+      done
+      # "2026-10-03T09:55:01.123456789Z" -> "2026-10-03T09:55:01Z"; Docker
+      # reports year 1 for a time that never happened.
+      started="${started%%.*}" finished="${finished%%.*}"
+      started="${started%Z}" finished="${finished%Z}"
+      [[ -n "$started" && "$started" != 0001-* ]] && started+=Z || started=""
+      [[ -n "$finished" && "$finished" != 0001-* ]] && finished+=Z || finished=""
+      printf '%s{"name":%s,"image":%s,"state":%s,"health":%s,"started":%s,"finished":%s,"restarts":%s,"network":%s,"ports":[%s]}' \
+        "$sep" "$(web_links_run_json "${name#/}")" "$(web_links_run_json "$image")" \
+        "$(web_links_run_json "$state")" "$(web_links_run_json "$health")" \
+        "$(web_links_run_json "$started")" "$(web_links_run_json "$finished")" \
+        "$((10#$restarts))" "$(web_links_run_json "$net")" "$list"
+      sep=$',\n'
+    done < <(docker ps -aq 2>/dev/null | xargs -r docker inspect -f "$fmt" 2>/dev/null | sort)
+  fi
+  printf '\n]}\n'
+}
+
+# Write the lists to $WL_OUT and containers.json next to it; each file only
+# changes when its list does.
 web_links_run() {
   web_links_run_list | write_if_changed "$WL_OUT" 0644 || true
+  web_links_run_containers | write_if_changed "${WL_OUT%/*}/containers.json" 0644 || true
 }
 
 # The IPv4 port of the default site's first "listen" line, e.g. "80".
@@ -412,6 +552,7 @@ run_web_container() {
 
   # The site config is a bind mount; nginx reads it at start.
   container_up "$dir" "$name" "$changed"
+  web_links_refresh
   say "nginx container running - open $(service_url "$port") in your browser (files in $dir/html)"
 }
 
