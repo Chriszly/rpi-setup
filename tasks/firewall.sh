@@ -293,7 +293,7 @@ firewall_service_ports() {
   fi
   if [[ -f "$(container_dir usagecontrol)/docker-compose.yml" ]]; then
     load_task_config usagecontrol >/dev/null
-    : "${USAGECONTROL_PORT:=8090}"
+    : "${USAGECONTROL_PORT:=9393}"
     require_port USAGECONTROL_PORT
     printf '%s/tcp web usagecontrol\n' "$USAGECONTROL_PORT"
   fi

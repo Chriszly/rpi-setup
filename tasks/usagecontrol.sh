@@ -4,7 +4,7 @@
 set -euo pipefail
 . "$RPI_SETUP_ROOT/lib/containers.sh"
 
-TASKS+=("usagecontrol|usage-control: CPU, memory and temperature of the Pi in the browser (:8090)")
+TASKS+=("usagecontrol|usage-control: CPU, memory and temperature of the Pi in the browser (:9393)")
 
 # usagecontrol_compose IMAGE PORT - the compose file: the host's /proc and /sys
 # read-only (gopsutil reads them through HOST_PROC/HOST_SYS), the website on
@@ -38,7 +38,7 @@ EOF2
 }
 
 run_usagecontrol() {
-  : "${USAGECONTROL_PORT:=8090}" "${USAGECONTROL_IMAGE:=ghcr.io/chriszly/usage-control:main}"
+  : "${USAGECONTROL_PORT:=9393}" "${USAGECONTROL_IMAGE:=ghcr.io/chriszly/usage-control:main}"
   require_port USAGECONTROL_PORT
   require_image_ref USAGECONTROL_IMAGE
 

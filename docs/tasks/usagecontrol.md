@@ -16,7 +16,7 @@ shown and it is taken down again.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `USAGECONTROL_PORT` | `8090` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
+| `USAGECONTROL_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
 | `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/usage-control:main` | Docker image. `:main` follows usage-control's main branch; a release such as `:1.2.3` stays fixed. |
 
 ## What it installs and changes
@@ -31,7 +31,7 @@ shown and it is taken down again.
 
 ## Reach it
 
-Open `http://<pi>:8090` from a device on the local network. The website
+Open `http://<pi>:9393` from a device on the local network. The website
 answers only requests from private addresses (LAN, loopback, link-local).
 
 ## Good to know
@@ -41,9 +41,10 @@ answers only requests from private addresses (LAN, loopback, link-local).
   visibility*). The source repository can stay private.
 - A newer image comes with `sudo bash update.sh` (or *Update Pi* from your
   settings repository).
-- The default port is 8090 because the `web` task moves nginx to 8080 when
-  Pi-hole holds port 80. An install from before used 8080; the next run of
-  the task moves it to 8090 unless `USAGECONTROL_PORT=8080` is set.
+- The default port is 9393, the port usage-control listens on inside its
+  container, so the address is the same with or without Docker and stays
+  clear of nginx (80 or 8080). An install from before used 8080 or 8090; the
+  next run of the task moves it to 9393 unless `USAGECONTROL_PORT` is set.
 - Ports published by Docker bypass the `firewall` task's rules (it opens the
   port for `FIREWALL_ALLOW_FROM` anyway). How to close or limit them:
   [Ports of Docker containers](firewall.md#ports-of-docker-containers).
