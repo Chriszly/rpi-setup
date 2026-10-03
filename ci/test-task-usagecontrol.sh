@@ -13,7 +13,9 @@ TASKS=()
 # --- the compose file -----------------------------------------------------------
 out="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090)"
 assert_contains "compose: image" 'image: "ghcr.io/chriszly/usage-control:1.2.3"' "$out"
-assert_contains "compose: port on the host" '"8090:8080"' "$out"
+assert_contains "compose: port on the host" '"0.0.0.0:8090:9393"' "$out"
+assert_contains "compose: port the page is reachable on" 'PUBLIC_PORT: "8090"' "$out"
+assert_contains "compose: history kept in a volume" "data:/data" "$out"
 assert_contains "compose: host /proc read-only" "/proc:/host/proc:ro" "$out"
 assert_contains "compose: host /sys read-only" "/sys:/host/sys:ro" "$out"
 assert_contains "compose: no capabilities" "- ALL" "$out"

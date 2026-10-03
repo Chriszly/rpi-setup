@@ -8,7 +8,8 @@ TASKS+=("usagecontrol|usage-control: CPU, memory and temperature of the Pi in th
 
 # usagecontrol_compose IMAGE PORT - the compose file: the host's /proc and /sys
 # read-only (gopsutil reads them through HOST_PROC/HOST_SYS), the website on
-# PORT, no capabilities and a read-only root file system.
+# PORT (the container listens on 9393), the history in a named volume, no
+# capabilities and a read-only root file system.
 usagecontrol_compose() {
   cat <<EOF2
 services:
@@ -17,11 +18,13 @@ services:
     container_name: usage-control
     restart: unless-stopped
     ports:
-      - "$2:8080"
+      - "0.0.0.0:$2:9393"
     environment:
+      PUBLIC_PORT: "$2"
       HOST_PROC: /host/proc
       HOST_SYS: /host/sys
     volumes:
+      - data:/data
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
     read_only: true
@@ -29,6 +32,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+volumes:
+  data:
 EOF2
 }
 
