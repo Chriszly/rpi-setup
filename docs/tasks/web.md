@@ -95,6 +95,8 @@ Docker is installed first if it is missing.
 
 ## Good to know
 
+- `update.sh` (and the *Update Pi* workflow) re-runs this task, so the start
+  page and the script behind it follow the rpi-setup version on the Pi.
 - Pi-hole and nginx can run together: whichever comes second moves to port
   8080.
 - With the `firewall` task, the port is open only to `FIREWALL_ALLOW_FROM`

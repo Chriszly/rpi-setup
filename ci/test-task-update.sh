@@ -56,7 +56,7 @@ upd() {
     RC=0
     OUT="$(env -i PATH="$TMP/$shims:$TMP/base" LOG="$LOG" SHIM_FAIL="${SHIM_FAIL:-}" \
         RPI_SETUP_CONTAINER_ROOT="$OPT" RPI_SETUP_MODEL_FILE="$TMP/model-$model" \
-        RPI_SETUP_REBOOT_FILE="$TMP/reboot-required" \
+        RPI_SETUP_REBOOT_FILE="$TMP/reboot-required" RPI_SETUP_WEB_LINKS="${WEB_LINKS:-$TMP/no-web-links}" \
         "$BASH_BIN" "$ROOT/update.sh" "$@" 2>&1)" || RC=$?
 }
 
@@ -85,6 +85,14 @@ assert_contains "dry-run: eeprom" "[dry-run] rpi-eeprom-update -a" "$OUT"
 assert_lacks "a compose project not written by rpi-setup is left alone" "$OPT/other" "$OUT"
 assert_lacks "a task switched back to native is not updated" "$OPT/pihole" "$OUT"
 assert_lacks "no reboot hint without reboot-required" "Reboot recommended" "$OUT"
+
+assert_contains "no start page: web skipped" "skipped (start page not installed)" "$OUT"
+
+touch "$TMP/web-links"
+WEB_LINKS="$TMP/web-links" upd all pi --dry-run --containers-only
+assert_contains "start page: re-run the web task" "[dry-run] bash $ROOT/setup.sh web" "$OUT"
+assert_contains "start page: also with --containers-only (the Update Pi workflow)" "web         ok" "$OUT"
+rm -f "$TMP/web-links"
 
 # --- Step selection ----------------------------------------------------------
 upd all pi --dry-run --no-apt --no-containers

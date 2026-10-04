@@ -60,8 +60,9 @@ The *Update Pi* workflow (`templates/private-repo/.github/workflows/update.yml`)
 passes `--update`. Steps 1, 2 and 4 are the same; step 3 becomes:
 
 - `update.sh --containers-only`: pulls new images for the containers rpi-setup
-  set up and recreates the ones that changed. No OS packages, Pi-hole or
-  EEPROM update.
+  set up and recreates the ones that changed, and re-runs the `web` task so
+  its start page is the current version. No OS packages, Pi-hole or EEPROM
+  update.
 - `setup.sh` only for the given tasks that are not yet in
   `/var/lib/rpi-setup/tasks.done`, so tasks you add to the list get set up
   and the others are left alone. The

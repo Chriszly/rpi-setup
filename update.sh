@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # update.sh - keep a provisioned Pi current: OS packages, rpi-setup's
-# containers, Pi-hole and the EEPROM firmware. Each step runs only if that
+# containers, the web task's start page, Pi-hole and the EEPROM firmware. Each step runs only if that
 # thing is installed; a failed step is reported and the others still run.
 set -euo pipefail
 
@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Overridable so the unit tests can point it at a temp dir.
 UPDATE_REBOOT_FILE="${RPI_SETUP_REBOOT_FILE:-/run/reboot-required}"
+UPDATE_WEB_LINKS="${RPI_SETUP_WEB_LINKS:-/usr/local/sbin/rpi-setup-web-links}"
 
 DRY_RUN=0
 DO_APT=1
@@ -25,6 +26,7 @@ Usage: sudo bash update.sh [options]
 Update everything rpi-setup installed on this Pi:
   - OS packages (apt-get update and upgrade)
   - the Docker containers of rpi-setup tasks (pull new images, recreate changed ones)
+  - the start page of the web task, if installed (setup.sh web)
   - Pi-hole (pihole -up), if installed
   - the EEPROM firmware (rpi-eeprom-update -a), on a Raspberry Pi
 Options:
@@ -63,6 +65,12 @@ compose_projects() {
       printf '%s\n' "$(container_dir "$task")/docker-compose.yml"
   done
   return 0
+}
+
+# True if the web task set up its start page here: the script behind the
+# page, or nginx in the task's container.
+web_page_installed() {
+  [[ -e "$UPDATE_WEB_LINKS" ]] || task_in_container web
 }
 
 step_apt() {
@@ -142,6 +150,15 @@ main() {
     skip_step containers "no rpi-setup compose project in $(container_dir "<task>")"
   else
     do_step containers step_containers "${projects[@]}"
+  fi
+
+  # The page and its service list script are written by the web task, so
+  # re-running it brings them to this checkout's version; with unchanged
+  # WEB_* settings nothing else changes.
+  if web_page_installed; then
+    do_step web run bash "$SCRIPT_DIR/setup.sh" web
+  else
+    skip_step web 'start page not installed'
   fi
 
   if [[ $DO_PIHOLE -eq 0 ]]; then
