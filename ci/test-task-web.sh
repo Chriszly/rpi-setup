@@ -20,6 +20,8 @@ assert_lacks "page: no placeholder left" "@TITLE@" "$page"
 assert_contains "page: follows the browser's dark setting" "@media (prefers-color-scheme: dark)" "$page"
 assert_contains "page: reads the service list" "get('services.json'" "$page"
 assert_contains "page: reads the container list" "get('containers.json'" "$page"
+assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
+assert_contains "page: charts how many were online at once" "renderChart(data.concurrent)" "$page"
 assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
 WEB_TITLE=Other
 web_index_page "$TMP/index.html" >/dev/null
@@ -132,6 +134,15 @@ cinode="$(stat -c %i "$TMP/html/containers.json")"
 run_links
 assert_eq "script: an unchanged list is not written again" "$inode" "$(stat -c %i "$TMP/html/services.json")"
 assert_eq "script: unchanged containers are not written again" "$cinode" "$(stat -c %i "$TMP/html/containers.json")"
+
+assert_eq "teamspeak: no teamspeak.json without the usage logger" no "$(test -e "$TMP/html/teamspeak.json" && echo yes || echo no)"
+install -d "$opt/teamspeak/usage/data"
+echo '{"online":[]}' >"$opt/teamspeak/usage/data/usage.json"
+run_links
+assert_eq "teamspeak: a fresh usage summary is copied" '{"online":[]}' "$(cat "$TMP/html/teamspeak.json" 2>/dev/null)"
+touch -d '-11 minutes' "$opt/teamspeak/usage/data/usage.json"
+run_links
+assert_eq "teamspeak: a stale summary is removed" no "$(test -e "$TMP/html/teamspeak.json" && echo yes || echo no)"
 
 printf '#!/usr/bin/env bash\nexit 1\n' >"$bin/docker"
 printf '#!/usr/bin/env bash\nexit 2\n' >"$bin/ip"

@@ -11,3 +11,6 @@ ci-logs/
 # hold passwords and must never be committed.
 config/rpi-setup.env
 config/local/
+
+# Python bytecode (ci tests import templates/teamspeak-usage/tsusage.py)
+__pycache__/
