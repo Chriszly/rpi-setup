@@ -93,7 +93,7 @@ while IFS= read -r cmd; do
   esac
 done
 EOF
-  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" timeout 2 python3 "$bot" 2>/dev/null || true
+  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" timeout 2 python3 -B "$bot" 2>/dev/null || true
   first="$(python3 -c '
 import json, sys
 d = sys.argv[1]
@@ -119,7 +119,7 @@ while IFS= read -r cmd; do
   esac
 done
 EOF
-  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake2" timeout 2 python3 "$bot" 2>/dev/null || true
+  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake2" timeout 2 python3 -B "$bot" 2>/dev/null || true
   assert_eq "bot: a visit that ended while it was away is closed on reconnect" \
     $'Anna B|1\nBob' "$(python3 -c 'import json,sys; [print(json.loads(l)["nick"]) for l in open(sys.argv[1])]' "$data/sessions.jsonl" 2>&1)"
   assert_contains "bot: who is online now" '"online":[{"nick":"Carl"' "$(USAGE_DATA="$data" python3 "$bot" --summary)"
@@ -127,7 +127,7 @@ EOF
   # How many were online at once: A from before the 7 days until +50, B from
   # +10 to +60, C from +60 (B's end, no change) to +70, D online since +65.
   assert_eq "bot: online at the same time, as the points where the count changes" \
-    "[[0, 1], [10, 2], [50, 1], [65, 2], [70, 1], [604800, 1]]" "$(python3 -I -c '
+    "[[0, 1], [10, 2], [50, 1], [65, 2], [70, 1], [604800, 1]]" "$(python3 -I -B -c '
 import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
 w = 7 * 86400
 s = [{"uid": "a", "nick": "A", "start": -100, "end": 50}, {"uid": "b", "nick": "B", "start": 10, "end": 60},
@@ -139,8 +139,9 @@ print(t.concurrent({"1": {"uid": "d", "nick": "D", "since": 65}}, s, w + 0.5))
 #!/usr/bin/env bash
 read -r _; printf 'error id=520 msg=invalid\\sloginname\\sor\\spassword\r\n'
 EOF
-  log="$(USAGE_DATA="$TMP/usage3" TS_SSH_CMD="bash $TMP/fake3" timeout 1 python3 "$bot" 2>&1)" || true
+  log="$(USAGE_DATA="$TMP/usage3" TS_SSH_CMD="bash $TMP/fake3" timeout 1 python3 -B "$bot" 2>&1)" || true
   assert_contains "bot: reports a query error and retries" "use: invalid loginname or password; trying again" "$log"
+  assert_fails "bot: writes no usage.json for the page without a connection" test -e "$TMP/usage3/usage.json"
 else
   skip "bot: python3 not installed"
 fi

@@ -126,10 +126,14 @@ class Usage:
             f.write(line + "\n")
 
     def save(self, now):
+        """Record who is online. usage.json is only rewritten while connected:
+        without a connection the list is unconfirmed, so the file goes stale
+        and the start page hides it after 10 minutes."""
         if self.connected:
             self.checked = int(now)
         write_json("online.json", {"checked": self.checked, "clients": self.online})
-        write_json("usage.json", summary(self.online, read_sessions(), now))
+        if self.connected:
+            write_json("usage.json", summary(self.online, read_sessions(), now))
 
     def reconcile(self, clients, now):
         """Start over from a client list read right after connecting."""
@@ -341,7 +345,7 @@ def run(usage):
             end = time.time() + TICK
             while time.time() < end:
                 try:
-                    q.line(end - time.time())
+                    q.line(max(0.01, end - time.time()))
                     heard = time.time()
                 except queue.Empty:
                     break

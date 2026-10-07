@@ -333,9 +333,9 @@ web_index_html() {
     var d = new Date(t0 * 1000);
     d.setHours(12, 0, 0, 0);
     for (; d.getTime() / 1000 <= t1; d.setDate(d.getDate() + 1)) {
-      var ts = d.getTime() / 1000;
-      if (ts < t0) continue;
-      out += '<text class="axis" x="' + x(ts) + '" y="' + (H - 4) + '" text-anchor="middle">' +
+      var noon = d.getTime() / 1000;
+      if (noon < t0) continue;
+      out += '<text class="axis" x="' + x(noon) + '" y="' + (H - 4) + '" text-anchor="middle">' +
         d.toLocaleDateString([], { weekday: 'short' }) + '</text>';
     }
     var line = 'M' + x(t0) + ' ' + y(pts[0][1]);

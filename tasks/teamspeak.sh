@@ -74,9 +74,12 @@ run_teamspeak() {
   # needs a password: a generated one unless TEAMSPEAK_QUERY_ADMIN_PASSWORD is
   # set. The SSH query port is not published; the logger reaches it over the
   # compose network.
+  # A password generated earlier stays in use when the logger is turned off,
+  # since the server keeps it.
   local usage_service="" ssh_query=""
+  if [[ -z "$admin_pw" ]]; then admin_pw="$(load_secret teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD)" || admin_pw=""; fi
   if [[ $usage -eq 1 ]]; then
-    if [[ -z "$admin_pw" ]] && ! admin_pw="$(load_secret teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD)"; then
+    if [[ -z "$admin_pw" ]]; then
       new_secret admin_pw teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD 'serveradmin query password'
     fi
     ssh_query='      TSSERVER_QUERY_SSH_ENABLED: "true"'
@@ -134,8 +137,14 @@ EOF
       die 'Could not build the TeamSpeak usage logger; check the network, or set TEAMSPEAK_USAGE=no'
   fi
   container_up "$dir" "$name"
-  if [[ $usage -eq 1 ]] && ! container_wait_stable teamspeak-usage; then
-    warn 'The TeamSpeak usage logger does not stay up; see: sudo docker logs teamspeak-usage'
+  if [[ $usage -eq 1 ]]; then
+    # The logger retries on its own when it cannot log in, so look for its
+    # "Connected" line rather than only whether the container stays up.
+    if ! container_wait_stable teamspeak-usage; then
+      warn 'The TeamSpeak usage logger does not stay up; see: sudo docker logs teamspeak-usage'
+    elif [[ -z "$(wait_for_log teamspeak-usage 'Connected;' 30)" ]]; then
+      warn 'The TeamSpeak usage logger could not log in to the server query yet; see: sudo docker logs teamspeak-usage'
+    fi
   fi
 
   ip="$(pi_ip)" || true

@@ -21,7 +21,7 @@ shown and it is taken down again.
 | `TEAMSPEAK_FILE_PORT` | `30033` | File transfer port (TCP). |
 | `TEAMSPEAK_QUERY_HTTP` | `yes` | Turn on the web query API. |
 | `TEAMSPEAK_QUERY_PORT` | `10080` | Web query port (TCP). |
-| `TEAMSPEAK_QUERY_ADMIN_PASSWORD` | empty: generated with `TEAMSPEAK_USAGE=yes`, else TeamSpeak's own (none set) | Password of the `serveradmin` query account. Cannot contain `"`, `\` or `$`. A generated one is printed once and kept in `/var/lib/rpi-setup/secrets/teamspeak.env`. |
+| `TEAMSPEAK_QUERY_ADMIN_PASSWORD` | empty: generated with `TEAMSPEAK_USAGE=yes` (and kept once generated), else TeamSpeak's own (none set) | Password of the `serveradmin` query account. Cannot contain `"`, `\` or `$`. A generated one is printed once and kept in `/var/lib/rpi-setup/secrets/teamspeak.env`. |
 | `TEAMSPEAK_IMAGE` | `teamspeaksystems/teamspeak6-server:latest` | Docker image. |
 | `TEAMSPEAK_USAGE` | `yes` | Log who is online and when, for the start page ([below](#who-is-online-and-when)). |
 | `TEAMSPEAK_USAGE_DAYS` | `90` | Days of visits the usage log keeps (1 to 9999). |
@@ -87,7 +87,11 @@ Turning it on sets a `serveradmin` password (and turns on the SSH query), so
 the server is restarted once. If your server is used by people outside your
 home, tell them their connection times are logged. The start page, and so
 the log, is meant for your LAN only (the `firewall` task keeps it there).
-`TEAMSPEAK_USAGE=no` removes the container and keeps the log.
+`TEAMSPEAK_USAGE=no` removes the container and keeps the log (and the
+generated password). While the bot cannot reach the server it stops updating
+`usage.json`, so the start page hides the section after 10 minutes instead of
+showing an old list. The bot and its image are rebuilt when the `teamspeak`
+task runs, not by `update.sh`.
 
 ## Good to know
 
