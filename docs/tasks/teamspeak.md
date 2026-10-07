@@ -75,7 +75,8 @@ registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
   dropped once a day.
 - `online.json`: who is online now.
 - `usage.json`: the summary the [web start page](web.md#teamspeak) shows,
-  rewritten every minute.
+  rewritten every minute, including how many were online at once over the
+  last 7 days (the points where that number changes).
 
 When the bot or the server restarts, the people still online keep their
 start time; the visits of those who left in between end at the last time the

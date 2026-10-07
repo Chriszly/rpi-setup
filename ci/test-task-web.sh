@@ -21,6 +21,7 @@ assert_contains "page: follows the browser's dark setting" "@media (prefers-colo
 assert_contains "page: reads the service list" "get('services.json'" "$page"
 assert_contains "page: reads the container list" "get('containers.json'" "$page"
 assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
+assert_contains "page: charts how many were online at once" "renderChart(data.concurrent)" "$page"
 assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
 WEB_TITLE=Other
 web_index_page "$TMP/index.html" >/dev/null

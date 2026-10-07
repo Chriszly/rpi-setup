@@ -88,11 +88,13 @@ web_index_html() {
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677;
     --border: #dfe3ea; --accent: #c51a4a; --up: #1f9d55; --down: #b4262e; --wait: #b7791f;
+    --chart: #c51a4a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --card: #1b2029; --text: #e7eaf0; --muted: #9aa3b2;
       --border: #2c3340; --accent: #ff5c86; --up: #3ccf7f; --down: #ff6b6b; --wait: #f0b429;
+      --chart: #f0457a;
     }
   }
   * { box-sizing: border-box; }
@@ -135,6 +137,24 @@ web_index_html() {
     .row .state { grid-row: 1; grid-column: 2; }
   }
   .ts-online { margin: 0 0 12px; }
+  .chart {
+    position: relative; margin-bottom: 16px; padding: 12px 16px 8px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+  }
+  .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; font-size: .9rem; }
+  .chart-head .peak { color: var(--muted); }
+  .chart svg { display: block; width: 100%; height: 180px; margin-top: 8px; touch-action: pan-y; }
+  .chart .grid { stroke: var(--border); stroke-width: 1; }
+  .chart .axis { fill: var(--muted); font-size: 11px; }
+  .chart .area { fill: var(--chart); fill-opacity: .1; }
+  .chart .line { fill: none; stroke: var(--chart); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .cursor { stroke: var(--muted); stroke-width: 1; }
+  .chart .mark { fill: var(--chart); stroke: var(--card); stroke-width: 2; }
+  .tip {
+    position: absolute; top: 0; pointer-events: none; padding: 4px 8px; border-radius: 6px;
+    background: var(--text); color: var(--bg); font-size: .85rem; white-space: nowrap;
+    transform: translate(-50%, -100%);
+  }
   footer { margin-top: 48px; color: var(--muted); font-size: .85rem; }
   footer a { color: inherit; }
 </style>
@@ -152,6 +172,11 @@ web_index_html() {
   <section id="ts" hidden>
     <h2>TeamSpeak</h2>
     <p class="ts-online" id="ts-online"></p>
+    <div class="chart" id="ts-chart" hidden>
+      <div class="chart-head"><span>Online at the same time, last 7 days</span><span class="peak" id="ts-peak"></span></div>
+      <svg id="ts-svg" role="img"></svg>
+      <div class="tip" id="ts-tip" hidden></div>
+    </div>
     <div class="list" id="ts-users"></div>
     <h2>Last visits</h2>
     <div class="list" id="ts-recent"></div>
@@ -277,6 +302,98 @@ web_index_html() {
     list.appendChild(row);
   }
 
+  // Step chart of how many were online at once: points are [epoch seconds,
+  // count] where the count changes, from 7 days ago to now.
+  var chart = document.getElementById('ts-chart');
+  var svg = document.getElementById('ts-svg');
+  var tip = document.getElementById('ts-tip');
+  var pts = [], scale = null;
+
+  function countAt(t) {
+    var c = 0;
+    for (var i = 0; i < pts.length && pts[i][0] <= t; i++) c = pts[i][1];
+    return c;
+  }
+
+  function drawChart() {
+    if (pts.length < 2 || chart.hidden) return;
+    var W = svg.clientWidth || 600, H = 180, L = 28, R = 6, T = 8, B = 22;
+    var t0 = pts[0][0], t1 = pts[pts.length - 1][0], max = 1, i, c, out = '';
+    pts.forEach(function (p) { max = Math.max(max, p[1]); });
+    var step = Math.ceil(max / 4), top = Math.ceil(max / step) * step;
+    var x = function (t) { return L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R); };
+    var y = function (n) { return T + (1 - n / top) * (H - T - B); };
+    scale = { x: x, y: y, t0: t0, t1: t1, L: L, R: R, W: W };
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    for (c = 0; c <= top; c += step) {
+      out += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(c) + '" y2="' + y(c) + '"/>';
+      out += '<text class="axis" x="' + (L - 8) + '" y="' + (y(c) + 4) + '" text-anchor="end">' + c + '</text>';
+    }
+    // A day name under the middle of each day.
+    var d = new Date(t0 * 1000);
+    d.setHours(12, 0, 0, 0);
+    for (; d.getTime() / 1000 <= t1; d.setDate(d.getDate() + 1)) {
+      var ts = d.getTime() / 1000;
+      if (ts < t0) continue;
+      out += '<text class="axis" x="' + x(ts) + '" y="' + (H - 4) + '" text-anchor="middle">' +
+        d.toLocaleDateString([], { weekday: 'short' }) + '</text>';
+    }
+    var line = 'M' + x(t0) + ' ' + y(pts[0][1]);
+    for (i = 1; i < pts.length; i++) line += 'H' + x(pts[i][0]) + 'V' + y(pts[i][1]);
+    out += '<path class="area" d="' + line + 'V' + y(0) + 'H' + x(t0) + 'Z"/>';
+    out += '<path class="line" d="' + line + '"/>';
+    out += '<line class="cursor" id="ts-cursor" y1="' + T + '" y2="' + y(0) + '" visibility="hidden"/>';
+    out += '<circle class="mark" id="ts-mark" r="4" visibility="hidden"/>';
+    svg.innerHTML = out;
+  }
+
+  function hover(ev) {
+    if (!scale) return;
+    var r = svg.getBoundingClientRect();
+    var px = Math.min(Math.max((ev.touches ? ev.touches[0] : ev).clientX - r.left, scale.L), scale.W - scale.R);
+    var t = scale.t0 + (px - scale.L) / (scale.W - scale.L - scale.R) * (scale.t1 - scale.t0);
+    var n = countAt(t), cur = document.getElementById('ts-cursor'), mark = document.getElementById('ts-mark');
+    cur.setAttribute('x1', px); cur.setAttribute('x2', px); cur.setAttribute('visibility', 'visible');
+    mark.setAttribute('cx', px); mark.setAttribute('cy', scale.y(n)); mark.setAttribute('visibility', 'visible');
+    tip.textContent = clock(t * 1000, true) + ' \u00b7 ' + n + ' online';
+    tip.hidden = false;
+    // Centered over the cursor, but kept inside the chart box.
+    var box = chart.getBoundingClientRect(), half = tip.offsetWidth / 2;
+    tip.style.left = Math.min(Math.max(r.left - box.left + px, half), box.width - half) + 'px';
+    tip.style.top = (r.top - box.top + scale.y(n) - 8) + 'px';
+  }
+
+  function unhover() {
+    tip.hidden = true;
+    ['ts-cursor', 'ts-mark'].forEach(function (id) {
+      var e = document.getElementById(id);
+      if (e) e.setAttribute('visibility', 'hidden');
+    });
+  }
+
+  svg.addEventListener('mousemove', hover);
+  svg.addEventListener('touchstart', hover, { passive: true });
+  svg.addEventListener('touchmove', hover, { passive: true });
+  svg.addEventListener('mouseleave', unhover);
+  svg.addEventListener('touchend', unhover);
+  window.addEventListener('resize', drawChart);
+
+  function renderChart(points) {
+    pts = (Array.isArray(points) ? points : []).filter(function (p) {
+      return Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
+    });
+    chart.hidden = pts.length < 2;
+    if (chart.hidden) return;
+    var peak = pts[0];
+    pts.forEach(function (p) { if (p[1] > peak[1]) peak = p; });
+    var text = peak[1] ? 'Peak: ' + peak[1] + ' online, ' + clock(peak[0] * 1000, true)
+      : 'Nobody was online in the last 7 days.';
+    document.getElementById('ts-peak').textContent = text;
+    svg.setAttribute('aria-label', 'How many people were online at the same time over the last 7 days. ' + text);
+    unhover();
+    drawChart();
+  }
+
   // Who is on the TeamSpeak server, time online per person over the last 7
   // days, and the last visits, from teamspeak.json.
   function renderTeamspeak(data) {
@@ -286,6 +403,7 @@ web_index_html() {
     var listUsers = document.getElementById('ts-users');
     var listRecent = document.getElementById('ts-recent');
     ts.hidden = false;
+    renderChart(data.concurrent);
     document.getElementById('ts-online').textContent = online.length
       ? 'Online now: ' + online.map(function (c) { return c.nick + ' (' + since(c.since) + ')'; }).join(', ')
       : 'Nobody is online right now.';

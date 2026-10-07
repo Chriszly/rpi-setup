@@ -190,9 +190,33 @@ class Usage:
         os.replace(tmp, path("sessions.jsonl"))
 
 
+def concurrent(online, sessions, now):
+    """How many were online at once over the last 7 days, as [time, count]
+    points where the count changes (a step line), from 7 days ago to now."""
+    now = int(now)
+    week = now - WEEK
+    spans = [(s["start"], s["end"]) for s in sessions if s["end"] > week]
+    spans += [(c["since"], now) for c in online.values()]
+    count = sum(1 for start, end in spans if start <= week < end)
+    changes = {}
+    for start, end in spans:
+        if start > week:
+            changes[start] = changes.get(start, 0) + 1
+        if end < now and end > week:
+            changes[end] = changes.get(end, 0) - 1
+    points = [[week, count]]
+    for t in sorted(changes):
+        if not changes[t]:
+            continue
+        count += changes[t]
+        points.append([t, count])
+    points.append([now, count])
+    return points
+
+
 def summary(online, sessions, now):
-    """The start page's view: who is online, the last visits and, per person,
-    the time online over the last 7 days."""
+    """The start page's view: who is online, the last visits, per person the
+    time online over the last 7 days, and how many were online at once."""
     week = now - WEEK
     people = {}
 
@@ -225,6 +249,7 @@ def summary(online, sessions, now):
                          key=lambda c: c["since"]),
         "recent": [{"nick": s["nick"], "start": iso(s["start"]), "end": iso(s["end"])} for s in recent],
         "users": users,
+        "concurrent": concurrent(online, sessions, now),
     }
 
 

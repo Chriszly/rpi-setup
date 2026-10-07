@@ -83,7 +83,9 @@ nginx gets no access to Docker. Without Docker the section is not shown.
 ### TeamSpeak
 
 With the `teamspeak` task's usage logger (`TEAMSPEAK_USAGE=yes`, the default)
-the page shows who is on the TeamSpeak server right now and for how long, the
+the page shows who is on the TeamSpeak server right now and for how long, a
+chart of how many people were online at the same time over the last 7 days
+(with the peak; hover or touch it for the number at any moment), the
 time each person was online over the last 7 days with their number of
 visits and when they were last seen, and the last 15 visits with start, end
 and length. The timer copies the logger's summary to `teamspeak.json`; when

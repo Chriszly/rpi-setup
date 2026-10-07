@@ -124,6 +124,17 @@ EOF
     $'Anna B|1\nBob' "$(python3 -c 'import json,sys; [print(json.loads(l)["nick"]) for l in open(sys.argv[1])]' "$data/sessions.jsonl" 2>&1)"
   assert_contains "bot: who is online now" '"online":[{"nick":"Carl"' "$(USAGE_DATA="$data" python3 "$bot" --summary)"
 
+  # How many were online at once: A from before the 7 days until +50, B from
+  # +10 to +60, C from +60 (B's end, no change) to +70, D online since +65.
+  assert_eq "bot: online at the same time, as the points where the count changes" \
+    "[[0, 1], [10, 2], [50, 1], [65, 2], [70, 1], [604800, 1]]" "$(python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+w = 7 * 86400
+s = [{"uid": "a", "nick": "A", "start": -100, "end": 50}, {"uid": "b", "nick": "B", "start": 10, "end": 60},
+     {"uid": "c", "nick": "C", "start": 60, "end": 70}, {"uid": "e", "nick": "E", "start": -900, "end": -5}]
+print(t.concurrent({"1": {"uid": "d", "nick": "D", "since": 65}}, s, w + 0.5))
+' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
   cat >"$TMP/fake3" <<'EOF'
 #!/usr/bin/env bash
 read -r _; printf 'error id=520 msg=invalid\\sloginname\\sor\\spassword\r\n'
