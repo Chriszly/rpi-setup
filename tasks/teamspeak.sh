@@ -35,6 +35,7 @@ run_teamspeak() {
   : "${TEAMSPEAK_VOICE_PORT:=9987}" "${TEAMSPEAK_FILE_PORT:=30033}" "${TEAMSPEAK_QUERY_PORT:=10080}"
   : "${TEAMSPEAK_QUERY_HTTP:=yes}" "${TEAMSPEAK_ACCEPT_LICENSE:=yes}"
   : "${TEAMSPEAK_IMAGE:=teamspeaksystems/teamspeak6-server:latest}"
+  : "${TEAMSPEAK_USAGE:=yes}" "${TEAMSPEAK_USAGE_DAYS:=90}"
   require_port TEAMSPEAK_VOICE_PORT
   require_port TEAMSPEAK_FILE_PORT
   require_port TEAMSPEAK_QUERY_PORT
@@ -51,6 +52,11 @@ run_teamspeak() {
     die 'The TeamSpeak server only starts once you accept its license; set TEAMSPEAK_ACCEPT_LICENSE=yes'
   [[ "$admin_pw" != *[\"\\\$]* ]] ||
     die 'TEAMSPEAK_QUERY_ADMIN_PASSWORD cannot contain ", \ or $'
+  local usage=0
+  if setting_on TEAMSPEAK_USAGE; then usage=1; fi
+  if ! [[ "$TEAMSPEAK_USAGE_DAYS" =~ ^[0-9]{1,4}$ ]] || (( 10#$TEAMSPEAK_USAGE_DAYS < 1 )); then
+    die "TEAMSPEAK_USAGE_DAYS must be a number of days from 1 to 9999 (got '$TEAMSPEAK_USAGE_DAYS')"
+  fi
 
   # The official image is published for amd64 and arm64 only, so a Pi on a
   # 32-bit OS (armhf) cannot run it.
@@ -63,6 +69,19 @@ run_teamspeak() {
 
   local dir name=teamspeak ip=""
   dir="$(container_dir teamspeak)"
+
+  # The usage logger logs in to the SSH query as serveradmin, so that account
+  # needs a password: a generated one unless TEAMSPEAK_QUERY_ADMIN_PASSWORD is
+  # set. The SSH query port is not published; the logger reaches it over the
+  # compose network.
+  local usage_service="" ssh_query=""
+  if [[ $usage -eq 1 ]]; then
+    if [[ -z "$admin_pw" ]] && ! admin_pw="$(load_secret teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD)"; then
+      new_secret admin_pw teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD 'serveradmin query password'
+    fi
+    ssh_query='      TSSERVER_QUERY_SSH_ENABLED: "true"'
+    usage_service="$(teamspeak_usage_service "$dir" "$TEAMSPEAK_USAGE_DAYS" "$admin_pw")"
+  fi
 
   # The official image runs as uid:gid 9987 and ignores PUID/PGID, so the data
   # directory must stay owned by 9987 for the bind mount to be writable.
@@ -96,18 +115,28 @@ ${query_port}
       TSSERVER_FILE_TRANSFER_PORT: "${TEAMSPEAK_FILE_PORT}"
       TSSERVER_QUERY_HTTP_PORT: "${TEAMSPEAK_QUERY_PORT}"
 ${query}
+${ssh_query}
 $(if [[ -n "$admin_pw" ]]; then printf '      TSSERVER_QUERY_ADMIN_PASSWORD: "%s"\n' "$admin_pw"; fi)
     volumes:
       - type: bind
         source: $dir/data
         target: /var/tsserver
+${usage_service}
 EOF
   then
     changed=1
   fi
 
   container_pull "$dir"
+  if [[ $usage -eq 1 ]]; then
+    info 'Building the TeamSpeak usage logger image'
+    docker compose -f "$dir/docker-compose.yml" build --pull --quiet usage ||
+      die 'Could not build the TeamSpeak usage logger; check the network, or set TEAMSPEAK_USAGE=no'
+  fi
   container_up "$dir" "$name"
+  if [[ $usage -eq 1 ]] && ! container_wait_stable teamspeak-usage; then
+    warn 'The TeamSpeak usage logger does not stay up; see: sudo docker logs teamspeak-usage'
+  fi
 
   ip="$(pi_ip)" || true
   if [[ $fresh -eq 0 ]]; then
@@ -133,6 +162,42 @@ EOF
     say "Find it later with: sudo docker logs $name 2>&1 | grep -A6 'privilege key'"
   fi
   say "Connect with the TeamSpeak 6 client and enter the privilege key when asked."
+}
+
+# Copy the usage logger (templates/teamspeak-usage) to DIR/usage and print the
+# compose service that runs it, keeping DAYS days of visits, with the
+# serveradmin password PW. Its data folder gets its own UID.
+teamspeak_usage_service() {
+  local dir="$1" days="$2" pw="$3" src="$RPI_SETUP_ROOT/templates/teamspeak-usage" uid
+  uid="$(assign_uid teamspeak-usage)"
+  install -m 0755 -d "$dir/usage" "$dir/usage/data"
+  chown "$uid:$uid" "$dir/usage/data"
+  write_if_changed "$dir/usage/Dockerfile" 0644 <"$src/Dockerfile" || true
+  write_if_changed "$dir/usage/tsusage.py" 0755 <"$src/tsusage.py" || true
+  cat <<EOF
+  usage:
+    build:
+      context: ./usage
+      args:
+        UID: "$uid"
+    container_name: teamspeak-usage
+    restart: unless-stopped
+    depends_on:
+      - teamspeak
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TS_HOST: teamspeak
+      USAGE_DAYS: "$((10#$days))"
+      TS_QUERY_PASSWORD: "$pw"
+    volumes:
+      - type: bind
+        source: $dir/usage/data
+        target: /data
+EOF
 }
 
 # The ServerAdmin privilege key from container $1's log. The server prints it a

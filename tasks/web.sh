@@ -134,6 +134,7 @@ web_index_html() {
     .row .image { grid-column: 1 / -1; grid-row: 2; }
     .row .state { grid-row: 1; grid-column: 2; }
   }
+  .ts-online { margin: 0 0 12px; }
   footer { margin-top: 48px; color: var(--muted); font-size: .85rem; }
   footer a { color: inherit; }
 </style>
@@ -148,6 +149,13 @@ web_index_html() {
     <h2>Docker containers</h2>
     <div class="list" id="containers"></div>
   </section>
+  <section id="ts" hidden>
+    <h2>TeamSpeak</h2>
+    <p class="ts-online" id="ts-online"></p>
+    <div class="list" id="ts-users"></div>
+    <h2>Last visits</h2>
+    <div class="list" id="ts-recent"></div>
+  </section>
   <noscript><p class="note">Turn on JavaScript to see the web pages on this Pi.</p></noscript>
   <footer>Provisioned by <a href="https://github.com/Chriszly/rpi-setup">rpi-setup</a>.
     New services and containers show up here on their own within a minute.</footer>
@@ -159,6 +167,7 @@ web_index_html() {
   var host = document.getElementById('host');
   var docker = document.getElementById('docker');
   var rows = document.getElementById('containers');
+  var ts = document.getElementById('ts');
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -240,6 +249,61 @@ web_index_html() {
     });
   }
 
+  // "<1 min", "12 min", "3 h 5 min", "2 d 4 h" for s seconds.
+  function duration(s) {
+    var m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    if (m < 1) return '<1 min';
+    if (h < 1) return m + ' min';
+    if (d < 1) return h + ' h' + (m % 60 ? ' ' + m % 60 + ' min' : '');
+    return d + ' d' + (h % 24 ? ' ' + h % 24 + ' h' : '');
+  }
+
+  function clock(t, day) {
+    var o = { hour: '2-digit', minute: '2-digit' };
+    if (day) { o.weekday = 'short'; o.day = 'numeric'; o.month = 'short'; }
+    return new Date(t).toLocaleString([], o);
+  }
+
+  function tsRow(list, nick, online, middle, right) {
+    var row = el('div', 'row');
+    var name = el('div', 'name');
+    var dot = el('span', 'dot' + (online ? ' up' : ''));
+    dot.title = online ? 'online' : 'offline';
+    name.appendChild(dot);
+    name.appendChild(document.createTextNode(nick));
+    row.appendChild(name);
+    row.appendChild(el('div', 'image', middle));
+    row.appendChild(el('div', 'state', right));
+    list.appendChild(row);
+  }
+
+  // Who is on the TeamSpeak server, time online per person over the last 7
+  // days, and the last visits, from teamspeak.json.
+  function renderTeamspeak(data) {
+    var online = Array.isArray(data.online) ? data.online : [];
+    var users = Array.isArray(data.users) ? data.users : [];
+    var recent = Array.isArray(data.recent) ? data.recent : [];
+    var listUsers = document.getElementById('ts-users');
+    var listRecent = document.getElementById('ts-recent');
+    ts.hidden = false;
+    document.getElementById('ts-online').textContent = online.length
+      ? 'Online now: ' + online.map(function (c) { return c.nick + ' (' + since(c.since) + ')'; }).join(', ')
+      : 'Nobody is online right now.';
+    listUsers.textContent = '';
+    listUsers.hidden = !users.length;
+    users.forEach(function (u) {
+      var visits = u.week_visits + (u.week_visits === 1 ? ' visit' : ' visits');
+      tsRow(listUsers, u.nick, u.online, duration(u.week_seconds) + ' in the last 7 days, ' + visits,
+        u.online ? 'online now' : 'seen ' + since(u.last_seen) + ' ago');
+    });
+    listRecent.textContent = '';
+    listRecent.hidden = listRecent.previousElementSibling.hidden = !recent.length;
+    recent.forEach(function (v) {
+      var secs = (Date.parse(v.end) - Date.parse(v.start)) / 1000;
+      tsRow(listRecent, v.nick, false, clock(v.start, true) + ' \u2013 ' + clock(v.end, false), duration(secs));
+    });
+  }
+
   function get(file, done, failed) {
     fetch(file, { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -252,6 +316,7 @@ web_index_html() {
       note.textContent = 'The list of web pages is not ready yet; it is retried every 30 seconds.';
     });
     get('containers.json', renderContainers, function () { docker.hidden = true; });
+    get('teamspeak.json', renderTeamspeak, function () { ts.hidden = true; });
   }
 
   load();
@@ -323,7 +388,7 @@ web_links_script() {
   printf 'WL_OUT=%q\n' "$1"
   declare -f have container_dir task_in_container pihole_ftl pihole_web_ports write_if_changed \
     web_links_run_json web_links_run_known web_links_run_ports web_links_run_ip web_links_run_http \
-    web_links_run_entry web_links_run_list web_links_run_containers web_links_run
+    web_links_run_entry web_links_run_list web_links_run_containers web_links_run_teamspeak web_links_run
   printf 'web_links_run\n'
 }
 
@@ -345,7 +410,7 @@ web_links_run_known() {
   case "$1" in
     netalertx) printf 'NetAlertX\tWhich devices are on the network, and when\t/\n' ;;
     usage-control) printf 'usage-control\tCPU, memory and temperature of this Pi\t/\n' ;;
-    pihole|web|teamspeak|samba) printf -- '-\n' ;;
+    pihole|web|teamspeak|teamspeak-usage|samba) printf -- '-\n' ;;
     *) return 1 ;;
   esac
 }
@@ -490,11 +555,25 @@ web_links_run_containers() {
   printf '\n]}\n'
 }
 
-# Write the lists to $WL_OUT and containers.json next to it; each file only
-# changes when its list does.
+# Copy the TeamSpeak usage summary (teamspeak task, TEAMSPEAK_USAGE) to
+# teamspeak.json next to $WL_OUT while its logger keeps it fresh (it rewrites
+# it every minute), else remove it so the page hides the section.
+web_links_run_teamspeak() {
+  local src dest="${WL_OUT%/*}/teamspeak.json"
+  src="$(container_dir teamspeak)/usage/data/usage.json"
+  if [[ -f "$src" && -n "$(find "$src" -mmin -10 2>/dev/null)" ]]; then
+    write_if_changed "$dest" 0644 <"$src" || true
+  else
+    rm -f "$dest"
+  fi
+}
+
+# Write the lists to $WL_OUT, and containers.json and teamspeak.json next to
+# it; each file only changes when its list does.
 web_links_run() {
   web_links_run_list | write_if_changed "$WL_OUT" 0644 || true
   web_links_run_containers | write_if_changed "${WL_OUT%/*}/containers.json" 0644 || true
+  web_links_run_teamspeak
 }
 
 # The IPv4 port of the default site's first "listen" line, e.g. "80".

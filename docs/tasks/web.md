@@ -26,7 +26,8 @@ sudo bash setup.sh web
 - `/usr/local/sbin/rpi-setup-web-links` and the `rpi-setup-web-links.timer`
   that runs it every minute. It writes the list of web pages,
   `services.json`, and of Docker containers, `containers.json`, next to the
-  start page ([below](#the-start-page)).
+  start page ([below](#the-start-page)), and copies the TeamSpeak usage
+  summary there as `teamspeak.json`.
 
 ## Reach it
 
@@ -78,6 +79,17 @@ It comes from `containers.json`, written by the same timer from one
 `docker inspect` call. The file holds start and stop times rather than the
 uptime, so it is only rewritten when a container starts, stops or changes.
 nginx gets no access to Docker. Without Docker the section is not shown.
+
+### TeamSpeak
+
+With the `teamspeak` task's usage logger (`TEAMSPEAK_USAGE=yes`, the default)
+the page shows who is on the TeamSpeak server right now and for how long, the
+time each person was online over the last 7 days with their number of
+visits and when they were last seen, and the last 15 visits with start, end
+and length. The timer copies the logger's summary to `teamspeak.json`; when
+the logger is off or has not written it for 10 minutes the file is removed
+and the section is hidden. How the logging works:
+[teamspeak usage](teamspeak.md#who-is-online-and-when).
 
 ## Run it in Docker
 
