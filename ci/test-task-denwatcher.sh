@@ -40,9 +40,21 @@ assert_lacks "containers: never the Docker socket" "docker.sock" "$with"
 assert_contains "containers: website reads the add-on folder" "ADDONS_DIR: /addons" "$with"
 assert_contains "containers: website mounts it read-only" "addons:/addons:ro" "$with"
 assert_contains "containers: add-on folder in memory" "type: tmpfs" "$with"
+all="$(denwatcher_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 '' '' "$denwatcher_all_addons" 365)"
+assert_contains "addons: power runs its program" $'den-watcher-power:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"\n    container_name: den-watcher-power\n    restart: unless-stopped\n    entrypoint: ["/den-watcher-power"]\n    user: "0:0"' "$all"
+assert_contains "addons: processes as the image's user" $'entrypoint: ["/den-watcher-processes"]\n    environment:' "$all"
+assert_contains "addons: bluetooth reads the system D-Bus read-only" "/run/dbus:/host/run/dbus:ro" "$all"
+assert_eq "addons: one service per add-on" 8 "$(grep -c 'entrypoint: \["/den-watcher-' <<<"$all")"
+assert_eq "addons: none with network" 8 "$(grep -c 'network_mode: none' <<<"$all")"
+assert_contains "addons: website reads them without the containers add-on" "addons:/addons:ro" "$all"
+assert_contains "compose: history kept for the days set" 'RETENTION_DAYS: "365"' "$all"
+assert_lacks "compose: Den-Watcher's own history length by default" "RETENTION_DAYS" "$out"
+assert_contains "compose: the Pi's time zone" "/etc/localtime:/etc/localtime:ro" "$out"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   printf '%s\n' "$out" >"$TMP/docker-compose.yml"
   assert_ok "compose: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
+  printf '%s\n' "$all" >"$TMP/docker-compose.yml"
+  assert_ok "addons: docker compose accepts them" docker compose -f "$TMP/docker-compose.yml" config -q
   printf '%s\n' "$with" >"$TMP/docker-compose.yml"
   assert_ok "containers: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
 else
@@ -71,6 +83,12 @@ assert_contains "password without a name stops the task" "DENWATCHER_ROUTER_PASS
 assert_lacks "password is not shown" "hunter2" "$(cat "$TMP/err")"
 ( DENWATCHER_ROUTER_PASSWORD='Box=a,=b'; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "second password without a name stops the task" "DENWATCHER_ROUTER_PASSWORD must be" "$(cat "$TMP/err")"
+( DENWATCHER_ADDONS=power,gpu; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "unknown add-on stops the task" "DENWATCHER_ADDONS must be all, none or add-ons from" "$(cat "$TMP/err")"
+( DENWATCHER_RETENTION_DAYS=3651; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "too long a history stops the task" "DENWATCHER_RETENTION_DAYS must be a number of days from 1 to 3650" "$(cat "$TMP/err")"
+( DENWATCHER_RETENTION_DAYS=0; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "no history stops the task" "DENWATCHER_RETENTION_DAYS must be" "$(cat "$TMP/err")"
 ( DENWATCHER_CONTAINERS=maybe; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "bad containers setting stops the task" "DENWATCHER_CONTAINERS must be yes or no" "$(cat "$TMP/err")"
 assert_ok "bad settings: Docker was not touched" test ! -e "$TMP/reached"
@@ -105,6 +123,20 @@ assert_contains "containers: on by default" "source: \"$TMP/docker/containers\""
 assert_contains "containers: add-on checked to stay up" "den-watcher-containers" "$(cat "$TMP/waited")"
 ( DENWATCHER_CONTAINERS=no; run_denwatcher ) >/dev/null 2>&1
 assert_lacks "containers: off leaves the add-on out" "den-watcher-containers" "$(cat "$compose")"
+( DENWATCHER_CONTAINERS=no DENWATCHER_ADDONS=none; run_denwatcher ) >/dev/null 2>&1
+assert_lacks "addons: none and no containers leave the add-on volume out" "addons" "$(cat "$compose")"
+( DENWATCHER_ADDONS='kernel, memory,kernel'; run_denwatcher ) >/dev/null 2>&1
+assert_eq "addons: a list, each once" 2 "$(grep -c 'entrypoint: \["/den-watcher-\(kernel\|memory\)' "$compose")"
+assert_lacks "addons: only those listed" "den-watcher-power" "$(cat "$compose")"
+( run_denwatcher ) >/dev/null 2>&1
+assert_contains "addons: all by default, each checked to stay up" "den-watcher-processes" "$(cat "$TMP/waited")"
+if [[ -S /run/dbus/system_bus_socket ]]; then
+  assert_contains "addons: bluetooth with a system D-Bus" "den-watcher-bluetooth" "$(cat "$compose")"
+else
+  ( run_denwatcher ) >/dev/null 2>"$TMP/err"
+  assert_lacks "addons: no system D-Bus leaves bluetooth out" "den-watcher-bluetooth" "$(cat "$compose")"
+  assert_contains "addons: and says so" "bluetooth add-on is left out" "$(cat "$TMP/err")"
+fi
 # shellcheck disable=SC2329 # called by run_denwatcher
 docker() { [[ "$1" == info ]] && echo "$TMP/nodocker"; }
 ( run_denwatcher ) >/dev/null 2>"$TMP/err"
