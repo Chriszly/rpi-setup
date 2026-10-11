@@ -47,6 +47,7 @@ assert_contains "the deploy command knows the allowed branches" 'DP_BRANCHES=mai
 assert_contains "the deploy command knows the runner account" 'DP_RUNNER_USER=rpi-runner' "$script"
 assert_contains "the deploy command checks the checkout owner" 'deploy_run_owner ()' "$script"
 assert_contains "the deploy command checks where the settings are" 'deploy_run_check_config ()' "$script"
+assert_contains "the deploy command knows where it is installed" 'DP_SELF=/usr/local/sbin/rpi-setup-deploy' "$script"
 
 # --- deploy_run_args ----------------------------------------------------------
 args() { ( DP_BRANCHES="main next"; deploy_run_args "$@" && printf '%s|%s|%s' "$DP_BRANCH" "$DP_CONFIG" "$DP_TASKS" ) 2>/dev/null; }
@@ -193,6 +194,23 @@ rm -f "$tmp/ran"
 out="$(deploy --tasks base || true)"
 assert_contains "settings left in the checkout stop the deploy" "--move-config" "$out"
 assert_ok "and run no setup" test ! -e "$tmp/ran"
+
+# --- the deploy command writes itself again from the updated checkout ---------
+mkdir -p "$tmp/fresh/tasks"
+cp "$ROOT/tasks/runner.sh" "$tmp/fresh/tasks/runner.sh"
+printf '#!/usr/bin/env bash\necho old\n' >"$tmp/self"
+refresh() { ( DP_DIR="$tmp/fresh" DP_BRANCHES=main DP_DONE_FILE="$tmp/done" DP_SELF="$tmp/self"; deploy_run_refresh ) 2>&1; }
+assert_fails "an outdated deploy command is replaced and run again" refresh
+assert_contains "it is written from the checkout's deploy code" 'deploy_run_refresh ()' "$(cat "$tmp/self")"
+assert_contains "for the same checkout" "DP_DIR=$tmp/fresh" "$(cat "$tmp/self")"
+assert_contains "and the same done file" "DP_DONE_FILE=$tmp/done" "$(cat "$tmp/self")"
+assert_eq "and it stays executable" "755" "$(stat -c %a "$tmp/self")"
+assert_ok "a current deploy command is left alone" refresh
+printf 'stale\n' >"$tmp/self"
+assert_ok "a command that was just written is not replaced again" eval '( DP_FRESH=1; refresh )'
+assert_eq "so it is not touched" "stale" "$(cat "$tmp/self")"
+assert_ok "without DP_SELF (an older command) nothing is written" eval '( unset DP_SELF; DP_DIR="$tmp/fresh"; deploy_run_refresh )'
+rm -rf "${tmp:?}/fresh" "$tmp/self"
 
 # --- --update: containers, then only the new tasks ----------------------------
 rm -rf "${tmp:?}/pi/config"

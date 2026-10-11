@@ -33,7 +33,11 @@ The private repository's layout, workflow and step-by-step setup are in
   root (`/etc/sudoers.d/rpi-setup-runner`). It accepts `--branch` (only from
   `RUNNER_BRANCHES`), `--config` (a file the caller can read), `--tasks`
   (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`)
-  and `--update`.
+  and `--update`. After updating the checkout it writes itself again from
+  the checkout's `tasks/runner.sh` when that differs, and runs the new
+  version, so a deploy never runs older deploy code than the checkout holds.
+  A command written before this existed picks it up once `runner` reruns
+  (Deploy to Pi with the task `runner`).
 - `setup.sh` records every task that finished in
   `/var/lib/rpi-setup/tasks.done`; a deploy with no tasks reruns those. A
   recorded task that was removed from rpi-setup (such as `monitoring`) is
