@@ -1,13 +1,15 @@
 name: Virtual Testing Environment
 
-# Docs-only and .claude/ (agent skill) changes cannot affect provisioning, so they skip this workflow.
+# Docs-only and .claude/ (agent skill) changes cannot affect provisioning, so
+# pushes to main skip this workflow. Pull requests always run it, so the
+# "Virtual Testing Environment" job at the end can be a required check; on a
+# docs-only PR only the quick syntax and unit jobs run.
 on:
   pull_request:
-    paths-ignore: &paths-ignore ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   push:
     branches:
       - main
-    paths-ignore: *paths-ignore
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.claude/**']
   workflow_dispatch:
 
 permissions:
@@ -72,7 +74,9 @@ jobs:
   docker-smoke:
     name: Docker tasks on plain runner
     runs-on: ubuntu-latest
-    needs: [syntax, unit]
+    needs: [syntax, unit, changes]
+    # changes only runs on pull requests; on a push it is skipped and this runs.
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code != 'false' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -95,7 +99,8 @@ jobs:
   container-helpers:
     name: Container helpers (lib/containers.sh)
     runs-on: ubuntu-latest
-    needs: [syntax, unit]
+    needs: [syntax, unit, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code != 'false' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -109,6 +114,7 @@ jobs:
     name: Container tasks on plain runner
     runs-on: ubuntu-latest
     needs: [container-helpers]
+    if: ${{ !cancelled() && needs.container-helpers.result == 'success' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -132,8 +138,10 @@ jobs:
             echo "::endgroup::"
           done
 
-  # Decides whether the PR touches anything the nspawn gate exercises. PRs that
-  # only change the flashers, their tests or other workflows skip the gate.
+  # Decides whether the PR touches anything the nspawn gate exercises (provision)
+  # and anything besides docs (code). PRs that only change the flashers, their
+  # tests or other workflows skip the gate; docs-only PRs also skip the Docker
+  # and container jobs.
   changes:
     name: Detect provisioning changes
     runs-on: ubuntu-latest
@@ -142,6 +150,7 @@ jobs:
       pull-requests: read
     outputs:
       provision: ${{ steps.filter.outputs.provision }}
+      code: ${{ steps.code.outputs.code }}
     steps:
       - uses: dorny/paths-filter@v4.0.3
         id: filter
@@ -154,6 +163,20 @@ jobs:
               - ci/provision.sh
               - .github/workflows/test-provision.yml
               - .github/actions/**
+
+      # A file counts as code when it matches every pattern here; that
+      # quantifier would break the provision filter, hence a second step.
+      - uses: dorny/paths-filter@v4.0.3
+        id: code
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**.md'
+              - '!docs/**'
+              - '!LICENSE*'
+              - '!.claude/**'
 
   # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
   # today, resolved at run time) and on Bookworm (what existing Pis still run).
@@ -337,3 +360,21 @@ jobs:
           name: provision-qemu-logs
           path: ${{ runner.temp }}/ci-logs/
           retention-days: 7
+
+  # One check that sums up every job above, for branch protection: it fails
+  # when any job failed or was cancelled and passes when they passed or were
+  # skipped on purpose.
+  result:
+    name: Virtual Testing Environment
+    runs-on: ubuntu-latest
+    needs: [syntax, unit, docker-smoke, container-helpers, container-smoke, changes, provision-gate, provision-qemu]
+    if: always()
+    steps:
+      - name: Fail when a job failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac
