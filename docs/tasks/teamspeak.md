@@ -97,7 +97,7 @@ home, tell them their connection times are logged. The start page, and so
 the log, is meant for your LAN only (the `firewall` task keeps it there).
 `TEAMSPEAK_USAGE=no` removes the container and keeps the log (and the
 generated password). While the bot cannot reach the server it stops updating
-`usage.json`, so the start page hides the section after 10 minutes instead of
+`usage.json`, so the start page hides its TeamSpeak tab after 10 minutes instead of
 showing an old list. The bot and its image are rebuilt when the `teamspeak`
 task runs, not by `update.sh`.
 

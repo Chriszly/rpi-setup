@@ -21,9 +21,16 @@ assert_contains "page: follows the browser's dark setting" "@media (prefers-colo
 assert_contains "page: reads the service list" "get('services.json'" "$page"
 assert_contains "page: reads the container list" "get('containers.json'" "$page"
 assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
-assert_contains "page: charts how many were online at once" "chartOverview.render(data.concurrent)" "$page"
+assert_contains "page: reads the tasks set up here" "get('tasks.json'" "$page"
+assert_contains "page: links the rpi-setup repository" 'href="https://github.com/Chriszly/rpi-setup"' "$page"
+assert_contains "page: charts how many were online at once" "chartTab.render(data.concurrent)" "$page"
 assert_contains "page: shows each user's server groups" "groups: u.groups" "$page"
+assert_contains "page: has a Docker tab" 'href="#docker"' "$page"
 assert_contains "page: has a TeamSpeak tab" 'href="#teamspeak"' "$page"
+overview="${page#*<div id=\"page-overview\">}"
+overview="${overview%%<div id=\"page-docker\"*}"
+assert_lacks "page: the overview has no TeamSpeak data" 'TeamSpeak' "$overview"
+assert_lacks "page: the overview has no container list" 'containers' "$overview"
 assert_contains "page: groups visitors from the same connection" "data.connections" "$page"
 assert_contains "page: TeamSpeak tab shows the server, channels and busy times" "renderServer(data.server" "$page"
 assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
@@ -35,6 +42,9 @@ web_index_page "$TMP/index.html" >/dev/null
 assert_eq "page: a page of your own is kept" "my own page" "$(cat "$TMP/index.html")"
 
 # --- the service list script -----------------------------------------------------
+TASKS=("base|OS update, EEPROM firmware" "web|nginx with a start page" "docker|Docker Engine")
+RPI_SETUP_DONE_FILE="$TMP/tasks.done"
+printf '%s\n' docker base 'bad name' gone >"$RPI_SETUP_DONE_FILE"
 web_links_script "$TMP/html/services.json" >"$TMP/web-links"
 assert_ok "script: valid bash" bash -n "$TMP/web-links"
 assert_contains "script: writes to the given file" "WL_OUT=$TMP/html/services.json" "$(cat "$TMP/web-links")"
@@ -132,6 +142,14 @@ assert_eq "containers: every container by name, ports once each, times in second
 if command -v python3 >/dev/null 2>&1; then
   assert_ok "containers: valid JSON" python3 -m json.tool "$TMP/html/containers.json"
 fi
+
+assert_eq "tasks: the finished tasks by name with their description, and web" \
+'{"tasks":[
+{"name":"base","description":"OS update, EEPROM firmware"},
+{"name":"docker","description":"Docker Engine"},
+{"name":"gone","description":""},
+{"name":"web","description":"nginx with a start page"}
+]}' "$(cat "$TMP/html/tasks.json" 2>/dev/null)"
 
 inode="$(stat -c %i "$TMP/html/services.json")"
 cinode="$(stat -c %i "$TMP/html/containers.json")"
