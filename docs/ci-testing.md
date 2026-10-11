@@ -53,8 +53,12 @@ quirks). The workflow uses several increasingly faithful layers:
   whenever a task change touches hardware-dependent behavior. It is the only
   job that runs the Docker tasks on arm64.
 
-Changes that touch only Markdown, `docs/`, `LICENSE` or `.claude/` skip this
-workflow (`paths-ignore`); they cannot change what provisioning does.
+Changes that touch only Markdown, `docs/`, `LICENSE` or `.claude/` cannot
+change what provisioning does: on a push to `main` they skip this workflow
+(`paths-ignore`), and on a pull request only `syntax` and `unit` run. The last
+job, **Virtual Testing Environment**, passes when every other job passed or was
+skipped and fails otherwise; make that one name the required check in the
+branch protection rule.
 
 The two flash-script workflows are separate:
 [`test-flash.yml`](../.github/workflows/test-flash.yml) parses and lints
