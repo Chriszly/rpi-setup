@@ -19,6 +19,7 @@ shown and it is taken down again.
 | `USAGECONTROL_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
 | `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/usage-control:main` | Docker image. `:main` follows usage-control's main branch; a release such as `:1.2.3` stays fixed. |
 | `USAGECONTROL_ROUTERS` | empty | Routers to show as devices of their own (usage-control 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes usage-control's `HUB_ROUTERS`. |
+| `USAGECONTROL_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with usage-control's containers add-on (see below). `no` leaves it out. |
 | `USAGECONTROL_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/usagecontrol.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
@@ -34,6 +35,28 @@ shown and it is taken down again.
   inside the container, published on `USAGECONTROL_PORT` over IPv4 only. It
   reads the Pi's `/proc` and `/sys` read-only, runs as a non-root user with
   no capabilities and a read-only file system, and changes nothing on the Pi.
+- With `USAGECONTROL_CONTAINERS=yes`, the `usage-control-containers`
+  container (usage-control's containers add-on, from the same image) and the
+  in-memory Docker volume `usagecontrol_addons` it hands its values over in.
+  It finds every running container on its own, also ones started later, and
+  shows each by name with its CPU and memory and their history.
+
+## Containers on the page
+
+The containers add-on reads each container's CPU and memory from the kernel's
+cgroups (`/sys/fs/cgroup`) and their names from the `containers` folder in
+Docker's data folder (as `docker info` shows it under *Docker Root Dir*,
+usually `/var/lib/docker`), both mounted read-only. It never gets the Docker
+socket: whoever can talk to that socket can start a container with the whole
+Pi mounted, so it is as good as root on the Pi. Instead the add-on runs as
+root inside its container only because the container names are in files only
+root may read, but without any capability, without network and with a
+read-only file system, so it can only read.
+
+Raspberry Pi OS's kernel counts no memory per container unless
+`cgroup_enable=memory` is added to the line in `/boot/firmware/cmdline.txt`
+(and the Pi rebooted); without it the page shows only the CPU of each
+container, and the task says so.
 
 ## Reach it
 
