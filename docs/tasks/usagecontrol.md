@@ -18,10 +18,16 @@ shown and it is taken down again.
 |---------|---------|---------|
 | `USAGECONTROL_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
 | `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/usage-control:main` | Docker image. `:main` follows usage-control's main branch; a release such as `:1.2.3` stays fixed. |
+| `USAGECONTROL_ROUTERS` | empty | Routers to show as devices of their own (usage-control 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes usage-control's `HUB_ROUTERS`. |
+| `USAGECONTROL_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/usagecontrol.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
 
 - `/opt/usagecontrol/docker-compose.yml`.
+- `/opt/usagecontrol/router-secrets/router-passwords` with the router
+  passwords, one `name=password` per line, readable only by root and the
+  container's user (65532); removed when there are none. A changed file
+  restarts the container.
 - The Docker volume `usagecontrol_data` with the history, kept when the
   container is updated or recreated.
 - The `usage-control` container, restarting on its own. It listens on 9393
@@ -48,4 +54,9 @@ answers only requests from private addresses (LAN, loopback, link-local).
 - Ports published by Docker bypass the `firewall` task's rules (it opens the
   port for `FIREWALL_ALLOW_FROM` anyway). How to close or limit them:
   [Ports of Docker containers](firewall.md#ports-of-docker-containers).
+- A router's password does not belong in the settings file, which may be in
+  git: set it once on the Pi with
+  `sudo USAGECONTROL_ROUTER_PASSWORD='Box=secret' bash setup.sh usagecontrol`.
+  Later runs, also from *Update Pi*, keep it until a new one is given. A
+  `upnp` router needs none.
 - Stop: `cd /opt/usagecontrol && sudo docker compose down`.
