@@ -327,10 +327,10 @@ check_tasks() {
     fi
   fi
 
-  if [[ -f "$(container_dir usagecontrol)/docker-compose.yml" ]]; then
-    found=1; check_config usagecontrol
+  if [[ -f "$(container_dir denwatcher)/docker-compose.yml" ]]; then
+    found=1; check_config denwatcher
     if have docker; then check_container den-watcher; fi
-    check_http "usagecontrol: web" "http://$host:$(port_setting USAGECONTROL_PORT 9393)/api/metrics"
+    check_http "denwatcher: web" "http://$host:$(port_setting DENWATCHER_PORT 9393)/api/metrics"
   fi
 
   if have docker && docker info >/dev/null 2>&1; then

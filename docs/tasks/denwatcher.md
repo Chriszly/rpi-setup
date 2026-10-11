@@ -1,13 +1,12 @@
-# usagecontrol - Den-Watcher website
+# denwatcher - Den-Watcher website
 
 Runs [Den-Watcher](https://github.com/Chriszly/den-watcher), a website
 that shows the Pi's CPU and memory usage, temperatures and uptime, from its
-published Docker image (arm64 and amd64). Den-Watcher was called usage-control
-up to 2.0.7a; the task and its `USAGECONTROL_*` settings keep that name, so
-settings files and deploy lists need no change.
+published Docker image (arm64 and amd64). It was the `usagecontrol` task
+before Den-Watcher's rename; see [Renamed from usagecontrol](#renamed-from-usagecontrol).
 
 ```bash
-sudo bash setup.sh usagecontrol
+sudo bash setup.sh denwatcher
 ```
 
 Needs Docker (the task runs the `docker` task first when it is missing) and a
@@ -18,28 +17,30 @@ shown and it is taken down again.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `USAGECONTROL_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
-| `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. The old name `ghcr.io/chriszly/usage-control` still works for now (see below). |
-| `USAGECONTROL_ROUTERS` | empty | Routers to show as devices of their own (usage-control 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes Den-Watcher's `HUB_ROUTERS`. |
-| `USAGECONTROL_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
-| `USAGECONTROL_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/usagecontrol.env`, so it needs to be given only once (see below). |
+| `DENWATCHER_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
+| `DENWATCHER_IMAGE` | `ghcr.io/chriszly/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. |
+| `DENWATCHER_ROUTERS` | empty | Routers to show as devices of their own (Den-Watcher 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes Den-Watcher's `HUB_ROUTERS`. |
+| `DENWATCHER_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
+| `DENWATCHER_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/denwatcher.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
 
-- `/opt/usagecontrol/docker-compose.yml`.
-- `/opt/usagecontrol/router-secrets/router-passwords` with the router
+- `/opt/denwatcher/docker-compose.yml`.
+- `/opt/denwatcher/router-secrets/router-passwords` with the router
   passwords, one `name=password` per line, readable only by root and the
   container's user (65532); removed when there are none. A changed file
   restarts the container.
-- The Docker volume `usagecontrol_data` with the history, kept when the
+- The Docker volume `denwatcher_data` with the history, kept when the
   container is updated or recreated.
 - The `den-watcher` container, restarting on its own. It listens on 9393
-  inside the container, published on `USAGECONTROL_PORT` over IPv4 only. It
+  inside the container, published on `DENWATCHER_PORT` over IPv4 only. It
   reads the Pi's `/proc` and `/sys` read-only, runs as a non-root user with
   no capabilities and a read-only file system, and changes nothing on the Pi.
-- With `USAGECONTROL_CONTAINERS=yes`, the `den-watcher-containers`
+  Its labels give it a card with a description on the `web` task's start
+  page, also when only this task was run since the page was set up.
+- With `DENWATCHER_CONTAINERS=yes`, the `den-watcher-containers`
   container (Den-Watcher's containers add-on, from the same image) and the
-  in-memory Docker volume `usagecontrol_addons` it hands its values over in.
+  in-memory Docker volume `denwatcher_addons` it hands its values over in.
   It finds every running container on its own, also ones started later, and
   shows each by name with its CPU and memory and their history.
 
@@ -75,28 +76,29 @@ answers only requests from private addresses (LAN, loopback, link-local).
 - The default port is 9393, the port Den-Watcher listens on inside its
   container, so the address is the same with or without Docker and stays
   clear of nginx (80 or 8080). An install from before used 8080 or 8090; the
-  next run of the task moves it to 9393 unless `USAGECONTROL_PORT` is set.
+  next run of the task moves it to 9393 unless `DENWATCHER_PORT` is set.
 - Ports published by Docker bypass the `firewall` task's rules (it opens the
   port for `FIREWALL_ALLOW_FROM` anyway). How to close or limit them:
   [Ports of Docker containers](firewall.md#ports-of-docker-containers).
 - A router's password does not belong in the settings file, which may be in
   git: set it once on the Pi with
-  `sudo USAGECONTROL_ROUTER_PASSWORD='Box=secret' bash setup.sh usagecontrol`.
+  `sudo DENWATCHER_ROUTER_PASSWORD='Box=secret' bash setup.sh denwatcher`.
   Later runs, also from *Update Pi*, keep it until a new one is given. A
   `upnp` router needs none.
-- Stop: `cd /opt/usagecontrol && sudo docker compose down`.
+- Stop: `cd /opt/denwatcher && sudo docker compose down`.
 
-## Renamed from usage-control
+## Renamed from usagecontrol
 
-The next run of the task on a Pi set up before the rename replaces the
-`usage-control` and `usage-control-containers` containers with `den-watcher`
-and `den-watcher-containers`. The folder `/opt/usagecontrol`, the volume
-`usagecontrol_data` with the history, the port and the router passwords stay
-as they are.
+Before Den-Watcher's rename the task was called `usagecontrol`, with
+`USAGECONTROL_*` settings, the folder `/opt/usagecontrol` and the volume
+`usagecontrol_data`. On a Pi set up that way, the first run of `denwatcher`
+(from *Update Pi* once the settings repository lists `denwatcher`) moves it
+over once: it stops the old containers, copies the history into
+`denwatcher_data`, keeps the router passwords and removes `/opt/usagecontrol`.
+The port stays. The old volume is kept as a backup; once the page shows the
+history, remove it with `sudo docker volume rm usagecontrol_data`.
 
-A `USAGECONTROL_IMAGE` that still names `ghcr.io/chriszly/usage-control`
-keeps working, also a release from before the rename such as `:2.0.7a`, as
-long as Den-Watcher publishes the image under that name too; that name will
-be dropped in a later Den-Watcher release, so switch it to
-`ghcr.io/chriszly/den-watcher` with the same tag. The first release under
-the new name is 2.0.8a.
+`USAGECONTROL_*` lines in the settings file still work, with a warning per
+line; rename them to `DENWATCHER_*`. The old image name
+`ghcr.io/chriszly/usage-control` stops the task: set `DENWATCHER_IMAGE` to
+`ghcr.io/chriszly/den-watcher` with the same tag (2.0.8a or later).

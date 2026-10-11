@@ -106,7 +106,7 @@ for s in d["services"]:
 ' "$TMP/html/services.json" 2>&1)" || summary="not JSON: $summary"
   expected='rasPi 192.168.60.9
 Pi-hole|Blocks ads and trackers for every device on the network|80|/admin/|True
-Den-Watcher|CPU, memory and temperature of this Pi|8081|/|False
+Den-Watcher|CPU, memory, temperature and disks of this Pi, with their history|8081|/|False
 a"b\c||9100|/|True
 My App|Does things|9000|/ui/|True
 myapp||6000|/|True

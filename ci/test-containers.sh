@@ -86,9 +86,7 @@ fi
 # The mock logs its calls; MOCK_PS is what "compose ps -aq" prints and
 # MOCK_DOWN_RC what "compose down" returns.
 leave_dir="$(container_dir leave)"
-# The mock only stands in for the calls under test; tasks/web.sh running the
-# real docker through xargs is fine.
-# shellcheck disable=SC2032
+# shellcheck disable=SC2032 # a mock for this file; web.sh's xargs runs the real docker
 docker() {
     printf '%s\n' "$*" >>"$TMP/docker.log"
     case "$1 ${4:-}" in
