@@ -415,8 +415,21 @@ split_config() {
 RETIRED_SETTINGS=' BASE_FAIL2BAN_MAXRETRY BASE_FAIL2BAN_BANTIME BASE_AUTO_REBOOT_TIME DOCKER_LOG_MAX_SIZE DOCKER_LOG_MAX_FILE PIHOLE_CONFIRM PIHOLE_UNATTENDED '
 # The tailscale and monitoring tasks were removed (they need outside accounts).
 RETIRED_SETTINGS+='TAILSCALE_DOCKER TAILSCALE_IMAGE TAILSCALE_AUTHKEY TAILSCALE_HOSTNAME TAILSCALE_SSH TAILSCALE_ADVERTISE_EXIT_NODE TAILSCALE_ADVERTISE_ROUTES TAILSCALE_ACCEPT_DNS MONITORING_PORT MONITORING_BIND MONITORING_TELEMETRY MONITORING_DOCKER MONITORING_IMAGE '
+# Prefixes of renamed tasks' settings, old=new: the usagecontrol task is now
+# denwatcher. A central file with the old names keeps working, with a warning.
+RENAMED_SETTINGS='USAGECONTROL_=DENWATCHER_'
 _split_setting() {
-  local n="$1" key="$2" value="$3"
+  local n="$1" key="$2" value="$3" pair to
+  for pair in $RENAMED_SETTINGS; do
+    [[ "$key" == "${pair%%=*}"* ]] || continue
+    to="${pair#*=}${key#"${pair%%=*}"}"
+    [[ -n "${_SPLIT_KNOWN[$to]+x}" ]] || break
+    warn "$_SPLIT_FILE, line $n: '$key' is now called '$to'; rename the line"
+    # The new name wins when the file has both.
+    [[ -n "${_SPLIT_VALUES[$to]+x}" ]] && return 0
+    key="$to"
+    break
+  done
   if [[ -z "${_SPLIT_KNOWN[$key]+x}" && "$RETIRED_SETTINGS" == *" $key "* ]]; then
     warn "$_SPLIT_FILE, line $n: '$key' is no longer a setting and is ignored; delete the line"
     return 0

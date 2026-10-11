@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Task: usagecontrol - Den-Watcher hardware usage website (Docker). Den-Watcher
-# was called usage-control; the task and its USAGECONTROL_* settings keep that name.
-# Settings: USAGECONTROL_* in config/rpi-setup.env (names in config/tasks/usagecontrol.env).
+# Task: denwatcher - Den-Watcher hardware usage website (Docker).
+# Settings: DENWATCHER_* in config/rpi-setup.env (names in config/tasks/denwatcher.env).
 set -euo pipefail
 . "$RPI_SETUP_ROOT/lib/containers.sh"
 
-TASKS+=("usagecontrol|Den-Watcher: CPU, memory and temperature of the Pi in the browser (:9393)")
+TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the browser (:9393)")
 
-# usagecontrol_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] - the compose file:
+# denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] - the compose file:
 # the host's /proc and /sys read-only (gopsutil reads them through
 # HOST_PROC/HOST_SYS), the website on PORT (the container listens on 9393),
 # the routers to show (HUB_ROUTERS) with their passwords from router-secrets/,
 # the history in a named volume, no capabilities and a read-only root file
 # system. With DOCKER_DIR (Docker's data folder) also Den-Watcher's
-# containers add-on, see usagecontrol_compose_containers.
-usagecontrol_compose() {
+# containers add-on, see denwatcher_compose_containers.
+denwatcher_compose() {
   cat <<EOF2
 services:
   den-watcher:
@@ -46,7 +45,7 @@ EOF2
     security_opt:
       - no-new-privileges:true
 EOF2
-  [[ -z "${4:-}" ]] || usagecontrol_compose_containers "$1" "$4"
+  [[ -z "${4:-}" ]] || denwatcher_compose_containers "$1" "$4"
   cat <<EOF2
 volumes:
   data:
@@ -61,7 +60,7 @@ EOF2
 EOF2
 }
 
-# usagecontrol_compose_containers IMAGE DOCKER_DIR - the containers add-on's
+# denwatcher_compose_containers IMAGE DOCKER_DIR - the containers add-on's
 # service, as in Den-Watcher's own compose.yaml: it reads each running
 # container's CPU and memory from the host's cgroups and their names from
 # DOCKER_DIR/containers, both read-only, and writes them to the in-memory
@@ -69,18 +68,13 @@ EOF2
 # would give it control of the Pi. It runs as root only so it may read those
 # names (root-only files), but without any capability, network or writable
 # file system. Compose does not create a missing DOCKER_DIR/containers.
-# Images under the old name ghcr.io/<owner>/usage-control, also the ones from
-# before the rename, have the add-on as /usage-control-containers; den-watcher
-# images have it as /den-watcher-containers.
-usagecontrol_compose_containers() {
-  local entry=/den-watcher-containers
-  if [[ "$1" =~ /usage-control([:@][^/]*)?$ ]]; then entry=/usage-control-containers; fi
+denwatcher_compose_containers() {
   cat <<EOF2
   den-watcher-containers:
     image: "$1"
     container_name: den-watcher-containers
     restart: unless-stopped
-    entrypoint: ["$entry"]
+    entrypoint: ["/den-watcher-containers"]
     user: "0:0"
     environment:
       HOST_SYS: /host/sys
@@ -104,33 +98,77 @@ usagecontrol_compose_containers() {
 EOF2
 }
 
-run_usagecontrol() {
-  : "${USAGECONTROL_PORT:=9393}" "${USAGECONTROL_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${USAGECONTROL_ROUTER_PASSWORD:=}" "${USAGECONTROL_CONTAINERS:=yes}"
-  require_port USAGECONTROL_PORT
-  require_image_ref USAGECONTROL_IMAGE
+# denwatcher_move_old DIR PASSWORDS - moves an install of the usagecontrol
+# task, Den-Watcher's task before the rename, to this one, once: it stops the
+# old containers, copies the history from the volume usagecontrol_data into
+# this project's data volume (which Compose creates, so it stays Compose's),
+# keeps the router passwords under the new name and removes /opt/usagecontrol.
+# The old volume stays as a backup. A copy cut short is not repeated over:
+# the next run finds the new volume not empty and goes on with it.
+denwatcher_move_old() {
+  local dir="$1" passwords="$2" old from to
+  old="$(container_dir usagecontrol)"
+  [[ -f "$old/docker-compose.yml" ]] || return 0
+  info "Moving the usagecontrol task's install from before the rename in $old to $dir"
+  docker compose -f "$old/docker-compose.yml" down ||
+    die "Could not stop the old install in $old; stop it with: cd $old && sudo docker compose down"
+  if docker volume inspect usagecontrol_data >/dev/null 2>&1; then
+    docker compose -f "$dir/docker-compose.yml" create den-watcher ||
+      die "Could not create the den-watcher container and its volume in $dir"
+    from="$(docker volume inspect -f '{{.Mountpoint}}' usagecontrol_data)" &&
+      to="$(docker volume inspect -f '{{.Mountpoint}}' denwatcher_data)" &&
+      [[ -d "$from" && -d "$to" ]] ||
+      die "Could not find the folders of the volumes usagecontrol_data and denwatcher_data; is Docker's local volume driver in use?"
+    if [[ -n "$(ls -A "$to")" ]]; then
+      info "denwatcher_data already holds a history; keeping it"
+    else
+      cp -a "$from/." "$to/" || die "Could not copy the history from usagecontrol_data to denwatcher_data"
+      say "Copied the history from usagecontrol_data to denwatcher_data"
+    fi
+  fi
+  if [[ -n "$passwords" ]] && ! load_secret denwatcher DENWATCHER_ROUTER_PASSWORD >/dev/null; then
+    save_secret denwatcher DENWATCHER_ROUTER_PASSWORD "$passwords"
+  fi
+  rm -f /var/lib/rpi-setup/secrets/usagecontrol.env
+  docker volume rm usagecontrol_addons >/dev/null 2>&1 || true
+  rm -rf "$old"
+  if docker volume inspect usagecontrol_data >/dev/null 2>&1; then
+    info "The old volume usagecontrol_data stays as a backup; once the history shows in Den-Watcher, remove it with: sudo docker volume rm usagecontrol_data"
+  fi
+}
+
+run_denwatcher() {
+  : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}"
+  require_port DENWATCHER_PORT
+  require_image_ref DENWATCHER_IMAGE
+  # Images under Den-Watcher's old name run the containers add-on under its old
+  # name too, and that name is published only up to 3.0.0.
+  [[ ! "$DENWATCHER_IMAGE" =~ /usage-control([:@][^/]*)?$ ]] ||
+    die "DENWATCHER_IMAGE names Den-Watcher's old image ($DENWATCHER_IMAGE); set it to ghcr.io/chriszly/den-watcher with the same tag (2.0.8a or later)"
   local containers=0
-  if setting_on USAGECONTROL_CONTAINERS; then containers=1; fi
+  if setting_on DENWATCHER_CONTAINERS; then containers=1; fi
   # Den-Watcher checks each router itself; here only what could break the
   # compose file (quotes, $, backslashes, line breaks) is refused.
   local safe='^[][A-Za-z0-9 ._@:=,-]*$'
-  [[ "${USAGECONTROL_ROUTERS:-}" =~ $safe ]] ||
-    die "USAGECONTROL_ROUTERS must be name=protocol:address entries, such as Router=upnp:192.168.1.1, with only letters, digits, spaces and . _ @ : = , - [ ] (got '${USAGECONTROL_ROUTERS}')"
+  [[ "${DENWATCHER_ROUTERS:-}" =~ $safe ]] ||
+    die "DENWATCHER_ROUTERS must be name=protocol:address entries, such as Router=upnp:192.168.1.1, with only letters, digits, spaces and . _ @ : = , - [ ] (got '${DENWATCHER_ROUTERS}')"
 
-  # Router passwords: from USAGECONTROL_ROUTER_PASSWORD, kept for the next
+  # Router passwords: from DENWATCHER_ROUTER_PASSWORD, kept for the next
   # runs, or the ones kept from an earlier run, so they never need to be in
   # the settings file.
-  local passwords="$USAGECONTROL_ROUTER_PASSWORD" entry named='^ *[^= ][^=]*=.+$'
+  local passwords="$DENWATCHER_ROUTER_PASSWORD" entry named='^ *[^= ][^=]*=.+$'
   if [[ -n "$passwords" ]]; then
     local -a entries
-    [[ "$passwords" != *$'\n'* ]] || die "USAGECONTROL_ROUTER_PASSWORD must be on one line"
+    [[ "$passwords" != *$'\n'* ]] || die "DENWATCHER_ROUTER_PASSWORD must be on one line"
     IFS=, read -ra entries <<<"$passwords"
     for entry in "${entries[@]}"; do
       # The value is not shown, as it holds passwords.
       [[ "$entry" =~ $named ]] ||
-        die "USAGECONTROL_ROUTER_PASSWORD must be name=password entries, comma-separated, such as Router=secret"
+        die "DENWATCHER_ROUTER_PASSWORD must be name=password entries, comma-separated, such as Router=secret"
     done
   else
-    passwords="$(load_secret usagecontrol USAGECONTROL_ROUTER_PASSWORD)" || passwords=""
+    passwords="$(load_secret denwatcher DENWATCHER_ROUTER_PASSWORD)" ||
+      passwords="$(load_secret usagecontrol USAGECONTROL_ROUTER_PASSWORD)" || passwords=""
   fi
 
   # The image is published for arm64 and amd64 only.
@@ -141,9 +179,9 @@ run_usagecontrol() {
 
   # The port may already be ours (Docker's proxy); anything else holds it.
   local owner
-  owner="$(port_owner "$USAGECONTROL_PORT")" || owner=""
+  owner="$(port_owner "$DENWATCHER_PORT")" || owner=""
   if [[ -n "$owner" && "$owner" != docker-proxy ]]; then
-    die "Port $USAGECONTROL_PORT is used by $owner; set USAGECONTROL_PORT to a free port"
+    die "Port $DENWATCHER_PORT is used by $owner; set DENWATCHER_PORT to a free port"
   fi
 
   container_require_docker
@@ -155,22 +193,19 @@ run_usagecontrol() {
     docker_dir="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)" ||
       die "Could not ask Docker for its data folder (docker info); is the Docker service running?"
     [[ "$docker_dir" =~ ^/[A-Za-z0-9._/-]*$ ]] ||
-      die "Docker's data folder '$docker_dir' has characters the compose file cannot hold; set USAGECONTROL_CONTAINERS=no"
+      die "Docker's data folder '$docker_dir' has characters the compose file cannot hold; set DENWATCHER_CONTAINERS=no"
     if [[ ! -d "$docker_dir/containers" ]]; then
-      warn "No $docker_dir/containers folder, so the containers add-on is left out; set USAGECONTROL_CONTAINERS=no to silence this"
+      warn "No $docker_dir/containers folder, so the containers add-on is left out; set DENWATCHER_CONTAINERS=no to silence this"
       docker_dir=""
     elif ! grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
       info "The kernel counts no memory per container, so Den-Watcher shows only their CPU. For their memory too, add cgroup_enable=memory to /boot/firmware/cmdline.txt and reboot."
     fi
   fi
 
-  # The folder, and so the compose project and its volumes, keep the task's
-  # name: an install from before the rename keeps its history, and container_up
-  # removes its usage-control containers as orphans before it starts these.
   local dir name=den-watcher changed=0
-  dir="$(container_dir usagecontrol)"
+  dir="$(container_dir denwatcher)"
   install -m 0755 -d "$dir" "$dir/router-secrets"
-  if usagecontrol_compose "$USAGECONTROL_IMAGE" "$USAGECONTROL_PORT" "${USAGECONTROL_ROUTERS:-}" "$docker_dir" | write_if_changed "$dir/docker-compose.yml" 0644; then
+  if denwatcher_compose "$DENWATCHER_IMAGE" "$DENWATCHER_PORT" "${DENWATCHER_ROUTERS:-}" "$docker_dir" | write_if_changed "$dir/docker-compose.yml" 0644; then
     changed=1
   fi
 
@@ -179,8 +214,8 @@ run_usagecontrol() {
   # file restarts the container.
   # 65532 is the image's non-root user (distroless nonroot).
   local secrets="$dir/router-secrets/router-passwords" recreate=0
-  if [[ -n "$USAGECONTROL_ROUTER_PASSWORD" ]]; then
-    save_secret usagecontrol USAGECONTROL_ROUTER_PASSWORD "$passwords"
+  if [[ -n "$DENWATCHER_ROUTER_PASSWORD" ]]; then
+    save_secret denwatcher DENWATCHER_ROUTER_PASSWORD "$passwords"
   fi
   if [[ -n "$passwords" ]]; then
     if tr ',' '\n' <<<"$passwords" | write_if_changed "$secrets" 0400; then
@@ -194,6 +229,7 @@ run_usagecontrol() {
   [[ $recreate -eq 0 ]] || changed=1
 
   container_pull "$dir"
+  denwatcher_move_old "$dir" "$passwords"
   container_up "$dir" "$name" "$recreate"
   # The website runs without the add-on, so one that does not stay up only
   # warns, with its last log lines.
@@ -203,8 +239,8 @@ run_usagecontrol() {
   fi
 
   if [[ $changed -eq 1 ]]; then
-    say "Den-Watcher is running with the new settings: $(service_url "$USAGECONTROL_PORT")"
+    say "Den-Watcher is running with the new settings: $(service_url "$DENWATCHER_PORT")"
   else
-    say "Den-Watcher is running: $(service_url "$USAGECONTROL_PORT")"
+    say "Den-Watcher is running: $(service_url "$DENWATCHER_PORT")"
   fi
 }

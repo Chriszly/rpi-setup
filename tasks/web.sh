@@ -779,7 +779,7 @@ web_links_run_json() {
 web_links_run_known() {
   case "$1" in
     netalertx) printf 'NetAlertX\tWhich devices are on the network, and when\t/\n' ;;
-    den-watcher|usage-control) printf 'Den-Watcher\tCPU, memory and temperature of this Pi\t/\n' ;;
+    den-watcher) printf 'Den-Watcher\tCPU, memory and temperature of this Pi\t/\n' ;;
     pihole|web|teamspeak|teamspeak-usage|samba) printf -- '-\n' ;;
     *) return 1 ;;
   esac
