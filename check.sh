@@ -329,7 +329,7 @@ check_tasks() {
 
   if [[ -f "$(container_dir usagecontrol)/docker-compose.yml" ]]; then
     found=1; check_config usagecontrol
-    if have docker; then check_container usage-control; fi
+    if have docker; then check_container den-watcher; fi
     check_http "usagecontrol: web" "http://$host:$(port_setting USAGECONTROL_PORT 9393)/api/metrics"
   fi
 

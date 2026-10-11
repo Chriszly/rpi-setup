@@ -1,8 +1,10 @@
-# usagecontrol - usage-control website
+# usagecontrol - Den-Watcher website
 
-Runs [usage-control](https://github.com/Chriszly/usage-control), a website
+Runs [Den-Watcher](https://github.com/Chriszly/den-watcher), a website
 that shows the Pi's CPU and memory usage, temperatures and uptime, from its
-published Docker image (arm64 and amd64).
+published Docker image (arm64 and amd64). Den-Watcher was called usage-control
+up to 2.0.7a; the task and its `USAGECONTROL_*` settings keep that name, so
+settings files and deploy lists need no change.
 
 ```bash
 sudo bash setup.sh usagecontrol
@@ -17,9 +19,9 @@ shown and it is taken down again.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `USAGECONTROL_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
-| `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/usage-control:main` | Docker image. `:main` follows usage-control's main branch; a release such as `:1.2.3` stays fixed. |
-| `USAGECONTROL_ROUTERS` | empty | Routers to show as devices of their own (usage-control 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes usage-control's `HUB_ROUTERS`. |
-| `USAGECONTROL_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with usage-control's containers add-on (see below). `no` leaves it out. |
+| `USAGECONTROL_IMAGE` | `ghcr.io/chriszly/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. The old name `ghcr.io/chriszly/usage-control` still works for now (see below). |
+| `USAGECONTROL_ROUTERS` | empty | Routers to show as devices of their own (usage-control 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes Den-Watcher's `HUB_ROUTERS`. |
+| `USAGECONTROL_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
 | `USAGECONTROL_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/usagecontrol.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
@@ -31,12 +33,12 @@ shown and it is taken down again.
   restarts the container.
 - The Docker volume `usagecontrol_data` with the history, kept when the
   container is updated or recreated.
-- The `usage-control` container, restarting on its own. It listens on 9393
+- The `den-watcher` container, restarting on its own. It listens on 9393
   inside the container, published on `USAGECONTROL_PORT` over IPv4 only. It
   reads the Pi's `/proc` and `/sys` read-only, runs as a non-root user with
   no capabilities and a read-only file system, and changes nothing on the Pi.
-- With `USAGECONTROL_CONTAINERS=yes`, the `usage-control-containers`
-  container (usage-control's containers add-on, from the same image) and the
+- With `USAGECONTROL_CONTAINERS=yes`, the `den-watcher-containers`
+  container (Den-Watcher's containers add-on, from the same image) and the
   in-memory Docker volume `usagecontrol_addons` it hands its values over in.
   It finds every running container on its own, also ones started later, and
   shows each by name with its CPU and memory and their history.
@@ -70,7 +72,7 @@ answers only requests from private addresses (LAN, loopback, link-local).
   visibility*). The source repository can stay private.
 - A newer image comes with `sudo bash update.sh` (or *Update Pi* from your
   settings repository).
-- The default port is 9393, the port usage-control listens on inside its
+- The default port is 9393, the port Den-Watcher listens on inside its
   container, so the address is the same with or without Docker and stays
   clear of nginx (80 or 8080). An install from before used 8080 or 8090; the
   next run of the task moves it to 9393 unless `USAGECONTROL_PORT` is set.
@@ -83,3 +85,18 @@ answers only requests from private addresses (LAN, loopback, link-local).
   Later runs, also from *Update Pi*, keep it until a new one is given. A
   `upnp` router needs none.
 - Stop: `cd /opt/usagecontrol && sudo docker compose down`.
+
+## Renamed from usage-control
+
+The next run of the task on a Pi set up before the rename replaces the
+`usage-control` and `usage-control-containers` containers with `den-watcher`
+and `den-watcher-containers`. The folder `/opt/usagecontrol`, the volume
+`usagecontrol_data` with the history, the port and the router passwords stay
+as they are.
+
+A `USAGECONTROL_IMAGE` that still names `ghcr.io/chriszly/usage-control`
+keeps working, also a release from before the rename such as `:2.0.7a`, as
+long as Den-Watcher publishes the image under that name too; that name will
+be dropped in a later Den-Watcher release, so switch it to
+`ghcr.io/chriszly/den-watcher` with the same tag. The first release under
+the new name is 2.0.8a.

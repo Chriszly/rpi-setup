@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Task: usagecontrol - usage-control hardware usage website (Docker).
+# Task: usagecontrol - Den-Watcher hardware usage website (Docker). Den-Watcher
+# was called usage-control; the task and its USAGECONTROL_* settings keep that name.
 # Settings: USAGECONTROL_* in config/rpi-setup.env (names in config/tasks/usagecontrol.env).
 set -euo pipefail
 . "$RPI_SETUP_ROOT/lib/containers.sh"
 
-TASKS+=("usagecontrol|usage-control: CPU, memory and temperature of the Pi in the browser (:9393)")
+TASKS+=("usagecontrol|Den-Watcher: CPU, memory and temperature of the Pi in the browser (:9393)")
 
 # usagecontrol_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] - the compose file:
 # the host's /proc and /sys read-only (gopsutil reads them through
 # HOST_PROC/HOST_SYS), the website on PORT (the container listens on 9393),
 # the routers to show (HUB_ROUTERS) with their passwords from router-secrets/,
 # the history in a named volume, no capabilities and a read-only root file
-# system. With DOCKER_DIR (Docker's data folder) also usage-control's
+# system. With DOCKER_DIR (Docker's data folder) also Den-Watcher's
 # containers add-on, see usagecontrol_compose_containers.
 usagecontrol_compose() {
   cat <<EOF2
 services:
-  usage-control:
+  den-watcher:
     image: "$1"
-    container_name: usage-control
+    container_name: den-watcher
     restart: unless-stopped
     ports:
       - "0.0.0.0:$2:9393"
@@ -61,20 +62,25 @@ EOF2
 }
 
 # usagecontrol_compose_containers IMAGE DOCKER_DIR - the containers add-on's
-# service, as in usage-control's own compose.yaml: it reads each running
+# service, as in Den-Watcher's own compose.yaml: it reads each running
 # container's CPU and memory from the host's cgroups and their names from
 # DOCKER_DIR/containers, both read-only, and writes them to the in-memory
 # addons volume the website reads. It never gets the Docker socket, which
 # would give it control of the Pi. It runs as root only so it may read those
 # names (root-only files), but without any capability, network or writable
 # file system. Compose does not create a missing DOCKER_DIR/containers.
+# Images under the old name ghcr.io/<owner>/usage-control, also the ones from
+# before the rename, have the add-on as /usage-control-containers; den-watcher
+# images have it as /den-watcher-containers.
 usagecontrol_compose_containers() {
+  local entry=/den-watcher-containers
+  if [[ "$1" =~ /usage-control([:@][^/]*)?$ ]]; then entry=/usage-control-containers; fi
   cat <<EOF2
-  usage-control-containers:
+  den-watcher-containers:
     image: "$1"
-    container_name: usage-control-containers
+    container_name: den-watcher-containers
     restart: unless-stopped
-    entrypoint: ["/usage-control-containers"]
+    entrypoint: ["$entry"]
     user: "0:0"
     environment:
       HOST_SYS: /host/sys
@@ -99,12 +105,12 @@ EOF2
 }
 
 run_usagecontrol() {
-  : "${USAGECONTROL_PORT:=9393}" "${USAGECONTROL_IMAGE:=ghcr.io/chriszly/usage-control:main}" "${USAGECONTROL_ROUTER_PASSWORD:=}" "${USAGECONTROL_CONTAINERS:=yes}"
+  : "${USAGECONTROL_PORT:=9393}" "${USAGECONTROL_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${USAGECONTROL_ROUTER_PASSWORD:=}" "${USAGECONTROL_CONTAINERS:=yes}"
   require_port USAGECONTROL_PORT
   require_image_ref USAGECONTROL_IMAGE
   local containers=0
   if setting_on USAGECONTROL_CONTAINERS; then containers=1; fi
-  # usage-control checks each router itself; here only what could break the
+  # Den-Watcher checks each router itself; here only what could break the
   # compose file (quotes, $, backslashes, line breaks) is refused.
   local safe='^[][A-Za-z0-9 ._@:=,-]*$'
   [[ "${USAGECONTROL_ROUTERS:-}" =~ $safe ]] ||
@@ -131,7 +137,7 @@ run_usagecontrol() {
   local arch
   arch="$(dpkg --print-architecture)"
   [[ "$arch" == arm64 || "$arch" == amd64 ]] ||
-    die "The usage-control image needs a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit)."
+    die "The Den-Watcher image needs a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit)."
 
   # The port may already be ours (Docker's proxy); anything else holds it.
   local owner
@@ -154,11 +160,14 @@ run_usagecontrol() {
       warn "No $docker_dir/containers folder, so the containers add-on is left out; set USAGECONTROL_CONTAINERS=no to silence this"
       docker_dir=""
     elif ! grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
-      info "The kernel counts no memory per container, so usage-control shows only their CPU. For their memory too, add cgroup_enable=memory to /boot/firmware/cmdline.txt and reboot."
+      info "The kernel counts no memory per container, so Den-Watcher shows only their CPU. For their memory too, add cgroup_enable=memory to /boot/firmware/cmdline.txt and reboot."
     fi
   fi
 
-  local dir name=usage-control changed=0
+  # The folder, and so the compose project and its volumes, keep the task's
+  # name: an install from before the rename keeps its history, and container_up
+  # removes its usage-control containers as orphans before it starts these.
+  local dir name=den-watcher changed=0
   dir="$(container_dir usagecontrol)"
   install -m 0755 -d "$dir" "$dir/router-secrets"
   if usagecontrol_compose "$USAGECONTROL_IMAGE" "$USAGECONTROL_PORT" "${USAGECONTROL_ROUTERS:-}" "$docker_dir" | write_if_changed "$dir/docker-compose.yml" 0644; then
@@ -166,7 +175,7 @@ run_usagecontrol() {
   fi
 
   # The passwords file, one name=password per line, readable only by root
-  # and the container's user. usage-control reads it at start, so a changed
+  # and the container's user. Den-Watcher reads it at start, so a changed
   # file restarts the container.
   # 65532 is the image's non-root user (distroless nonroot).
   local secrets="$dir/router-secrets/router-passwords" recreate=0
@@ -188,14 +197,14 @@ run_usagecontrol() {
   container_up "$dir" "$name" "$recreate"
   # The website runs without the add-on, so one that does not stay up only
   # warns, with its last log lines.
-  if [[ -n "$docker_dir" ]] && ! container_wait_stable usage-control-containers; then
-    docker logs --tail 30 usage-control-containers 2>&1 | sed 's/^/    /' >&2 || true
-    warn "The containers add-on does not stay up, so usage-control shows no containers; its last log lines are above"
+  if [[ -n "$docker_dir" ]] && ! container_wait_stable den-watcher-containers; then
+    docker logs --tail 30 den-watcher-containers 2>&1 | sed 's/^/    /' >&2 || true
+    warn "The containers add-on does not stay up, so Den-Watcher shows no containers; its last log lines are above"
   fi
 
   if [[ $changed -eq 1 ]]; then
-    say "usage-control is running with the new settings: $(service_url "$USAGECONTROL_PORT")"
+    say "Den-Watcher is running with the new settings: $(service_url "$USAGECONTROL_PORT")"
   else
-    say "usage-control is running: $(service_url "$USAGECONTROL_PORT")"
+    say "Den-Watcher is running: $(service_url "$USAGECONTROL_PORT")"
   fi
 }

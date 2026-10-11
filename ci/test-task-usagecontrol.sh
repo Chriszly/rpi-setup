@@ -11,8 +11,8 @@ TASKS=()
 . "$ROOT/tasks/usagecontrol.sh"
 
 # --- the compose file -----------------------------------------------------------
-out="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090)"
-assert_contains "compose: image" 'image: "ghcr.io/chriszly/usage-control:1.2.3"' "$out"
+out="$(usagecontrol_compose ghcr.io/chriszly/den-watcher:1.2.3 8090)"
+assert_contains "compose: image" 'image: "ghcr.io/chriszly/den-watcher:1.2.3"' "$out"
 assert_contains "compose: port on the host" '"0.0.0.0:8090:9393"' "$out"
 assert_contains "compose: port the page is reachable on" 'PUBLIC_PORT: "8090"' "$out"
 assert_contains "compose: history kept in a volume" "data:/data" "$out"
@@ -22,13 +22,18 @@ assert_contains "compose: no capabilities" "- ALL" "$out"
 assert_contains "compose: read-only file system" "read_only: true" "$out"
 assert_contains "compose: no routers by default" 'HUB_ROUTERS: ""' "$out"
 assert_contains "compose: router passwords mounted read-only" "./router-secrets:/run/secrets:ro" "$out"
-out="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090 'Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1')"
+out="$(usagecontrol_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 'Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1')"
 assert_contains "compose: routers" 'HUB_ROUTERS: "Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1"' "$out"
-assert_lacks "compose: no containers add-on without Docker's folder" "usage-control-containers" "$out"
+assert_lacks "compose: no containers add-on without Docker's folder" "den-watcher-containers" "$out"
 assert_lacks "compose: no add-on folder without the add-on" "addons" "$out"
-with="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090 '' /srv/docker)"
-assert_contains "containers: add-on service" "entrypoint: [\"/usage-control-containers\"]" "$with"
-assert_contains "containers: same image" $'usage-control-containers:\n    image: "ghcr.io/chriszly/usage-control:1.2.3"' "$with"
+with="$(usagecontrol_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 '' /srv/docker)"
+assert_contains "containers: add-on service" "entrypoint: [\"/den-watcher-containers\"]" "$with"
+assert_contains "containers: same image" $'den-watcher-containers:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"' "$with"
+old="$(usagecontrol_compose ghcr.io/chriszly/usage-control:2.0.7a 8090 '' /srv/docker)"
+assert_contains "containers: the old image name keeps the old add-on name" "entrypoint: [\"/usage-control-containers\"]" "$old"
+old="$(usagecontrol_compose registry.local:5000/chriszly/usage-control@sha256:0123 8090 '' /srv/docker)"
+assert_contains "containers: also by digest and on a registry with a port" "entrypoint: [\"/usage-control-containers\"]" "$old"
+assert_contains "compose: the website as den-watcher" $'den-watcher:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"\n    container_name: den-watcher\n' "$with"
 assert_contains "containers: names from Docker's folder" 'source: "/srv/docker/containers"' "$with"
 assert_contains "containers: cgroups read-only" "/sys/fs/cgroup:/host/sys/fs/cgroup:ro" "$with"
 assert_contains "containers: no network" "network_mode: none" "$with"
@@ -94,13 +99,13 @@ docker() { [[ "$1" == info ]] && echo "$TMP/docker"; }
 compose="$TMP/opt/usagecontrol/docker-compose.yml"
 ( run_usagecontrol ) >/dev/null 2>&1
 assert_contains "containers: on by default" "source: \"$TMP/docker/containers\"" "$(cat "$compose")"
-assert_contains "containers: add-on checked to stay up" "usage-control-containers" "$(cat "$TMP/waited")"
+assert_contains "containers: add-on checked to stay up" "den-watcher-containers" "$(cat "$TMP/waited")"
 ( USAGECONTROL_CONTAINERS=no; run_usagecontrol ) >/dev/null 2>&1
-assert_lacks "containers: off leaves the add-on out" "usage-control-containers" "$(cat "$compose")"
+assert_lacks "containers: off leaves the add-on out" "den-watcher-containers" "$(cat "$compose")"
 # shellcheck disable=SC2329 # called by run_usagecontrol
 docker() { [[ "$1" == info ]] && echo "$TMP/nodocker"; }
 ( run_usagecontrol ) >/dev/null 2>"$TMP/err"
-assert_lacks "containers: no Docker folder leaves the add-on out" "usage-control-containers" "$(cat "$compose")"
+assert_lacks "containers: no Docker folder leaves the add-on out" "den-watcher-containers" "$(cat "$compose")"
 assert_contains "containers: no Docker folder warns" "containers add-on is left out" "$(cat "$TMP/err")"
 # shellcheck disable=SC2329 # called by run_usagecontrol
 docker() { [[ "$1" == info ]] && echo "/var/lib/do\$cker"; }

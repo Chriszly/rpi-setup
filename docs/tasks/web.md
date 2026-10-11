@@ -1,7 +1,7 @@
 # web - nginx
 
 Installs the [nginx](https://nginx.org/) web server with a start page that
-links every web page running on the Pi (Pi-hole, NetAlertX, usage-control and
+links every web page running on the Pi (Pi-hole, NetAlertX, Den-Watcher and
 any other container), ready for your own pages or as a reverse proxy.
 
 ```bash
@@ -48,7 +48,7 @@ service you set up later shows up without touching the page. It lists:
 - Pi-hole's admin page, in its container or on the host, on the port Pi-hole
   really uses.
 - The containers of rpi-setup's tasks that have a web page: NetAlertX and
-  usage-control. TeamSpeak and Samba have none, and nginx is the page itself.
+  Den-Watcher. TeamSpeak and Samba have none, and nginx is the page itself.
 - Any other running container that publishes a port on the LAN which answers
   HTTP, under the container's name. Ports published on `127.0.0.1` only are
   left out.

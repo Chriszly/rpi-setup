@@ -48,14 +48,14 @@ cat >"$bin/docker" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   info) exit 0 ;;
-  ps) printf '%s\n' web usage-control netalertx teamspeak myapp labelled hidden localonly evil ;;
+  ps) printf '%s\n' web den-watcher netalertx teamspeak myapp labelled hidden localonly evil ;;
   exec) printf '80o,443os,[::]:80o\n' ;;
   inspect)
     if [[ "$2" == --type ]]; then [[ "$4" == pihole ]]; exit; fi
     if [[ "$3" == '{{.Name}}'* ]]; then
       printf '/web\x1fnginx:stable-alpine\x1frunning\x1f\x1f2026-10-03T09:55:01.123456789Z\x1f0001-01-01T00:00:00Z\x1f0\x1fhost\x1f\n'
       printf '/old\x1fbusybox\x1fexited\x1f\x1f2026-10-01T08:00:00.5Z\x1f2026-10-02T08:00:00.5Z\x1f3\x1fbridge\x1f\n'
-      printf '/usage-control\x1fghcr.io/chriszly/usage-control:main\x1frunning\x1fhealthy\x1f2026-10-03T10:00:00.1Z\x1f0001-01-01T00:00:00Z\x1f0\x1fbridge\x1f'
+      printf '/den-watcher\x1fghcr.io/chriszly/den-watcher:main\x1frunning\x1fhealthy\x1f2026-10-03T10:00:00.1Z\x1f0001-01-01T00:00:00Z\x1f0\x1fbridge\x1f'
       printf '0.0.0.0:8090>9393/tcp :::8090>9393/tcp 127.0.0.1:9999>80/tcp \n'
       exit
     fi
@@ -67,7 +67,7 @@ case "$1" in
     esac ;;
   port)
     case "$2" in
-      usage-control) printf '8080/tcp -> 0.0.0.0:8081\n8080/tcp -> [::]:8081\n' ;;
+      den-watcher) printf '8080/tcp -> 0.0.0.0:8081\n8080/tcp -> [::]:8081\n' ;;
       myapp) printf '5000/tcp -> 0.0.0.0:5000\n6000/tcp -> 0.0.0.0:6000\n' ;;
       localonly) printf '80/tcp -> 127.0.0.1:9999\n' ;;
       teamspeak) printf '30033/tcp -> 0.0.0.0:30033\n' ;;
@@ -106,11 +106,11 @@ for s in d["services"]:
 ' "$TMP/html/services.json" 2>&1)" || summary="not JSON: $summary"
   expected='rasPi 192.168.60.9
 Pi-hole|Blocks ads and trackers for every device on the network|80|/admin/|True
+Den-Watcher|CPU, memory and temperature of this Pi|8081|/|False
 a"b\c||9100|/|True
 My App|Does things|9000|/ui/|True
 myapp||6000|/|True
-NetAlertX|Which devices are on the network, and when|20211|/|True
-usage-control|CPU, memory and temperature of this Pi|8081|/|False'
+NetAlertX|Which devices are on the network, and when|20211|/|True'
   assert_eq "list: Pi-hole first, then the running containers by name" "$expected" "$summary"
 else
   skip "list: python3 not installed"
@@ -125,8 +125,8 @@ assert_lacks "list: a label cannot set a javascript: link" 'javascript' "$json"
 containers="$(cat "$TMP/html/containers.json" 2>/dev/null || true)"
 assert_eq "containers: every container by name, ports once each, times in seconds" \
 '{"containers":[
+{"name":"den-watcher","image":"ghcr.io/chriszly/den-watcher:main","state":"running","health":"healthy","started":"2026-10-03T10:00:00Z","finished":"","restarts":0,"network":"bridge","ports":["8090:9393/tcp"]},
 {"name":"old","image":"busybox","state":"exited","health":"","started":"2026-10-01T08:00:00Z","finished":"2026-10-02T08:00:00Z","restarts":3,"network":"bridge","ports":[]},
-{"name":"usage-control","image":"ghcr.io/chriszly/usage-control:main","state":"running","health":"healthy","started":"2026-10-03T10:00:00Z","finished":"","restarts":0,"network":"bridge","ports":["8090:9393/tcp"]},
 {"name":"web","image":"nginx:stable-alpine","state":"running","health":"","started":"2026-10-03T09:55:01Z","finished":"","restarts":0,"network":"host","ports":[]}
 ]}' "$containers"
 if command -v python3 >/dev/null 2>&1; then
