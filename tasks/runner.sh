@@ -145,7 +145,8 @@ runner_deploy_script() {
   printf 'DP_LOG_DIR=/var/log/rpi-setup-deploy\n'
   printf 'DP_LOCK=/run/rpi-setup-deploy.lock\n'
   printf 'DP_RUNNER_USER=%q\n' "$RPI_RUNNER_USER"
-  declare -f deploy_run_git deploy_run_args deploy_run_owner deploy_run_check_config \
+  printf 'DP_SELF=%q\n' "$RPI_DEPLOY_CMD"
+  declare -f deploy_run_git deploy_run_args deploy_run_refresh deploy_run_owner deploy_run_check_config \
     deploy_run_tasks deploy_run_config deploy_run_errors deploy_run
   printf 'deploy_run "$@"\n'
 }
@@ -264,6 +265,29 @@ deploy_run_tasks() {
   done
 }
 
+# This command is written by the runner task, so it would keep running the
+# deploy code of the day the runner was set up. Write it again from the
+# updated checkout and run the new one when it differs (once: DP_FRESH).
+deploy_run_refresh() {
+  local tmp
+  [[ -n "${DP_SELF:-}" && -z "${DP_FRESH:-}" && -f "$DP_DIR/tasks/runner.sh" ]] || return 0
+  tmp="$(mktemp)"
+  if ! RPI_SETUP_DONE_FILE="$DP_DONE_FILE" bash -c 'source "$1/tasks/runner.sh" && runner_deploy_script "$1" "$2"' \
+       _ "$DP_DIR" "$DP_BRANCHES" >"$tmp" || ! bash -n "$tmp"; then
+    rm -f "$tmp"
+    echo "rpi-setup-deploy: could not write this command from $DP_DIR/tasks/runner.sh; keeping it" >&2
+    return 0
+  fi
+  if cmp -s "$tmp" "$DP_SELF"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  install -m 0755 "$tmp" "$DP_SELF"
+  rm -f "$tmp"
+  echo "rpi-setup-deploy: updated $DP_SELF from the checkout; running the new one"
+  return 1
+}
+
 # Install settings file $1 as $DP_CONFIG_DIR/rpi-setup.env (root only).
 deploy_run_config() {
   install -m 0700 -d "$DP_CONFIG_DIR"
@@ -295,6 +319,10 @@ deploy_run() {
   }
   new="$(deploy_run_git rev-parse HEAD)"
   echo "rpi-setup-deploy: $DP_DIR on $DP_BRANCH at ${new:0:7} (was ${old:0:7})"
+  if ! deploy_run_refresh; then
+    exec 9>&-
+    DP_FRESH=1 exec "$DP_SELF" "$@"
+  fi
   [[ -z "$DP_CONFIG" ]] || deploy_run_config "$DP_CONFIG"
   list="$(deploy_run_tasks)" || return $?
   [[ -z "$list" ]] || mapfile -t tasks <<<"$list"
