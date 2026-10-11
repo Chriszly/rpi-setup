@@ -67,7 +67,7 @@ how to reach it and what to watch out for.
 | [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) that links the Pi's web pages and lists its Docker containers, in light or dark | `WEB_PORT`, `WEB_TITLE` |
 | [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |
 | [`teamspeak`](docs/tasks/teamspeak.md) | TeamSpeak 6 server, voice `:9987`, file `:30033`, web query `:10080`, who is online and when on the start page (needs `docker`, 64-bit OS) | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` |
-| [`usagecontrol`](docs/tasks/usagecontrol.md) | Den-Watcher (formerly usage-control) website with the Pi's CPU, memory and temperatures on `http://<pi>:9393` (needs `docker`, 64-bit OS) | `USAGECONTROL_PORT` |
+| [`denwatcher`](docs/tasks/denwatcher.md) | Den-Watcher website with the Pi's CPU, memory and temperatures on `http://<pi>:9393` (needs `docker`, 64-bit OS) | `DENWATCHER_PORT` |
 | [`runner`](docs/tasks/runner.md) | GitHub runner for a manual *Deploy to Pi* button in your private settings repository ([template](templates/private-repo/README.md)) | `RUNNER_REPO`, `RUNNER_TOKEN` (once) |
 | [`firewall`](docs/tasks/firewall.md) | nftables firewall: SSH and the installed services' ports open, the rest dropped (run it last, re-run after adding a task) | `FIREWALL_ALLOW_FROM`, `FIREWALL_EXTRA_PORTS` |
 
@@ -80,7 +80,7 @@ The SD card settings of the flash scripts (`FLASH_*`) have their own page:
 How a run works:
 
 - `base` runs first when you pick it; the others run in the order given.
-  `netalertx`, `teamspeak` and `usagecontrol` need Docker; they run the `docker` task
+  `netalertx`, `teamspeak` and `denwatcher` need Docker; they run the `docker` task
   themselves when Docker is not installed.
 - A failed task does not stop the others, and `setup.sh` then exits non-zero.
 - The run ends with a summary (`ok`, `failed` or `skipped` per task) and a
@@ -154,7 +154,7 @@ instead of installing it with apt. Set it to `yes` and run the task again:
 Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
 [`pihole`](docs/tasks/pihole.md#run-it-in-docker) and
 [`samba`](docs/tasks/samba.md#run-it-in-docker).
-`netalertx`, `teamspeak` and `usagecontrol` always run in Docker; `base`, `docker`, `network`,
+`netalertx`, `teamspeak` and `denwatcher` always run in Docker; `base`, `docker`, `network`,
 `backup` and `firewall` always run natively. The `firewall`, `backup` and
 `check.sh` recognise a task running in its container.
 

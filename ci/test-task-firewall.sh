@@ -121,11 +121,11 @@ else
   assert_contains "containers: pihole DHCP from the container" "67/udp open pihole-dhcp" "$out"
   assert_contains "containers: nginx port from the container's site" "8090/tcp web nginx" "$out"
   assert_contains "containers: samba" "445/tcp open samba" "$out"
-  install -d "$ctr/usagecontrol"; touch "$ctr/usagecontrol/docker-compose.yml"
-  assert_contains "containers: usage-control on its default port" "9393/tcp web usagecontrol" \
+  install -d "$ctr/denwatcher"; touch "$ctr/denwatcher/docker-compose.yml"
+  assert_contains "containers: Den-Watcher on its default port" "9393/tcp web denwatcher" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: usage-control port from its settings" "8095/tcp web usagecontrol" \
-    "$(USAGECONTROL_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
+  assert_contains "containers: Den-Watcher port from its settings" "8095/tcp web denwatcher" \
+    "$(DENWATCHER_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   unset -f docker
 fi
 

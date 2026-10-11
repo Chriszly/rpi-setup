@@ -160,7 +160,7 @@ cp "$tmp/work/setup.sh" "$tmp/setup.ok"
 cat >"$tmp/work/setup.sh" <<STUB
 #!/usr/bin/env bash
 echo "generated password: hunter2"
-printf '\033[31m[x]\033[0m Port 8080 is used by nginx; set USAGECONTROL_PORT to a free port\n'
+printf '\033[31m[x]\033[0m Port 8080 is used by nginx; set DENWATCHER_PORT to a free port\n'
 echo 'Summary:'
 echo "  \$1 failed"
 exit 1
@@ -169,7 +169,7 @@ git_q -C "$tmp/work" commit -am failing
 git_q -C "$tmp/work" push origin main
 out="$(deploy --tasks web || true)"
 assert_contains "a failed task's error line reaches the workflow log" \
-    "rpi-setup-deploy: error: Port 8080 is used by nginx; set USAGECONTROL_PORT to a free port" "$out"
+    "rpi-setup-deploy: error: Port 8080 is used by nginx; set DENWATCHER_PORT to a free port" "$out"
 assert_contains "and so does the summary" "web failed" "$out"
 assert_lacks "a failed run keeps the passwords on the Pi" "hunter2" "$out"
 cp "$tmp/setup.ok" "$tmp/work/setup.sh"

@@ -188,6 +188,13 @@ assert_eq "split_config keeps the value" "p #1" \
 assert_eq "split_config lists every name of the task" "$(task_setting_names samba | xargs)" \
     "$(sed -nE 's/^([A-Z0-9_]+)=.*/\1/p' "$cfg/local/samba.env" | xargs)"
 assert_contains "split_config routes each name to its task" "WEB_PORT='8081'" "$(cat "$cfg/local/web.env")"
+printf 'USAGECONTROL_PORT=8090\nDENWATCHER_IMAGE=new\nUSAGECONTROL_IMAGE=old\n' >"$cfg/rpi-setup.env"
+out="$( (RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/rpi-setup.env") 2>&1)"
+assert_contains "split_config takes a renamed task's old name" "DENWATCHER_PORT='8090'" "$(cat "$cfg/local/denwatcher.env")"
+assert_contains "split_config warns about the old name" "'USAGECONTROL_PORT' is now called 'DENWATCHER_PORT'" "$out"
+assert_contains "split_config prefers the new name" "DENWATCHER_IMAGE='new'" "$(cat "$cfg/local/denwatcher.env")"
+printf 'USAGECONTROL_NOPE=1\n' >"$cfg/rpi-setup.env"
+assert_fails "split_config stops on an old name that has no new one" eval 'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/rpi-setup.env"'
 printf 'SAMBA_PASWORD=typo\n' >"$cfg/rpi-setup.env"
 assert_fails "split_config stops on an unknown name" eval 'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/rpi-setup.env"'
 assert_ok "split_config accepts the committed example" eval \
