@@ -136,12 +136,42 @@ web_index_html() {
     .row .image { grid-column: 1 / -1; grid-row: 2; }
     .row .state { grid-row: 1; grid-column: 2; }
   }
-  .ts-online { margin: 0 0 12px; }
-  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  .tag {
-    padding: 0 8px; border: 1px solid var(--border); border-radius: 999px;
-    color: var(--text); font-size: .8rem; line-height: 1.6;
+  .tabs { display: flex; gap: 4px; margin: -12px 0 28px; border-bottom: 1px solid var(--border); }
+  .tabs a {
+    padding: 8px 14px; margin-bottom: -1px; border-bottom: 2px solid transparent;
+    color: var(--muted); text-decoration: none; font-weight: 600;
   }
+  .tabs a:hover { color: var(--text); }
+  .tabs a.on { color: var(--text); border-bottom-color: var(--accent); }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+  .head a { color: var(--accent); font-size: .9rem; }
+  .ts-online { margin: 0 0 12px; }
+  .row.cols4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
+  .groups { color: var(--muted); font-size: .9rem; }
+  @media (max-width: 600px) {
+    .row.cols4 { grid-template-columns: minmax(0, 1fr) auto; }
+    .row.cols4 .groups { grid-column: 1 / -1; grid-row: 2; }
+    .row.cols4 .image { grid-column: 1 / -1; grid-row: 3; }
+    .row.cols4 .state { grid-column: 1 / -1; grid-row: 4; text-align: left; }
+    .row.cols4 .state:empty, .row.cols4 .groups:empty, .row.cols4 .image:empty { display: none; }
+  }
+  .tiles { display: grid; grid-auto-flow: dense; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .tile { padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+  .tile .label { color: var(--muted); font-size: .85rem; }
+  .tile.wide { grid-column: span 2; }
+  .tile .value { font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+  .welcome { color: var(--muted); margin: 12px 0 0; white-space: pre-line; }
+  .bar { height: 8px; border-radius: 4px; background: var(--chart); min-width: 2px; }
+  .heat {
+    display: grid; grid-template-columns: 2.5em repeat(24, minmax(0, 1fr)); gap: 2px;
+    padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+    font-size: 11px; color: var(--muted);
+  }
+  .heat .cell { height: 18px; border-radius: 3px; background: var(--chart); }
+  .heat .cell.zero { background: var(--border); opacity: .5; }
+  .heat .hour { grid-row: 1; text-align: left; }
+  .legend { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--muted); font-size: .85rem; }
+  .legend span.cell { width: 12px; height: 12px; border-radius: 3px; background: var(--chart); }
   .chart {
     position: relative; margin-bottom: 16px; padding: 12px 16px 8px;
     border: 1px solid var(--border); border-radius: 12px; background: var(--card);
@@ -168,6 +198,11 @@ web_index_html() {
 <main>
   <h1>@TITLE@</h1>
   <p class="host" id="host"></p>
+  <nav class="tabs" id="tabs" hidden>
+    <a href="#" id="tab-overview">Overview</a>
+    <a href="#teamspeak" id="tab-teamspeak">TeamSpeak</a>
+  </nav>
+  <div id="page-overview">
   <div class="grid" id="services"></div>
   <p class="note" id="note">Looking for web pages on this Pi...</p>
   <section id="docker" hidden>
@@ -175,17 +210,41 @@ web_index_html() {
     <div class="list" id="containers"></div>
   </section>
   <section id="ts" hidden>
-    <h2>TeamSpeak</h2>
+    <div class="head"><h2>TeamSpeak</h2><a href="#teamspeak">All TeamSpeak data</a></div>
     <p class="ts-online" id="ts-online"></p>
-    <div class="chart" id="ts-chart" hidden>
-      <div class="chart-head"><span>Online at the same time, last 7 days</span><span class="peak" id="ts-peak"></span></div>
-      <svg id="ts-svg" role="img"></svg>
-      <div class="tip" id="ts-tip" hidden></div>
-    </div>
+    <div class="chart" id="ts-chart" hidden></div>
     <div class="list" id="ts-users"></div>
     <h2>Last visits</h2>
     <div class="list" id="ts-recent"></div>
   </section>
+  </div>
+  <div id="page-teamspeak" hidden>
+    <section id="tsx-server-box">
+      <h2 id="tsx-name">Server</h2>
+      <div class="tiles" id="tsx-server"></div>
+      <p class="welcome" id="tsx-welcome" hidden></p>
+    </section>
+    <h2>Online now</h2>
+    <div class="list" id="tsx-clients"></div>
+    <section id="tsx-channels-box">
+      <h2>Channels</h2>
+      <div class="list" id="tsx-channels"></div>
+    </section>
+    <h2>History</h2>
+    <div class="chart" id="tsx-chart" hidden></div>
+    <h2>Busy times</h2>
+    <div id="tsx-heat-box"></div>
+    <section id="tsx-busy-box">
+      <h2>Busiest channels, last 7 days</h2>
+      <div class="list" id="tsx-busy"></div>
+    </section>
+    <h2>Last 7 days</h2>
+    <div class="list" id="tsx-users"></div>
+    <h2 id="tsx-people-title">Everyone</h2>
+    <div class="list" id="tsx-people"></div>
+    <h2>Last visits</h2>
+    <div class="list" id="tsx-recent"></div>
+  </div>
   <noscript><p class="note">Turn on JavaScript to see the web pages on this Pi.</p></noscript>
   <footer>Provisioned by <a href="https://github.com/Chriszly/rpi-setup">rpi-setup</a>.
     New services and containers show up here on their own within a minute.</footer>
@@ -294,144 +353,313 @@ web_index_html() {
     return new Date(t).toLocaleString([], o);
   }
 
-  function tsRow(list, nick, online, middle, right, groups) {
-    var row = el('div', 'row');
+  // A row of a TeamSpeak list: name with a dot, server groups, details and a
+  // right-hand note. o: { nick, dot ('up', 'wait' or ''), groups, info,
+  // right, indent }.
+  function tsRow(list, o) {
+    var row = el('div', 'row cols4');
     var name = el('div', 'name');
-    var dot = el('span', 'dot' + (online ? ' up' : ''));
-    dot.title = online ? 'online' : 'offline';
-    name.appendChild(dot);
-    name.appendChild(document.createTextNode(nick));
-    row.appendChild(name);
-    var info = el('div', 'image', middle);
-    if (Array.isArray(groups) && groups.length) {
-      var tags = el('div', 'tags');
-      groups.forEach(function (g) { tags.appendChild(el('span', 'tag', String(g))); });
-      info.appendChild(tags);
+    if (o.indent) name.style.paddingLeft = (o.indent * 16) + 'px';
+    if (o.dot !== null) {
+      var dot = el('span', 'dot' + (o.dot ? ' ' + o.dot : ''));
+      dot.title = o.dot === 'up' ? 'online' : o.dot === 'wait' ? 'away' : 'offline';
+      name.appendChild(dot);
     }
+    name.appendChild(document.createTextNode(o.nick));
+    row.appendChild(name);
+    row.appendChild(el('div', 'groups', (o.groups || []).join(', ')));
+    var info = el('div', 'image', typeof o.info === 'string' ? o.info : '');
+    if (o.info && typeof o.info !== 'string') info.appendChild(o.info);
     row.appendChild(info);
-    row.appendChild(el('div', 'state', right));
+    row.appendChild(el('div', 'state', o.right || ''));
     list.appendChild(row);
   }
 
+  function fill(id, items, each, empty) {
+    var list = document.getElementById(id);
+    list.textContent = '';
+    (items || []).forEach(function (x) { each(list, x); });
+    if (!list.childNodes.length && empty) list.appendChild(el('div', 'row', empty));
+    return list;
+  }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  function bytes(n) {
+    var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0;
+    n = Number(n) || 0;
+    while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+    return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i];
+  }
+
   // Step chart of how many were online at once: points are [epoch seconds,
-  // count] where the count changes, from 7 days ago to now.
-  var chart = document.getElementById('ts-chart');
-  var svg = document.getElementById('ts-svg');
-  var tip = document.getElementById('ts-tip');
-  var pts = [], scale = null;
+  // count] where the count changes, from 7 days ago to now. One per box.
+  var charts = [];
+  function makeChart(box) {
+    box.innerHTML = '<div class="chart-head"><span>Online at the same time, last 7 days</span>' +
+      '<span class="peak"></span></div><svg role="img"></svg><div class="tip" hidden></div>';
+    var svg = box.querySelector('svg'), tip = box.querySelector('.tip');
+    var peakText = box.querySelector('.peak');
+    var pts = [], scale = null, cur = null, mark = null;
 
-  function countAt(t) {
-    var c = 0;
-    for (var i = 0; i < pts.length && pts[i][0] <= t; i++) c = pts[i][1];
-    return c;
-  }
-
-  function drawChart() {
-    if (pts.length < 2 || chart.hidden) return;
-    var W = svg.clientWidth || 600, H = 180, L = 28, R = 6, T = 8, B = 22;
-    var t0 = pts[0][0], t1 = pts[pts.length - 1][0], max = 1, i, c, out = '';
-    pts.forEach(function (p) { max = Math.max(max, p[1]); });
-    var step = Math.ceil(max / 4), top = Math.ceil(max / step) * step;
-    var x = function (t) { return L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R); };
-    var y = function (n) { return T + (1 - n / top) * (H - T - B); };
-    scale = { x: x, y: y, t0: t0, t1: t1, L: L, R: R, W: W };
-    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-    for (c = 0; c <= top; c += step) {
-      out += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(c) + '" y2="' + y(c) + '"/>';
-      out += '<text class="axis" x="' + (L - 8) + '" y="' + (y(c) + 4) + '" text-anchor="end">' + c + '</text>';
+    function countAt(t) {
+      var c = 0;
+      for (var i = 0; i < pts.length && pts[i][0] <= t; i++) c = pts[i][1];
+      return c;
     }
-    // A day name under the middle of each day.
-    var d = new Date(t0 * 1000);
-    d.setHours(12, 0, 0, 0);
-    for (; d.getTime() / 1000 <= t1; d.setDate(d.getDate() + 1)) {
-      var noon = d.getTime() / 1000;
-      if (noon < t0) continue;
-      out += '<text class="axis" x="' + x(noon) + '" y="' + (H - 4) + '" text-anchor="middle">' +
-        d.toLocaleDateString([], { weekday: 'short' }) + '</text>';
+
+    function draw() {
+      if (pts.length < 2 || box.hidden || !svg.clientWidth) return;
+      var W = svg.clientWidth, H = 180, L = 28, R = 6, T = 8, B = 22;
+      var t0 = pts[0][0], t1 = pts[pts.length - 1][0], max = 1, i, c, out = '';
+      pts.forEach(function (p) { max = Math.max(max, p[1]); });
+      var step = Math.ceil(max / 4), top = Math.ceil(max / step) * step;
+      var x = function (t) { return L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R); };
+      var y = function (n) { return T + (1 - n / top) * (H - T - B); };
+      scale = { x: x, y: y, t0: t0, t1: t1, L: L, R: R, W: W };
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      for (c = 0; c <= top; c += step) {
+        out += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(c) + '" y2="' + y(c) + '"/>';
+        out += '<text class="axis" x="' + (L - 8) + '" y="' + (y(c) + 4) + '" text-anchor="end">' + c + '</text>';
+      }
+      // A day name under the middle of each day.
+      var d = new Date(t0 * 1000);
+      d.setHours(12, 0, 0, 0);
+      for (; d.getTime() / 1000 <= t1; d.setDate(d.getDate() + 1)) {
+        var noon = d.getTime() / 1000;
+        if (noon < t0) continue;
+        out += '<text class="axis" x="' + x(noon) + '" y="' + (H - 4) + '" text-anchor="middle">' +
+          d.toLocaleDateString([], { weekday: 'short' }) + '</text>';
+      }
+      var line = 'M' + x(t0) + ' ' + y(pts[0][1]);
+      for (i = 1; i < pts.length; i++) line += 'H' + x(pts[i][0]) + 'V' + y(pts[i][1]);
+      out += '<path class="area" d="' + line + 'V' + y(0) + 'H' + x(t0) + 'Z"/>';
+      out += '<path class="line" d="' + line + '"/>';
+      out += '<line class="cursor" y1="' + T + '" y2="' + y(0) + '" visibility="hidden"/>';
+      out += '<circle class="mark" r="4" visibility="hidden"/>';
+      svg.innerHTML = out;
+      cur = svg.querySelector('.cursor');
+      mark = svg.querySelector('.mark');
     }
-    var line = 'M' + x(t0) + ' ' + y(pts[0][1]);
-    for (i = 1; i < pts.length; i++) line += 'H' + x(pts[i][0]) + 'V' + y(pts[i][1]);
-    out += '<path class="area" d="' + line + 'V' + y(0) + 'H' + x(t0) + 'Z"/>';
-    out += '<path class="line" d="' + line + '"/>';
-    out += '<line class="cursor" id="ts-cursor" y1="' + T + '" y2="' + y(0) + '" visibility="hidden"/>';
-    out += '<circle class="mark" id="ts-mark" r="4" visibility="hidden"/>';
-    svg.innerHTML = out;
-  }
 
-  function hover(ev) {
-    if (!scale) return;
-    var r = svg.getBoundingClientRect();
-    var px = Math.min(Math.max((ev.touches ? ev.touches[0] : ev).clientX - r.left, scale.L), scale.W - scale.R);
-    var t = scale.t0 + (px - scale.L) / (scale.W - scale.L - scale.R) * (scale.t1 - scale.t0);
-    var n = countAt(t), cur = document.getElementById('ts-cursor'), mark = document.getElementById('ts-mark');
-    cur.setAttribute('x1', px); cur.setAttribute('x2', px); cur.setAttribute('visibility', 'visible');
-    mark.setAttribute('cx', px); mark.setAttribute('cy', scale.y(n)); mark.setAttribute('visibility', 'visible');
-    tip.textContent = clock(t * 1000, true) + ' \u00b7 ' + n + ' online';
-    tip.hidden = false;
-    // Centered over the cursor, but kept inside the chart box.
-    var box = chart.getBoundingClientRect(), half = tip.offsetWidth / 2;
-    tip.style.left = Math.min(Math.max(r.left - box.left + px, half), box.width - half) + 'px';
-    tip.style.top = (r.top - box.top + scale.y(n) - 8) + 'px';
-  }
+    function hover(ev) {
+      if (!scale || !cur) return;
+      var r = svg.getBoundingClientRect();
+      var px = Math.min(Math.max((ev.touches ? ev.touches[0] : ev).clientX - r.left, scale.L), scale.W - scale.R);
+      var t = scale.t0 + (px - scale.L) / (scale.W - scale.L - scale.R) * (scale.t1 - scale.t0);
+      var n = countAt(t);
+      cur.setAttribute('x1', px); cur.setAttribute('x2', px); cur.setAttribute('visibility', 'visible');
+      mark.setAttribute('cx', px); mark.setAttribute('cy', scale.y(n)); mark.setAttribute('visibility', 'visible');
+      tip.textContent = clock(t * 1000, true) + ' · ' + n + ' online';
+      tip.hidden = false;
+      // Centered over the cursor, but kept inside the chart box.
+      var b = box.getBoundingClientRect(), half = tip.offsetWidth / 2;
+      tip.style.left = Math.min(Math.max(r.left - b.left + px, half), b.width - half) + 'px';
+      tip.style.top = (r.top - b.top + scale.y(n) - 8) + 'px';
+    }
 
-  function unhover() {
-    tip.hidden = true;
-    ['ts-cursor', 'ts-mark'].forEach(function (id) {
-      var e = document.getElementById(id);
-      if (e) e.setAttribute('visibility', 'hidden');
+    function unhover() {
+      tip.hidden = true;
+      if (cur) { cur.setAttribute('visibility', 'hidden'); mark.setAttribute('visibility', 'hidden'); }
+    }
+
+    svg.addEventListener('mousemove', hover);
+    svg.addEventListener('touchstart', hover, { passive: true });
+    svg.addEventListener('touchmove', hover, { passive: true });
+    svg.addEventListener('mouseleave', unhover);
+    svg.addEventListener('touchend', unhover);
+
+    var chart = {
+      draw: draw,
+      render: function (points) {
+        pts = (Array.isArray(points) ? points : []).filter(function (p) {
+          return Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
+        });
+        box.hidden = pts.length < 2;
+        if (box.hidden) return;
+        var peak = pts[0];
+        pts.forEach(function (p) { if (p[1] > peak[1]) peak = p; });
+        var text = peak[1] ? 'Peak: ' + peak[1] + ' online, ' + clock(peak[0] * 1000, true)
+          : 'Nobody was online in the last 7 days.';
+        peakText.textContent = text;
+        svg.setAttribute('aria-label', 'How many people were online at the same time over the last 7 days. ' + text);
+        unhover();
+        draw();
+      }
+    };
+    charts.push(chart);
+    return chart;
+  }
+  var chartOverview = makeChart(document.getElementById('ts-chart'));
+  var chartTab = makeChart(document.getElementById('tsx-chart'));
+  window.addEventListener('resize', function () { charts.forEach(function (c) { c.draw(); }); });
+
+  // Average number online per weekday and hour. The data is in UTC (Monday
+  // 0:00 first); the grid is shown in the browser's time zone.
+  function renderHeat(cells) {
+    var box = document.getElementById('tsx-heat-box');
+    box.textContent = '';
+    if (!Array.isArray(cells) || cells.length !== 168) return;
+    var shift = Math.round(-new Date().getTimezoneOffset() / 60), max = 0, d, h;
+    cells.forEach(function (v) { max = Math.max(max, Number(v) || 0); });
+    var grid = el('div', 'heat');
+    grid.appendChild(el('span', '', ''));
+    for (h = 0; h < 24; h++) grid.appendChild(el('span', 'hour', h % 6 ? '' : String(h)));
+    var days = [], ref = new Date(2024, 0, 1); // a Monday
+    for (d = 0; d < 7; d++) {
+      days.push(new Date(ref.getFullYear(), 0, 1 + d).toLocaleDateString([], { weekday: 'short' }));
+    }
+    for (d = 0; d < 7; d++) {
+      grid.appendChild(el('span', '', days[d]));
+      for (h = 0; h < 24; h++) {
+        var v = Number(cells[(((d * 24 + h - shift) % 168) + 168) % 168]) || 0;
+        var cell = el('span', 'cell' + (v ? '' : ' zero'));
+        if (v) cell.style.opacity = (0.15 + 0.85 * v / max).toFixed(2);
+        cell.title = days[d] + ' ' + h + ':00–' + (h + 1) + ':00 · ' +
+          (v ? v.toFixed(1) + ' online on average' : 'nobody');
+        grid.appendChild(cell);
+      }
+    }
+    box.appendChild(grid);
+    var legend = el('div', 'legend', 'Average people online per hour: fewer ');
+    [0.15, 0.45, 0.75, 1].forEach(function (o) {
+      var c = el('span', 'cell'); c.style.opacity = o; legend.appendChild(c);
     });
+    legend.appendChild(document.createTextNode(' more (most: ' + max.toFixed(1) + ')'));
+    box.appendChild(legend);
   }
 
-  svg.addEventListener('mousemove', hover);
-  svg.addEventListener('touchstart', hover, { passive: true });
-  svg.addEventListener('touchmove', hover, { passive: true });
-  svg.addEventListener('mouseleave', unhover);
-  svg.addEventListener('touchend', unhover);
-  window.addEventListener('resize', drawChart);
+  function clientState(c) {
+    var parts = ['online ' + since(c.since)];
+    if (c.away) parts.push('away' + (c.away_message ? ': ' + c.away_message : ''));
+    if (c.input_off) parts.push('mic off'); else if (c.input_muted) parts.push('mic muted');
+    if (c.output_off) parts.push('sound off'); else if (c.output_muted) parts.push('sound muted');
+    if (c.talking) parts.push('talking');
+    if (c.recording) parts.push('recording');
+    if (c.idle_seconds >= 60) parts.push('idle ' + duration(c.idle_seconds));
+    return parts.join(' · ');
+  }
 
-  function renderChart(points) {
-    pts = (Array.isArray(points) ? points : []).filter(function (p) {
-      return Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
+  function renderServer(sv) {
+    var tiles = [], up = sv.status ? sv.status === 'online' : null;
+    if (sv.status) tiles.push(['Status', sv.status]);
+    if (sv.clients_online !== undefined) {
+      var users = Math.max(0, (Number(sv.clients_online) || 0) - (Number(sv.query_clients_online) || 0));
+      tiles.push(['People online', users + (sv.max_clients ? ' / ' + sv.max_clients : '')]);
+    }
+    if (sv.uptime !== undefined) tiles.push(['Uptime', duration(Number(sv.uptime) || 0)]);
+    if (sv.ping !== undefined) tiles.push(['Average ping', Math.round(Number(sv.ping) || 0) + ' ms']);
+    if (sv.packet_loss !== undefined) tiles.push(['Packet loss', ((Number(sv.packet_loss) || 0) * 100).toFixed(1) + ' %']);
+    if (sv.bandwidth_sent !== undefined) tiles.push(['Upload, last minute', bytes(sv.bandwidth_sent) + '/s']);
+    if (sv.bandwidth_received !== undefined) tiles.push(['Download, last minute', bytes(sv.bandwidth_received) + '/s']);
+    if (sv.bytes_sent !== undefined) tiles.push(['Sent in total', bytes(sv.bytes_sent)]);
+    if (sv.bytes_received !== undefined) tiles.push(['Received in total', bytes(sv.bytes_received)]);
+    if (sv.channels !== undefined) tiles.push(['Channels', String(sv.channels)]);
+    if (sv.client_connections !== undefined) tiles.push(['Connections ever', String(sv.client_connections)]);
+    if (sv.reserved_slots) tiles.push(['Reserved slots', String(sv.reserved_slots)]);
+    if (sv.port) tiles.push(['Address', location.hostname + ':' + sv.port]);
+    if (sv.version) tiles.push(['Version', String(sv.version).split(' [')[0]]);
+    if (sv.platform) tiles.push(['Platform', String(sv.platform)]);
+    if (sv.created) tiles.push(['Created', new Date(sv.created * 1000).toLocaleDateString()]);
+    document.getElementById('tsx-name').textContent = sv.name ? 'Server: ' + sv.name : 'Server';
+    fill('tsx-server', tiles, function (list, t) {
+      var tile = el('div', String(t[1]).length > 12 ? 'tile wide' : 'tile');
+      tile.appendChild(el('div', 'label', t[0]));
+      var value = el('div', 'value', t[1]);
+      if (t[0] === 'Status' && up !== null) {
+        var dot = el('span', 'dot ' + (up ? 'up' : 'down'));
+        dot.style.display = 'inline-block'; dot.style.marginRight = '8px';
+        value.insertBefore(dot, value.firstChild);
+      }
+      tile.appendChild(value);
+      list.appendChild(tile);
     });
-    chart.hidden = pts.length < 2;
-    if (chart.hidden) return;
-    var peak = pts[0];
-    pts.forEach(function (p) { if (p[1] > peak[1]) peak = p; });
-    var text = peak[1] ? 'Peak: ' + peak[1] + ' online, ' + clock(peak[0] * 1000, true)
-      : 'Nobody was online in the last 7 days.';
-    document.getElementById('ts-peak').textContent = text;
-    svg.setAttribute('aria-label', 'How many people were online at the same time over the last 7 days. ' + text);
-    unhover();
-    drawChart();
+    document.getElementById('tsx-server-box').hidden = !tiles.length;
+    var welcome = document.getElementById('tsx-welcome');
+    welcome.textContent = sv.welcome || '';
+    welcome.hidden = !sv.welcome;
   }
 
-  // Who is on the TeamSpeak server, time online per person over the last 7
-  // days, and the last visits, from teamspeak.json.
+  function weekRow(list, u) {
+    tsRow(list, { nick: u.nick, dot: u.online ? 'up' : '', groups: u.groups,
+      info: duration(u.week_seconds) + ' in the last 7 days, ' + plural(u.week_visits, 'visit', 'visits'),
+      right: u.online ? 'online now' : 'seen ' + since(u.last_seen) + ' ago' });
+  }
+
+  function visitRow(list, v) {
+    var secs = (Date.parse(v.end) - Date.parse(v.start)) / 1000;
+    tsRow(list, { nick: v.nick, dot: '', groups: v.groups,
+      info: clock(v.start, true) + ' – ' + clock(v.end, false), right: duration(secs) });
+  }
+
+  // The TeamSpeak section of the overview and the TeamSpeak tab, from
+  // teamspeak.json.
   function renderTeamspeak(data) {
     var online = Array.isArray(data.online) ? data.online : [];
     var users = Array.isArray(data.users) ? data.users : [];
     var recent = Array.isArray(data.recent) ? data.recent : [];
-    var listUsers = document.getElementById('ts-users');
-    var listRecent = document.getElementById('ts-recent');
     ts.hidden = false;
-    renderChart(data.concurrent);
+    tabs.hidden = false;
+    chartOverview.render(data.concurrent);
+    chartTab.render(data.concurrent);
     document.getElementById('ts-online').textContent = online.length
       ? 'Online now: ' + online.map(function (c) { return c.nick + ' (' + since(c.since) + ')'; }).join(', ')
       : 'Nobody is online right now.';
-    listUsers.textContent = '';
-    listUsers.hidden = !users.length;
-    users.forEach(function (u) {
-      var visits = u.week_visits + (u.week_visits === 1 ? ' visit' : ' visits');
-      tsRow(listUsers, u.nick, u.online, duration(u.week_seconds) + ' in the last 7 days, ' + visits,
-        u.online ? 'online now' : 'seen ' + since(u.last_seen) + ' ago', u.groups);
-    });
-    listRecent.textContent = '';
+    fill('ts-users', users, weekRow).hidden = !users.length;
+    var listRecent = fill('ts-recent', recent.slice(0, 15), visitRow);
     listRecent.hidden = listRecent.previousElementSibling.hidden = !recent.length;
-    recent.forEach(function (v) {
-      var secs = (Date.parse(v.end) - Date.parse(v.start)) / 1000;
-      tsRow(listRecent, v.nick, false, clock(v.start, true) + ' \u2013 ' + clock(v.end, false), duration(secs));
+
+    renderServer(data.server || {});
+    var clients = Array.isArray(data.clients) && data.clients.length ? data.clients
+      : online.map(function (c) { return { nick: c.nick, since: c.since }; });
+    fill('tsx-clients', clients, function (list, c) {
+      var where = [c.channel, [c.platform, c.version].filter(Boolean).join(' '), c.country]
+        .filter(Boolean).join(' · ');
+      tsRow(list, { nick: c.nick, dot: c.away ? 'wait' : 'up', groups: c.groups, info: where,
+        right: clientState(c) });
+    }, 'Nobody is online right now.');
+    var channels = Array.isArray(data.channels) ? data.channels : [];
+    fill('tsx-channels', channels, function (list, ch) {
+      tsRow(list, { nick: ch.name, dot: null, indent: ch.depth, groups: ch.topic ? [ch.topic] : [],
+        info: (ch.clients || []).join(', '), right: ch.clients && ch.clients.length ? plural(ch.clients.length, 'person', 'people') : '' });
     });
+    document.getElementById('tsx-channels-box').hidden = !channels.length;
+    renderHeat(data.heatmap);
+    var busy = Array.isArray(data.busy_channels) ? data.busy_channels : [];
+    var most = busy.length ? busy[0].minutes : 1;
+    fill('tsx-busy', busy, function (list, b) {
+      var bar = el('div', 'bar');
+      bar.style.width = Math.max(1, b.minutes / most * 100) + '%';
+      tsRow(list, { nick: b.name, dot: null, info: bar, right: duration(b.minutes * 60) });
+    });
+    document.getElementById('tsx-busy-box').hidden = !busy.length;
+    fill('tsx-users', users, weekRow, 'Nobody was online in the last 7 days.');
+    var everyone = Array.isArray(data.people) ? data.people : [];
+    document.getElementById('tsx-people-title').textContent =
+      'Everyone' + (data.days ? ', last ' + data.days + ' days' : '');
+    fill('tsx-people', everyone, function (list, p) {
+      tsRow(list, { nick: p.nick, dot: p.online ? 'up' : '', groups: p.groups,
+        info: duration(p.total_seconds) + ' in total, ' + plural(p.visits, 'visit', 'visits') +
+          ', longest ' + duration(p.longest_seconds) + (p.platform ? ', ' + p.platform : ''),
+        right: 'first seen ' + since(p.first_seen) + ' ago' +
+          (p.online ? ', online now' : ', last ' + since(p.last_seen) + ' ago') });
+    });
+    fill('tsx-recent', recent, visitRow, 'No visits yet.');
+    showTab();
   }
+
+  // The tabs: the overview, and the TeamSpeak tab (#teamspeak) once there
+  // is TeamSpeak data.
+  var tabs = document.getElementById('tabs');
+  function showTab() {
+    var tsTab = location.hash === '#teamspeak' && !tabs.hidden;
+    document.getElementById('page-overview').hidden = tsTab;
+    document.getElementById('page-teamspeak').hidden = !tsTab;
+    document.getElementById('tab-overview').className = tsTab ? '' : 'on';
+    document.getElementById('tab-teamspeak').className = tsTab ? 'on' : '';
+    charts.forEach(function (c) { c.draw(); });
+  }
+  window.addEventListener('hashchange', function () { showTab(); window.scrollTo(0, 0); });
 
   function get(file, done, failed) {
     fetch(file, { cache: 'no-store' })
@@ -445,7 +673,7 @@ web_index_html() {
       note.textContent = 'The list of web pages is not ready yet; it is retried every 30 seconds.';
     });
     get('containers.json', renderContainers, function () { docker.hidden = true; });
-    get('teamspeak.json', renderTeamspeak, function () { ts.hidden = true; });
+    get('teamspeak.json', renderTeamspeak, function () { ts.hidden = true; tabs.hidden = true; showTab(); });
   }
 
   load();

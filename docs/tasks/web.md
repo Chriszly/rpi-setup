@@ -91,7 +91,21 @@ visits, their server groups (such as Server Admin) and when they were last
 seen, and the last 15 visits with start, end
 and length. The timer copies the logger's summary to `teamspeak.json`; when
 the logger is off or has not written it for 10 minutes the file is removed
-and the section is hidden. How the logging works:
+and the section is hidden.
+
+A **TeamSpeak** tab next to **Overview** (`#teamspeak`, shown while there is
+TeamSpeak data) has everything the server reports, refreshed every minute:
+the server (status, people online out of its slots, uptime, ping, packet
+loss, bandwidth, data sent and received, channels, connections ever,
+address, version, platform, created, welcome message); everyone online with
+their server groups, channel, client version and platform, country and
+state (away, muted, talking, recording, idle); the channel tree with who is
+in each channel; the same chart; a weekday-by-hour grid of the average
+number of people online (in your browser's time zone); the busiest channels
+over the last 7 days; the last 7 days per person; everyone in the log with
+first and last seen, total time, visits, longest visit and platform; and the
+last 50 visits. Server groups are a column of their own everywhere. How the
+logging works:
 [teamspeak usage](teamspeak.md#who-is-online-and-when).
 
 ## Run it in Docker
