@@ -115,9 +115,9 @@ denwatcher_move_old() {
   if docker volume inspect usagecontrol_data >/dev/null 2>&1; then
     docker compose -f "$dir/docker-compose.yml" create den-watcher ||
       die "Could not create the den-watcher container and its volume in $dir"
-    from="$(docker volume inspect -f '{{.Mountpoint}}' usagecontrol_data)" &&
-      to="$(docker volume inspect -f '{{.Mountpoint}}' denwatcher_data)" &&
-      [[ -d "$from" && -d "$to" ]] ||
+    from="$(docker volume inspect -f '{{.Mountpoint}}' usagecontrol_data)" || from=""
+    to="$(docker volume inspect -f '{{.Mountpoint}}' denwatcher_data)" || to=""
+    [[ -n "$from" && -d "$from" && -n "$to" && -d "$to" ]] ||
       die "Could not find the folders of the volumes usagecontrol_data and denwatcher_data; is Docker's local volume driver in use?"
     if [[ -n "$(ls -A "$to")" ]]; then
       info "denwatcher_data already holds a history; keeping it"
@@ -213,24 +213,24 @@ run_denwatcher() {
   # and the container's user. Den-Watcher reads it at start, so a changed
   # file restarts the container.
   # 65532 is the image's non-root user (distroless nonroot).
-  local secrets="$dir/router-secrets/router-passwords" recreate=0
+  local secrets="$dir/router-secrets/router-passwords" restart=0
   if [[ -n "$DENWATCHER_ROUTER_PASSWORD" ]]; then
     save_secret denwatcher DENWATCHER_ROUTER_PASSWORD "$passwords"
   fi
   if [[ -n "$passwords" ]]; then
     if tr ',' '\n' <<<"$passwords" | write_if_changed "$secrets" 0400; then
-      recreate=1
+      restart=1
     fi
     chown 65532:65532 "$secrets"
   elif [[ -e "$secrets" ]]; then
     rm -f "$secrets"
-    recreate=1
+    restart=1
   fi
-  [[ $recreate -eq 0 ]] || changed=1
+  [[ $restart -eq 0 ]] || changed=1
 
   container_pull "$dir"
   denwatcher_move_old "$dir" "$passwords"
-  container_up "$dir" "$name" "$recreate"
+  container_up "$dir" "$name" "$restart"
   # The website runs without the add-on, so one that does not stay up only
   # warns, with its last log lines.
   if [[ -n "$docker_dir" ]] && ! container_wait_stable den-watcher-containers; then
