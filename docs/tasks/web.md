@@ -87,7 +87,8 @@ the page shows who is on the TeamSpeak server right now and for how long, a
 chart of how many people were online at the same time over the last 7 days
 (with the peak; hover or touch it for the number at any moment), the
 time each person was online over the last 7 days with their number of
-visits and when they were last seen, and the last 15 visits with start, end
+visits, their server groups (such as Server Admin) and when they were last
+seen, and the last 15 visits with start, end
 and length. The timer copies the logger's summary to `teamspeak.json`; when
 the logger is off or has not written it for 10 minutes the file is removed
 and the section is hidden. How the logging works:

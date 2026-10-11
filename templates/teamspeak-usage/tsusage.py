@@ -7,6 +7,7 @@ reads who is online, registers for join and leave events and writes, in
 $USAGE_DATA (default /data):
 
   sessions.jsonl  one line per finished visit: uid, nick, start, end (epoch)
+                  and the names of the client's server groups
   online.json     who is online now, and when that was last confirmed
   usage.json      the summary the start page shows (copied there by the web
                   task's rpi-setup-web-links timer)
@@ -87,6 +88,11 @@ def read_json(name, default):
         return default
 
 
+def group_ids(rec):
+    """The server group IDs of a client record ('client_servergroups=6,8')."""
+    return [g for g in rec.get("client_servergroups", "").split(",") if g]
+
+
 def read_sessions():
     sessions = []
     try:
@@ -95,7 +101,8 @@ def read_sessions():
                 try:
                     s = json.loads(line)
                     sessions.append({"uid": str(s["uid"]), "nick": str(s["nick"]),
-                                     "start": int(s["start"]), "end": int(s["end"])})
+                                     "start": int(s["start"]), "end": int(s["end"]),
+                                     "groups": [str(g) for g in s.get("groups") or []]})
                 except (ValueError, KeyError, TypeError):
                     continue
     except OSError:
@@ -113,15 +120,23 @@ class Usage:
         for clid, c in (state.get("clients") or {}).items():
             try:
                 self.online[str(clid)] = {"uid": str(c["uid"]), "nick": str(c["nick"]),
-                                          "since": int(c["since"])}
+                                          "since": int(c["since"]),
+                                          "groups": [str(g) for g in c.get("groups") or []]}
             except (KeyError, TypeError, ValueError):
                 continue
+        self.group_names = {str(k): str(v) for k, v in (state.get("group_names") or {}).items()}
         self.connected = False
         self.pruned = 0
 
+    def names(self, ids):
+        """Names of server group IDs, in the server's order; unknown IDs are
+        left out."""
+        return [self.group_names[g] for g in ids if g in self.group_names]
+
     def end_visit(self, c, end):
         line = json.dumps({"uid": c["uid"], "nick": c["nick"], "start": c["since"],
-                           "end": max(int(end), c["since"])}, ensure_ascii=False)
+                           "end": max(int(end), c["since"]), "groups": self.names(c["groups"])},
+                          ensure_ascii=False)
         with open(path("sessions.jsonl"), "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -131,9 +146,24 @@ class Usage:
         and the start page hides it after 10 minutes."""
         if self.connected:
             self.checked = int(now)
-        write_json("online.json", {"checked": self.checked, "clients": self.online})
+        write_json("online.json", {"checked": self.checked, "clients": self.online,
+                                   "group_names": self.group_names})
         if self.connected:
-            write_json("usage.json", summary(self.online, read_sessions(), now))
+            write_json("usage.json", summary(self.online, read_sessions(), now, self.names))
+
+    def set_groups(self, groups):
+        """Record the server group names from servergrouplist: regular groups
+        only (type 1), not templates or query groups."""
+        self.group_names = {g["sgid"]: g.get("name", "") for g in groups
+                            if g.get("sgid") and g.get("type", "1") == "1"}
+
+    def update_groups(self, clients):
+        """Take the current server groups of each online client from a
+        client list (clientlist -groups); groups can change during a visit."""
+        for rec in clients:
+            c = self.online.get(rec.get("clid", ""))
+            if c is not None and "client_servergroups" in rec:
+                c["groups"] = group_ids(rec)
 
     def reconcile(self, clients, now):
         """Start over from a client list read right after connecting."""
@@ -148,7 +178,8 @@ class Usage:
             nick = rec.get("client_nickname", "")
             kept = before.get(uid) or []
             since = kept.pop(0)["since"] if kept else int(now)
-            self.online[rec["clid"]] = {"uid": uid, "nick": nick, "since": since}
+            self.online[rec["clid"]] = {"uid": uid, "nick": nick, "since": since,
+                                        "groups": group_ids(rec)}
         gone_at = self.checked or int(now)
         for left in before.values():
             for c in left:
@@ -166,7 +197,7 @@ class Usage:
                     continue
                 self.online[rec["clid"]] = {"uid": rec.get("client_unique_identifier", ""),
                                             "nick": rec.get("client_nickname", ""),
-                                            "since": int(now)}
+                                            "since": int(now), "groups": group_ids(rec)}
                 changed = True
         elif name == "notifyclientleftview":
             for rec in recs:
@@ -218,31 +249,33 @@ def concurrent(online, sessions, now):
     return points
 
 
-def summary(online, sessions, now):
+def summary(online, sessions, now, names=lambda ids: []):
     """The start page's view: who is online, the last visits, per person the
-    time online over the last 7 days, and how many were online at once."""
+    time online over the last 7 days and their server groups (as of their
+    latest visit), and how many were online at once. names turns an online
+    client's group IDs into names."""
     week = now - WEEK
     people = {}
 
-    def person(uid, nick, last):
+    def person(uid, nick, last, groups):
         p = people.setdefault(uid or nick, {"nick": nick, "last": 0, "week": 0, "visits": 0,
-                                            "online": False})
+                                            "online": False, "groups": []})
         if last >= p["last"]:
-            p["nick"], p["last"] = nick, last
+            p["nick"], p["last"], p["groups"] = nick, last, groups
         return p
 
     for s in sessions:
-        p = person(s["uid"], s["nick"], s["end"])
+        p = person(s["uid"], s["nick"], s["end"], s.get("groups") or [])
         if s["end"] >= week:
             p["week"] += s["end"] - max(s["start"], week)
             p["visits"] += 1
     for c in online.values():
-        p = person(c["uid"], c["nick"], now)
+        p = person(c["uid"], c["nick"], now, names(c.get("groups") or []))
         p["week"] += now - max(c["since"], week)
         p["visits"] += 1
         p["online"] = True
     users = [{"nick": p["nick"], "online": p["online"], "last_seen": iso(p["last"]),
-              "week_seconds": int(p["week"]), "week_visits": p["visits"]}
+              "week_seconds": int(p["week"]), "week_visits": p["visits"], "groups": p["groups"]}
              for p in people.values() if p["visits"] or p["online"]]
     users.sort(key=lambda u: (not u["online"], -u["week_seconds"], u["nick"].lower()))
     recent = sorted(sessions, key=lambda s: s["end"], reverse=True)[:RECENT]
@@ -334,12 +367,17 @@ def run(usage):
         # ignored until reconcile; the ones after it are not.
         q.command("use " + SERVER_ID)
         q.command("servernotifyregister event=server")
-        clients = q.command("clientlist -uid")
+        usage.set_groups(q.command("servergrouplist"))
+        clients = q.command("clientlist -uid -groups")
         usage.reconcile(clients, time.time())
         log("Connected; %d online" % len(usage.online))
         heard = time.time()
         while True:
             usage.prune(time.time())
+            # Group names and members can change at any time; once a minute
+            # is soon enough for the page.
+            usage.set_groups(q.command("servergrouplist"))
+            usage.update_groups(q.command("clientlist -groups"))
             usage.save(time.time())
             q.send("version")
             end = time.time() + TICK
@@ -361,8 +399,8 @@ def main():
         print(os.environ.get("TS_QUERY_PASSWORD", ""))
         return
     if sys.argv[1:] == ["--summary"]:
-        state = read_json("online.json", {})
-        json.dump(summary(state.get("clients") or {}, read_sessions(), time.time()), sys.stdout,
+        usage = Usage()
+        json.dump(summary(usage.online, read_sessions(), time.time(), usage.names), sys.stdout,
                   ensure_ascii=False, separators=(",", ":"))
         print()
         return

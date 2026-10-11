@@ -71,7 +71,7 @@ in the channel tree, so users do not see it. It reads who is online,
 registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
 
 - `sessions.jsonl`: one line per finished visit, with the client's unique ID,
-  nickname, start and end. Visits older than `TEAMSPEAK_USAGE_DAYS` are
+  nickname, start, end and server groups. Visits older than `TEAMSPEAK_USAGE_DAYS` are
   dropped once a day.
 - `online.json`: who is online now.
 - `usage.json`: the summary the [web start page](web.md#teamspeak) shows,

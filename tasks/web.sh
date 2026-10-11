@@ -137,6 +137,11 @@ web_index_html() {
     .row .state { grid-row: 1; grid-column: 2; }
   }
   .ts-online { margin: 0 0 12px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .tag {
+    padding: 0 8px; border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text); font-size: .8rem; line-height: 1.6;
+  }
   .chart {
     position: relative; margin-bottom: 16px; padding: 12px 16px 8px;
     border: 1px solid var(--border); border-radius: 12px; background: var(--card);
@@ -289,7 +294,7 @@ web_index_html() {
     return new Date(t).toLocaleString([], o);
   }
 
-  function tsRow(list, nick, online, middle, right) {
+  function tsRow(list, nick, online, middle, right, groups) {
     var row = el('div', 'row');
     var name = el('div', 'name');
     var dot = el('span', 'dot' + (online ? ' up' : ''));
@@ -297,7 +302,13 @@ web_index_html() {
     name.appendChild(dot);
     name.appendChild(document.createTextNode(nick));
     row.appendChild(name);
-    row.appendChild(el('div', 'image', middle));
+    var info = el('div', 'image', middle);
+    if (Array.isArray(groups) && groups.length) {
+      var tags = el('div', 'tags');
+      groups.forEach(function (g) { tags.appendChild(el('span', 'tag', String(g))); });
+      info.appendChild(tags);
+    }
+    row.appendChild(info);
     row.appendChild(el('div', 'state', right));
     list.appendChild(row);
   }
@@ -412,7 +423,7 @@ web_index_html() {
     users.forEach(function (u) {
       var visits = u.week_visits + (u.week_visits === 1 ? ' visit' : ' visits');
       tsRow(listUsers, u.nick, u.online, duration(u.week_seconds) + ' in the last 7 days, ' + visits,
-        u.online ? 'online now' : 'seen ' + since(u.last_seen) + ' ago');
+        u.online ? 'online now' : 'seen ' + since(u.last_seen) + ' ago', u.groups);
     });
     listRecent.textContent = '';
     listRecent.hidden = listRecent.previousElementSibling.hidden = !recent.length;
