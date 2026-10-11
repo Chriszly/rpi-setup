@@ -11,8 +11,10 @@ TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the br
 # HOST_PROC/HOST_SYS), the website on PORT (the container listens on 9393),
 # the routers to show (HUB_ROUTERS) with their passwords from router-secrets/,
 # the history in a named volume, no capabilities and a read-only root file
-# system. With DOCKER_DIR (Docker's data folder) also Den-Watcher's
-# containers add-on, see denwatcher_compose_containers.
+# system, and labels that give its card on the web task's start page a name
+# and description, which every version of that page reads. With DOCKER_DIR
+# (Docker's data folder) also Den-Watcher's containers add-on, see
+# denwatcher_compose_containers.
 denwatcher_compose() {
   cat <<EOF2
 services:
@@ -20,6 +22,10 @@ services:
     image: "$1"
     container_name: den-watcher
     restart: unless-stopped
+    labels:
+      rpi-setup.link.name: "Den-Watcher"
+      rpi-setup.link.description: "CPU, memory, temperature and disks of this Pi, with their history"
+      rpi-setup.link.port: "$2"
     ports:
       - "0.0.0.0:$2:9393"
     environment:

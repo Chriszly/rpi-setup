@@ -36,6 +36,8 @@ shown and it is taken down again.
   inside the container, published on `DENWATCHER_PORT` over IPv4 only. It
   reads the Pi's `/proc` and `/sys` read-only, runs as a non-root user with
   no capabilities and a read-only file system, and changes nothing on the Pi.
+  Its labels give it a card with a description on the `web` task's start
+  page, also when only this task was run since the page was set up.
 - With `DENWATCHER_CONTAINERS=yes`, the `den-watcher-containers`
   container (Den-Watcher's containers add-on, from the same image) and the
   in-memory Docker volume `denwatcher_addons` it hands its values over in.
