@@ -6,7 +6,13 @@ set -euo pipefail
 
 TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the browser (:9393)")
 
-# denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] - the compose file:
+# Den-Watcher's add-ons that run in a container of their own, besides the
+# containers add-on (DENWATCHER_CONTAINERS). gpu, inodes and smart have no
+# container (they need the host's tools, filesystems or raw disks).
+denwatcher_all_addons='power pressure kernel wifi bluetooth memory ports processes'
+
+# denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] [ADDONS] [RETENTION_DAYS]
+# - the compose file:
 # the host's /proc and /sys read-only (gopsutil reads them through
 # HOST_PROC/HOST_SYS), the website on PORT (the container listens on 9393),
 # the routers to show (HUB_ROUTERS) with their passwords from router-secrets/,
@@ -14,8 +20,12 @@ TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the br
 # system, and labels that give its card on the web task's start page a name
 # and description, which every version of that page reads. With DOCKER_DIR
 # (Docker's data folder) also Den-Watcher's containers add-on, see
-# denwatcher_compose_containers.
+# denwatcher_compose_containers, and with ADDONS (space separated, from
+# denwatcher_all_addons) those add-ons, see denwatcher_compose_addon. The
+# host's time zone is mounted so the page shows local times.
 denwatcher_compose() {
+  local addon with_addons=""
+  [[ -z "${4:-}${5:-}" ]] || with_addons=1
   cat <<EOF2
 services:
   den-watcher:
@@ -35,15 +45,17 @@ services:
       HUB_ROUTERS: "${3:-}"
       ROUTER_PASSWORDS_FILE: /run/secrets/router-passwords
 EOF2
-  [[ -z "${4:-}" ]] || echo "      ADDONS_DIR: /addons"
+  [[ -z "${6:-}" ]] || echo "      RETENTION_DAYS: \"$6\""
+  [[ -z "$with_addons" ]] || echo "      ADDONS_DIR: /addons"
   cat <<EOF2
     volumes:
       - data:/data
       - ./router-secrets:/run/secrets:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /etc/localtime:/etc/localtime:ro
 EOF2
-  [[ -z "${4:-}" ]] || echo "      - addons:/addons:ro"
+  [[ -z "$with_addons" ]] || echo "      - addons:/addons:ro"
   cat <<EOF2
     read_only: true
     cap_drop:
@@ -52,13 +64,14 @@ EOF2
       - no-new-privileges:true
 EOF2
   [[ -z "${4:-}" ]] || denwatcher_compose_containers "$1" "$4"
+  for addon in ${5:-}; do denwatcher_compose_addon "$1" "$addon"; done
   cat <<EOF2
 volumes:
   data:
 EOF2
-  # In memory only: the add-on's newest values. A new tmpfs is open to
-  # everyone (mode 1777), so the website's non-root user can read it.
-  [[ -z "${4:-}" ]] || cat <<EOF2
+  # In memory only: the add-ons' newest values. A new tmpfs is open to
+  # everyone (mode 1777), so the non-root users can write and read it.
+  [[ -z "$with_addons" ]] || cat <<EOF2
   addons:
     driver_opts:
       type: tmpfs
@@ -95,6 +108,51 @@ denwatcher_compose_containers() {
         read_only: true
         bind:
           create_host_path: false
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+EOF2
+}
+
+# denwatcher_compose_addon IMAGE ADDON - the service of one add-on from
+# denwatcher_all_addons, as in Den-Watcher's own compose.yaml: the add-on's
+# program from the same image, reading the host's /proc or /sys read-only and
+# writing to the in-memory addons volume, without any capability, network or
+# writable file system. It runs as the image's non-root user, except power,
+# which needs root for the CPU's energy counters; bluetooth also reads the
+# host's system D-Bus (a file socket, not network), only to list devices.
+denwatcher_compose_addon() {
+  local user="" env mounts
+  case "$2" in
+    power)
+      user='    user: "0:0"'
+      env='      HOST_SYS: /host/sys'
+      mounts='      - /sys:/host/sys:ro' ;;
+    bluetooth)
+      env=$'      HOST_SYS: /host/sys\n      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket'
+      mounts=$'      - /sys:/host/sys:ro\n      - /run/dbus:/host/run/dbus:ro' ;;
+    *)
+      env='      HOST_PROC: /host/proc'
+      mounts='      - /proc:/host/proc:ro' ;;
+  esac
+  cat <<EOF2
+  den-watcher-$2:
+    image: "$1"
+    container_name: den-watcher-$2
+    restart: unless-stopped
+    entrypoint: ["/den-watcher-$2"]
+EOF2
+  [[ -z "$user" ]] || printf '%s\n' "$user"
+  cat <<EOF2
+    environment:
+$env
+      ADDONS_DIR: /addons
+    volumes:
+      - addons:/addons
+$mounts
     network_mode: none
     read_only: true
     cap_drop:
@@ -144,7 +202,8 @@ denwatcher_move_old() {
 }
 
 run_denwatcher() {
-  : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}"
+  : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
+    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}"
   require_port DENWATCHER_PORT
   require_image_ref DENWATCHER_IMAGE
   # Images under Den-Watcher's old name run the containers add-on under its old
@@ -153,6 +212,21 @@ run_denwatcher() {
     die "DENWATCHER_IMAGE names Den-Watcher's old image ($DENWATCHER_IMAGE); set it to ghcr.io/chriszly/den-watcher with the same tag (2.0.8a or later)"
   local containers=0
   if setting_on DENWATCHER_CONTAINERS; then containers=1; fi
+  local addons="" addon
+  case "${DENWATCHER_ADDONS,,}" in
+    all) addons="$denwatcher_all_addons" ;;
+    none) ;;
+    *)
+      for addon in ${DENWATCHER_ADDONS//,/ }; do
+        [[ " $denwatcher_all_addons " == *" $addon "* ]] ||
+          die "DENWATCHER_ADDONS must be all, none or add-ons from: ${denwatcher_all_addons// /, } (got '$addon')"
+        [[ " $addons " == *" $addon "* ]] || addons+="${addons:+ }$addon"
+      done ;;
+  esac
+  if [[ -n "$DENWATCHER_RETENTION_DAYS" ]] &&
+    { [[ ! "$DENWATCHER_RETENTION_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] || (( DENWATCHER_RETENTION_DAYS > 3650 )); }; then
+    die "DENWATCHER_RETENTION_DAYS must be a number of days from 1 to 3650 (got '$DENWATCHER_RETENTION_DAYS')"
+  fi
   # Den-Watcher checks each router itself; here only what could break the
   # compose file (quotes, $, backslashes, line breaks) is refused.
   local safe='^[][A-Za-z0-9 ._@:=,-]*$'
@@ -208,10 +282,17 @@ run_denwatcher() {
     fi
   fi
 
+  # The Bluetooth add-on asks BlueZ through the system D-Bus; without it
+  # Docker would create an empty /run/dbus, so the add-on is left out.
+  if [[ " $addons " == *" bluetooth "* && ! -S /run/dbus/system_bus_socket ]]; then
+    warn "No system D-Bus (/run/dbus/system_bus_socket), so the bluetooth add-on is left out"
+    addons="$(tr ' ' '\n' <<<"$addons" | grep -vx bluetooth | xargs)"
+  fi
+
   local dir name=den-watcher changed=0
   dir="$(container_dir denwatcher)"
   install -m 0755 -d "$dir" "$dir/router-secrets"
-  if denwatcher_compose "$DENWATCHER_IMAGE" "$DENWATCHER_PORT" "${DENWATCHER_ROUTERS:-}" "$docker_dir" | write_if_changed "$dir/docker-compose.yml" 0644; then
+  if denwatcher_compose "$DENWATCHER_IMAGE" "$DENWATCHER_PORT" "${DENWATCHER_ROUTERS:-}" "$docker_dir" "$addons" "$DENWATCHER_RETENTION_DAYS" | write_if_changed "$dir/docker-compose.yml" 0644; then
     changed=1
   fi
 
@@ -243,6 +324,11 @@ run_denwatcher() {
     docker logs --tail 30 den-watcher-containers 2>&1 | sed 's/^/    /' >&2 || true
     warn "The containers add-on does not stay up, so Den-Watcher shows no containers; its last log lines are above"
   fi
+  for addon in $addons; do
+    container_wait_stable "den-watcher-$addon" && continue
+    docker logs --tail 30 "den-watcher-$addon" 2>&1 | sed 's/^/    /' >&2 || true
+    warn "The $addon add-on does not stay up, so Den-Watcher shows none of its values; its last log lines are above"
+  done
 
   if [[ $changed -eq 1 ]]; then
     say "Den-Watcher is running with the new settings: $(service_url "$DENWATCHER_PORT")"
