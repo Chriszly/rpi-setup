@@ -176,6 +176,12 @@ def channel_tree(channels):
     return out
 
 
+def client_ip(rec):
+    """The client's IP from clientlist -ip or a join event; an empty
+    connection_client_ip (the server does not tell) gives ''."""
+    return rec.get("connection_client_ip", "").strip()
+
+
 def group_ids(rec):
     """The server group IDs of a client record ('client_servergroups=6,8')."""
     return [g for g in rec.get("client_servergroups", "").split(",") if g]
@@ -192,7 +198,8 @@ def read_sessions():
                                      "start": int(s["start"]), "end": int(s["end"]),
                                      "groups": [str(g) for g in s.get("groups") or []],
                                      "platform": str(s.get("platform") or ""),
-                                     "created": int(s.get("created") or 0)})
+                                     "created": int(s.get("created") or 0),
+                                     "ip": str(s.get("ip") or "")})
                 except (ValueError, KeyError, TypeError):
                     continue
     except OSError:
@@ -211,7 +218,8 @@ class Usage:
             try:
                 self.online[str(clid)] = {"uid": str(c["uid"]), "nick": str(c["nick"]),
                                           "since": int(c["since"]),
-                                          "groups": [str(g) for g in c.get("groups") or []]}
+                                          "groups": [str(g) for g in c.get("groups") or []],
+                                          "ip": str(c.get("ip") or "")}
             except (KeyError, TypeError, ValueError):
                 continue
         self.group_names = {str(k): str(v) for k, v in (state.get("group_names") or {}).items()}
@@ -232,7 +240,8 @@ class Usage:
     def end_visit(self, c, end):
         line = json.dumps({"uid": c["uid"], "nick": c["nick"], "start": c["since"],
                            "end": max(int(end), c["since"]), "groups": self.names(c["groups"]),
-                           "platform": c.get("platform", ""), "created": c.get("created", 0)},
+                           "platform": c.get("platform", ""), "created": c.get("created", 0),
+                           "ip": c.get("ip", "")},
                           ensure_ascii=False)
         with open(path("sessions.jsonl"), "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -275,6 +284,7 @@ class Usage:
             if rec.get("client_nickname"):
                 c["nick"] = rec["client_nickname"]
             c["platform"] = d["platform"]
+            c["ip"] = client_ip(rec) or c.get("ip", "")
             if d["created"]:
                 c["created"] = d["created"]
         # Channel minutes: the time since the last sample (at most two ticks,
@@ -311,7 +321,7 @@ class Usage:
             kept = before.get(uid) or []
             since = kept.pop(0)["since"] if kept else int(now)
             self.online[rec["clid"]] = {"uid": uid, "nick": nick, "since": since,
-                                        "groups": group_ids(rec)}
+                                        "groups": group_ids(rec), "ip": client_ip(rec)}
         gone_at = self.checked or int(now)
         for left in before.values():
             for c in left:
@@ -329,7 +339,8 @@ class Usage:
                     continue
                 self.online[rec["clid"]] = {"uid": rec.get("client_unique_identifier", ""),
                                             "nick": rec.get("client_nickname", ""),
-                                            "since": int(now), "groups": group_ids(rec)}
+                                            "since": int(now), "groups": group_ids(rec),
+                                            "ip": client_ip(rec)}
                 changed = True
         elif name == "notifyclientleftview":
             for rec in recs:
@@ -437,6 +448,38 @@ def people_rows(online, sessions, now, names):
     return rows
 
 
+def ip_groups(online, sessions, now):
+    """Visits grouped by the client's IP, to see which nicknames and
+    identities come from the same connection. A group is named after the
+    nickname used last from it; the IP itself is never shown. Groups with
+    several identities come first."""
+    out = {}
+    for uid, nick, end, ip, on in ([(s["uid"], s["nick"], s["end"], s.get("ip", ""), False)
+                                    for s in sessions] +
+                                   [(c["uid"], c["nick"], int(now), c.get("ip", ""), True)
+                                    for c in online.values()]):
+        if not ip:
+            continue
+        g = out.setdefault(ip, {"people": {}, "visits": 0, "last": 0, "online": False})
+        g["visits"] += 1
+        g["online"] = g["online"] or on
+        g["last"] = max(g["last"], end)
+        p = g["people"].setdefault(uid or nick, {"nick": nick, "last": 0, "online": False})
+        if end >= p["last"]:
+            p["nick"], p["last"] = nick, end
+        p["online"] = p["online"] or on
+    rows = []
+    for g in out.values():
+        nicks = []
+        for p in sorted(g["people"].values(), key=lambda p: (not p["online"], -p["last"])):
+            if p["nick"] not in nicks:
+                nicks.append(p["nick"])
+        rows.append({"nick": nicks[0], "others": nicks[1:], "identities": len(g["people"]),
+                     "visits": g["visits"], "last": g["last"], "online": g["online"]})
+    rows.sort(key=lambda r: (-r["identities"], not r["online"], -r["last"], r["nick"].lower()))
+    return [{k: v for k, v in dict(r, last_seen=iso(r["last"])).items() if k != "last"} for r in rows]
+
+
 def live_summary(online, live, names):
     """The server, its channels with who is in them, and the details of each
     client online, for the TeamSpeak tab."""
@@ -506,6 +549,7 @@ def summary(online, sessions, now, names=lambda ids: [], live=None):
         "concurrent": concurrent(online, sessions, now),
         "people": people_rows(online, sessions, now, names),
         "heatmap": heatmap(online, sessions, now),
+        "connections": ip_groups(online, sessions, now),
         **live_summary(online, live or {}, names),
     }
 
@@ -588,7 +632,7 @@ def run(usage):
         q.command("use " + SERVER_ID)
         q.command("servernotifyregister event=server")
         usage.set_groups(q.command("servergrouplist"))
-        clients = q.command("clientlist -uid -groups")
+        clients = q.command("clientlist -uid -groups -ip")
         usage.reconcile(clients, time.time())
         log("Connected; %d online" % len(usage.online))
         heard = time.time()
@@ -598,7 +642,7 @@ def run(usage):
             # at any time; once a minute is soon enough for the page.
             usage.set_groups(q.command("servergrouplist"))
             usage.set_live(q.command("serverinfo"), q.command("channellist -topic"),
-                           q.command("clientlist -uid -groups -away -voice -times -info -country"),
+                           q.command("clientlist -uid -groups -ip -away -voice -times -info -country"),
                            time.time())
             usage.save(time.time())
             q.send("version")

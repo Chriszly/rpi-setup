@@ -242,6 +242,11 @@ web_index_html() {
     <div class="list" id="tsx-users"></div>
     <h2 id="tsx-people-title">Everyone</h2>
     <div class="list" id="tsx-people"></div>
+    <section id="tsx-conn-box">
+      <h2>Same connection</h2>
+      <p class="note">Visitors who connected from the same IP address, named after the nickname used last from it.</p>
+      <div class="list" id="tsx-conn"></div>
+    </section>
     <h2>Last visits</h2>
     <div class="list" id="tsx-recent"></div>
   </div>
@@ -644,6 +649,14 @@ web_index_html() {
         right: 'first seen ' + since(p.first_seen) + ' ago' +
           (p.online ? ', online now' : ', last ' + since(p.last_seen) + ' ago') });
     });
+    var conns = Array.isArray(data.connections) ? data.connections : [];
+    fill('tsx-conn', conns, function (list, g) {
+      tsRow(list, { nick: g.nick, dot: g.online ? 'up' : '',
+        groups: g.others && g.others.length ? ['also ' + g.others.join(', ')] : [],
+        info: plural(g.identities, 'identity', 'identities') + ', ' + plural(g.visits, 'visit', 'visits'),
+        right: g.online ? 'online now' : 'seen ' + since(g.last_seen) + ' ago' });
+    });
+    document.getElementById('tsx-conn-box').hidden = !conns.length;
     fill('tsx-recent', recent, visitRow, 'No visits yet.');
     showTab();
   }

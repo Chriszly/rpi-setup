@@ -99,8 +99,8 @@ while IFS= read -r cmd; do
       printf 'client_version=6.0.0\\s[Build:\\s1] client_platform=Windows client_country=DE client_created=1000\r\nerror id=0 msg=ok\r\n' ;;
     clientlist*)
       printf 'clid=1 client_nickname=serveradmin client_type=1 client_unique_identifier=serveradmin client_servergroups=1|'
-      printf 'clid=5 client_nickname=Anna\\sB\\p1 client_type=0 client_unique_identifier=AAA= client_servergroups=8\r\nerror id=0 msg=ok\r\n'
-      printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=7 client_unique_identifier=BBB= client_nickname=Bob client_type=0 client_servergroups=9\r\n'
+      printf 'clid=5 client_nickname=Anna\\sB\\p1 client_type=0 client_unique_identifier=AAA= client_servergroups=8 connection_client_ip=10.0.0.5\r\nerror id=0 msg=ok\r\n'
+      printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=7 client_unique_identifier=BBB= client_nickname=Bob client_type=0 client_servergroups=9 connection_client_ip=10.0.0.5\r\n'
       printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=8 client_unique_identifier=q client_nickname=bot client_type=1\r\n'
       printf 'notifyclientleftview cfid=1 ctid=0 reasonid=8 reasonmsg=leaving clid=5\r\n' ;;
     version) printf 'version=6 build=1 platform=Linux\r\nerror id=0 msg=ok\r\n'; sleep 0.3; exit 0 ;;
@@ -112,7 +112,7 @@ EOF
   first="$(python3 -c '
 import json, sys
 d = sys.argv[1]
-for l in open(d + "/sessions.jsonl"): s = json.loads(l); print("visit", s["nick"], s["uid"], s["groups"])
+for l in open(d + "/sessions.jsonl"): s = json.loads(l); print("visit", s["nick"], s["uid"], s["groups"], s["ip"])
 o = json.load(open(d + "/online.json"))
 for k, c in sorted(o["clients"].items()): print("online", k, c["nick"])
 u = json.load(open(d + "/usage.json"))
@@ -124,9 +124,11 @@ c = u["clients"][0]
 print("client", c["nick"], c["channel"], c["platform"], c["version"], c["country"], c["away"], c["away_message"], c["input_muted"], c["idle_seconds"])
 print("busy", [b["name"] for b in u["busy_channels"]], len(u["heatmap"]))
 print("people", [(p["nick"], p["visits"], p["platform"], p["first_seen"][:4]) for p in u["people"]])
+print("connections", [(g["nick"], g["others"], g["identities"], g["visits"], g["online"]) for g in u["connections"]])
+print("ip shown", "10.0.0" in open(d + "/usage.json").read())
 ' "$data" 2>&1)" || true
   assert_eq "bot: logs joins and leaves and server groups, skips query clients, unescapes nicknames" \
-"visit Anna B|1 AAA= ['Guest']
+"visit Anna B|1 AAA= ['Guest'] 10.0.0.5
 online 7 Bob
 page ['Bob'] ['Anna B|1'] [('Bob', True), ('Anna B|1', False)]
 groups [('Bob', ['Server Admin', 'Member']), ('Anna B|1', ['Guest'])] [['Guest']]
@@ -134,7 +136,9 @@ server Our Server 32 12.5
 channels [('Lobby', 0, []), ('Games', 0, ['Bob']), ('Room 1', 1, [])]
 client Bob Games Windows 6.0.0 DE True brb True 65
 busy [] 168
-people [('Bob', 1, 'Windows', '1970'), ('Anna B|1', 1, '', '$(date -u +%Y)')]" "$first"
+people [('Bob', 1, 'Windows', '1970'), ('Anna B|1', 1, '', '$(date -u +%Y)')]
+connections [('Bob', ['Anna B|1'], 2, 2, True)]
+ip shown False" "$first"
 
   # Second connect: Bob left while the bot was away, Carl is on.
   cat >"$TMP/fake2" <<'EOF'
