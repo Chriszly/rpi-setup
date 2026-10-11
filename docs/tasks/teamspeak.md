@@ -72,7 +72,7 @@ registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
 
 - `sessions.jsonl`: one line per finished visit, with the client's unique ID,
   nickname, start, end, server groups, client platform and when the client
-  first connected to the server. Visits older than `TEAMSPEAK_USAGE_DAYS` are
+  first connected to the server, and the IP address it connected from. Visits older than `TEAMSPEAK_USAGE_DAYS` are
   dropped once a day.
 - `online.json`: who is online now.
 - `stats.json`: minutes spent in each channel per UTC day (7 days kept), for
@@ -82,7 +82,9 @@ registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
   last 7 days (the points where that number changes), and every minute the
   server's info, the channel tree and the details of each client online
   (channel, version, platform, country, away, muted, idle) from `serverinfo`,
-  `channellist` and `clientlist`.
+  `channellist` and `clientlist`. IP addresses stay in `sessions.jsonl` and
+  `online.json` on the Pi; `usage.json` only groups visits by them, named
+  after the nickname used last, and never contains an address.
 
 When the bot or the server restarts, the people still online keep their
 start time; the visits of those who left in between end at the last time the

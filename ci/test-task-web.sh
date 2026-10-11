@@ -24,6 +24,7 @@ assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
 assert_contains "page: charts how many were online at once" "chartOverview.render(data.concurrent)" "$page"
 assert_contains "page: shows each user's server groups" "groups: u.groups" "$page"
 assert_contains "page: has a TeamSpeak tab" 'href="#teamspeak"' "$page"
+assert_contains "page: groups visitors from the same connection" "data.connections" "$page"
 assert_contains "page: TeamSpeak tab shows the server, channels and busy times" "renderServer(data.server" "$page"
 assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
 WEB_TITLE=Other
