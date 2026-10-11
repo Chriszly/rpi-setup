@@ -166,6 +166,11 @@ assert_lacks "errexit still applies inside a task" "docker-went-on" "$out"
 assert_contains "the run goes on after a failed task" "ran-samba" "$out"
 assert_eq "finished tasks are recorded for the runner, failed ones are not" "base netalertx samba" \
     "$(xargs <"$flow_tmp/tasks.done")"
+printf 'monitoring\n' >>"$flow_tmp/tasks.done"
+flow base >/dev/null
+assert_eq "a recorded task removed from tasks/ is forgotten" "base netalertx samba" \
+    "$(xargs <"$flow_tmp/tasks.done")"
+out="$(flow base docker netalertx web samba)"
 assert_contains "summary: ok task" "  base           ok" "$out"
 assert_contains "summary: failed task" "  docker         failed" "$out"
 assert_contains "summary: a task after a failed one runs" "  netalertx      ok" "$out"

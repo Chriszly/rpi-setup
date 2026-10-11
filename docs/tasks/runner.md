@@ -35,7 +35,9 @@ The private repository's layout, workflow and step-by-step setup are in
   (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`)
   and `--update`.
 - `setup.sh` records every task that finished in
-  `/var/lib/rpi-setup/tasks.done`; a deploy with no tasks reruns those.
+  `/var/lib/rpi-setup/tasks.done`; a deploy with no tasks reruns those. A
+  recorded task that was removed from rpi-setup (such as `monitoring`) is
+  skipped, and the next `setup.sh` run drops it from the file.
 
 ## What a deploy does
 
