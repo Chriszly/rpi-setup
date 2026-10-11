@@ -183,7 +183,10 @@ deploy >/dev/null
 assert_eq "no tasks reruns the recorded ones" "base web cfg=$tmp/etc" "$(cat "$tmp/ran")"
 assert_fails "a branch outside RUNNER_BRANCHES never touches the checkout" eval 'deploy --branch other >/dev/null'
 printf 'gone\n' >>"$tmp/done"
-assert_fails "a recorded task missing from the checkout is refused" eval 'deploy >/dev/null'
+out="$(deploy)"
+assert_eq "a recorded task removed from the checkout is skipped" "base web cfg=$tmp/etc" "$(cat "$tmp/ran")"
+assert_contains "and the workflow log says so" "skipping 'gone'" "$out"
+assert_fails "a given task missing from the checkout is still refused" eval 'deploy --tasks gone >/dev/null'
 rm -rf "${tmp:?}/etc"
 mkdir -p "$tmp/pi/config"; printf 'X=1\n' >"$tmp/pi/config/rpi-setup.env"
 rm -f "$tmp/ran"

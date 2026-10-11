@@ -113,13 +113,17 @@ run_tasks() {
 }
 
 # Remember that task $1 finished on this Pi, so the runner task's deploy
-# reruns it (RPI_SETUP_DONE_FILE: see tasks/runner.sh). Best effort: a
-# read-only state folder never fails a run.
+# reruns it (RPI_SETUP_DONE_FILE: see tasks/runner.sh), and forget tasks
+# that were removed from tasks/. Best effort: a read-only state folder never
+# fails a run.
 record_task_done() {
-  local f="$RPI_SETUP_DONE_FILE"
+  local f="$RPI_SETUP_DONE_FILE" n
   {
     mkdir -p "$(dirname "$f")" &&
-      { cat "$f" 2>/dev/null || true; printf '%s\n' "$1"; } | sort -u >"$f.tmp" &&
+      { cat "$f" 2>/dev/null || true; printf '%s\n' "$1"; } | sort -u |
+      while IFS= read -r n; do
+        [[ ! -f "$RPI_SETUP_ROOT/tasks/$n.sh" ]] || printf '%s\n' "$n"
+      done >"$f.tmp" &&
       mv -f "$f.tmp" "$f"
   } 2>/dev/null || true
 }

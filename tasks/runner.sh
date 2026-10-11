@@ -238,15 +238,21 @@ deploy_run_check_config() {
 
 # Tasks to run: DP_TASKS, else every task that finished on this Pi. With
 # --update only the DP_TASKS not yet finished on this Pi (the new ones).
-# Each must exist as tasks/<name>.sh in the (updated) checkout.
+# Each given task must exist as tasks/<name>.sh in the (updated) checkout; a
+# recorded one that does not was removed from rpi-setup and is skipped.
 deploy_run_tasks() {
   local -a t
-  local n
+  local n recorded=0
   read -r -a t <<<"$DP_TASKS"
   if [[ ${#t[@]} -eq 0 && $DP_UPDATE -eq 0 && -f "$DP_DONE_FILE" ]]; then
     mapfile -t t < <(grep -E '^[a-z0-9_-]+$' "$DP_DONE_FILE" || true)
+    recorded=1
   fi
   for n in "${t[@]}"; do
+    if [[ $recorded -eq 1 && ! -f "$DP_DIR/tasks/$n.sh" ]]; then
+      echo "rpi-setup-deploy: skipping '$n', set up on this Pi before but no longer a task in $DP_DIR/tasks" >&2
+      continue
+    fi
     if [[ ! -f "$DP_DIR/tasks/$n.sh" ]]; then
       echo "rpi-setup-deploy: unknown task '$n' (no $DP_DIR/tasks/$n.sh)" >&2
       return 2
