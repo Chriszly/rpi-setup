@@ -150,10 +150,24 @@ jobs:
       pull-requests: read
     outputs:
       provision: ${{ steps.filter.outputs.provision }}
-      code: ${{ steps.filter.outputs.code }}
+      code: ${{ steps.code.outputs.code }}
     steps:
       - uses: dorny/paths-filter@v4.0.3
         id: filter
+        with:
+          filters: |
+            provision:
+              - setup.sh
+              - lib/**
+              - tasks/**
+              - ci/provision.sh
+              - .github/workflows/test-provision.yml
+              - .github/actions/**
+
+      # A file counts as code when it matches every pattern here; that
+      # quantifier would break the provision filter, hence a second step.
+      - uses: dorny/paths-filter@v4.0.3
+        id: code
         with:
           predicate-quantifier: every
           filters: |
@@ -163,13 +177,6 @@ jobs:
               - '!docs/**'
               - '!LICENSE*'
               - '!.claude/**'
-            provision:
-              - setup.sh
-              - lib/**
-              - tasks/**
-              - ci/provision.sh
-              - .github/workflows/test-provision.yml
-              - .github/actions/**
 
   # Runs on the latest release (what host/flash.sh and host/flash.ps1 write
   # today, resolved at run time) and on Bookworm (what existing Pis still run).
