@@ -1,0 +1,66 @@
+name: PR Links
+
+on:
+  pull_request:
+    # "edited" re-runs the check when the title or description changes and
+    # "synchronize" when commits are pushed, so removing the link turns it green
+    # again.
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  github-links-only:
+    # Dependabot's descriptions and commit messages link to the release notes
+    # of each dependency.
+    # Skipping the job still reports the check as passed.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title, description and commit messages link only to GitHub
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // The texts are read as data from the API; they never reach a shell. The
+            // PR is fetched fresh, as a re-run of an older run would otherwise
+            // check the title and description it started with.
+            const pull_number = context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number });
+            const body = pr.body || '';
+            // What GitHub turns into a link: a URL with a scheme, or one starting with www.
+            const link = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>()[\]"'`]+/gi;
+            const host = (url) => {
+              try {
+                return new URL(/^www\./i.test(url) ? `https://${url}` : url).hostname.toLowerCase();
+              } catch {
+                return '';
+              }
+            };
+            const onGitHub = (h) =>
+              h === 'github.com' || h.endsWith('.github.com') || h.endsWith('.githubusercontent.com');
+
+            const linksOutside = (text, where) =>
+              text.split(/\r?\n/).flatMap((line, i) =>
+                [...line.matchAll(link)]
+                  .map(m => m[0])
+                  .filter(url => !onGitHub(host(url)))
+                  .map(url => `${where}, line ${i + 1}: ${url}`));
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              ...context.repo,
+              pull_number,
+              per_page: 100
+            });
+            const hits = [
+              ...linksOutside(pr.title, 'title'),
+              ...linksOutside(body, 'description'),
+              ...commits.flatMap(c => linksOutside(c.commit.message, `commit ${c.sha.slice(0, 7)}`))
+            ];
+
+            if (hits.length > 0) {
+              core.setFailed(`PR links outside GitHub; edit the title or description, or reword the commits and the check re-runs:\n${hits.join('\n')}`);
+            } else {
+              console.log(`PR title, description and ${commits.length} commit message(s) link only to GitHub.`);
+            }

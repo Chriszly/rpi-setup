@@ -61,7 +61,10 @@ The two flash-script workflows are separate:
 `host/flash.ps1` with PSScriptAnalyzer (rule exclusions live in
 [`PSScriptAnalyzerSettings.psd1`](../PSScriptAnalyzerSettings.psd1)) and runs
 `ci/test-flash.ps1`, and only runs when one of those files (or the workflow
-itself) changes; `pr-template-validation.yml` checks the PR description.
+itself) changes; `pr-template-validation.yml` checks the PR description, and
+[`pr-links.yml`](../.github/workflows/pr-links.yml) fails a PR whose title,
+description or commit messages link anywhere but GitHub (Dependabot's PRs are
+skipped).
 
 ## What runs
 
