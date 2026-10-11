@@ -76,16 +76,31 @@ if command -v python3 >/dev/null 2>&1; then
     "$(TSUSAGE_ASKPASS=1 TS_QUERY_PASSWORD='pw 1' python3 "$bot" 'Password:')"
 
   # First connect: Anna (and the query client itself) online; Bob joins and
-  # Anna leaves, then the connection drops.
+  # Anna leaves; a minute later Bob is in a new server group, then the
+  # connection drops.
   cat >"$TMP/fake1" <<'EOF'
 #!/usr/bin/env bash
 printf 'TS3\r\nWelcome to the TeamSpeak ServerQuery interface.\r\n'
 while IFS= read -r cmd; do
   case "$cmd" in
+    servergrouplist)
+      printf 'sgid=1 name=Query\\sGuest type=2|sgid=6 name=Server\\sAdmin type=1|sgid=8 name=Guest type=1|'
+      printf 'sgid=9 name=Member type=1\r\nerror id=0 msg=ok\r\n' ;;
+    serverinfo)
+      printf 'virtualserver_name=Our\\sServer virtualserver_maxclients=32 virtualserver_clientsonline=2 '
+      printf 'virtualserver_uptime=3600 virtualserver_total_ping=12.5000 virtualserver_platform=Linux\r\nerror id=0 msg=ok\r\n' ;;
+    channellist*)
+      printf 'cid=2 pid=0 channel_order=1 channel_name=Games total_clients=1|cid=1 pid=0 channel_order=0 channel_name=Lobby total_clients=0|'
+      printf 'cid=3 pid=2 channel_order=0 channel_name=Room\\s1 channel_topic=chill total_clients=0\r\nerror id=0 msg=ok\r\n' ;;
+    *-away*)
+      printf 'clid=1 cid=1 client_nickname=serveradmin client_type=1 client_servergroups=1|'
+      printf 'clid=7 cid=2 client_nickname=Bob client_type=0 client_servergroups=6,9 client_away=1 client_away_message=brb '
+      printf 'client_input_muted=1 client_output_muted=0 client_input_hardware=1 client_output_hardware=1 client_idle_time=65000 '
+      printf 'client_version=6.0.0\\s[Build:\\s1] client_platform=Windows client_country=DE client_created=1000\r\nerror id=0 msg=ok\r\n' ;;
     clientlist*)
-      printf 'clid=1 client_nickname=serveradmin client_type=1 client_unique_identifier=serveradmin|'
-      printf 'clid=5 client_nickname=Anna\\sB\\p1 client_type=0 client_unique_identifier=AAA=\r\nerror id=0 msg=ok\r\n'
-      printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=7 client_unique_identifier=BBB= client_nickname=Bob client_type=0\r\n'
+      printf 'clid=1 client_nickname=serveradmin client_type=1 client_unique_identifier=serveradmin client_servergroups=1|'
+      printf 'clid=5 client_nickname=Anna\\sB\\p1 client_type=0 client_unique_identifier=AAA= client_servergroups=8\r\nerror id=0 msg=ok\r\n'
+      printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=7 client_unique_identifier=BBB= client_nickname=Bob client_type=0 client_servergroups=9\r\n'
       printf 'notifycliententerview cfid=0 ctid=1 reasonid=0 clid=8 client_unique_identifier=q client_nickname=bot client_type=1\r\n'
       printf 'notifyclientleftview cfid=1 ctid=0 reasonid=8 reasonmsg=leaving clid=5\r\n' ;;
     version) printf 'version=6 build=1 platform=Linux\r\nerror id=0 msg=ok\r\n'; sleep 0.3; exit 0 ;;
@@ -97,16 +112,29 @@ EOF
   first="$(python3 -c '
 import json, sys
 d = sys.argv[1]
-for l in open(d + "/sessions.jsonl"): s = json.loads(l); print("visit", s["nick"], s["uid"])
+for l in open(d + "/sessions.jsonl"): s = json.loads(l); print("visit", s["nick"], s["uid"], s["groups"])
 o = json.load(open(d + "/online.json"))
 for k, c in sorted(o["clients"].items()): print("online", k, c["nick"])
 u = json.load(open(d + "/usage.json"))
 print("page", [c["nick"] for c in u["online"]], [v["nick"] for v in u["recent"]], [(x["nick"], x["online"]) for x in u["users"]])
+print("groups", [(x["nick"], x["groups"]) for x in u["users"]], [v["groups"] for v in u["recent"]])
+print("server", u["server"]["name"], u["server"]["max_clients"], u["server"]["ping"])
+print("channels", [(c["name"], c["depth"], c["clients"]) for c in u["channels"]])
+c = u["clients"][0]
+print("client", c["nick"], c["channel"], c["platform"], c["version"], c["country"], c["away"], c["away_message"], c["input_muted"], c["idle_seconds"])
+print("busy", [b["name"] for b in u["busy_channels"]], len(u["heatmap"]))
+print("people", [(p["nick"], p["visits"], p["platform"], p["first_seen"][:4]) for p in u["people"]])
 ' "$data" 2>&1)" || true
-  assert_eq "bot: logs joins and leaves, skips query clients, unescapes nicknames" \
-"visit Anna B|1 AAA=
+  assert_eq "bot: logs joins and leaves and server groups, skips query clients, unescapes nicknames" \
+"visit Anna B|1 AAA= ['Guest']
 online 7 Bob
-page ['Bob'] ['Anna B|1'] [('Bob', True), ('Anna B|1', False)]" "$first"
+page ['Bob'] ['Anna B|1'] [('Bob', True), ('Anna B|1', False)]
+groups [('Bob', ['Server Admin', 'Member']), ('Anna B|1', ['Guest'])] [['Guest']]
+server Our Server 32 12.5
+channels [('Lobby', 0, []), ('Games', 0, ['Bob']), ('Room 1', 1, [])]
+client Bob Games Windows 6.0.0 DE True brb True 65
+busy [] 168
+people [('Bob', 1, 'Windows', '1970'), ('Anna B|1', 1, '', '$(date -u +%Y)')]" "$first"
 
   # Second connect: Bob left while the bot was away, Carl is on.
   cat >"$TMP/fake2" <<'EOF'

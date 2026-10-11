@@ -71,12 +71,18 @@ in the channel tree, so users do not see it. It reads who is online,
 registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
 
 - `sessions.jsonl`: one line per finished visit, with the client's unique ID,
-  nickname, start and end. Visits older than `TEAMSPEAK_USAGE_DAYS` are
+  nickname, start, end, server groups, client platform and when the client
+  first connected to the server. Visits older than `TEAMSPEAK_USAGE_DAYS` are
   dropped once a day.
 - `online.json`: who is online now.
+- `stats.json`: minutes spent in each channel per UTC day (7 days kept), for
+  the busiest channels.
 - `usage.json`: the summary the [web start page](web.md#teamspeak) shows,
   rewritten every minute, including how many were online at once over the
-  last 7 days (the points where that number changes).
+  last 7 days (the points where that number changes), and every minute the
+  server's info, the channel tree and the details of each client online
+  (channel, version, platform, country, away, muted, idle) from `serverinfo`,
+  `channellist` and `clientlist`.
 
 When the bot or the server restarts, the people still online keep their
 start time; the visits of those who left in between end at the last time the
