@@ -24,9 +24,23 @@ assert_contains "compose: no routers by default" 'HUB_ROUTERS: ""' "$out"
 assert_contains "compose: router passwords mounted read-only" "./router-secrets:/run/secrets:ro" "$out"
 out="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090 'Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1')"
 assert_contains "compose: routers" 'HUB_ROUTERS: "Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1"' "$out"
+assert_lacks "compose: no containers add-on without Docker's folder" "usage-control-containers" "$out"
+assert_lacks "compose: no add-on folder without the add-on" "addons" "$out"
+with="$(usagecontrol_compose ghcr.io/chriszly/usage-control:1.2.3 8090 '' /srv/docker)"
+assert_contains "containers: add-on service" "entrypoint: [\"/usage-control-containers\"]" "$with"
+assert_contains "containers: same image" $'usage-control-containers:\n    image: "ghcr.io/chriszly/usage-control:1.2.3"' "$with"
+assert_contains "containers: names from Docker's folder" 'source: "/srv/docker/containers"' "$with"
+assert_contains "containers: cgroups read-only" "/sys/fs/cgroup:/host/sys/fs/cgroup:ro" "$with"
+assert_contains "containers: no network" "network_mode: none" "$with"
+assert_lacks "containers: never the Docker socket" "docker.sock" "$with"
+assert_contains "containers: website reads the add-on folder" "ADDONS_DIR: /addons" "$with"
+assert_contains "containers: website mounts it read-only" "addons:/addons:ro" "$with"
+assert_contains "containers: add-on folder in memory" "type: tmpfs" "$with"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   printf '%s\n' "$out" >"$TMP/docker-compose.yml"
   assert_ok "compose: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
+  printf '%s\n' "$with" >"$TMP/docker-compose.yml"
+  assert_ok "containers: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
 else
   skip "compose: docker compose not installed"
 fi
@@ -49,6 +63,8 @@ assert_contains "password without a name stops the task" "USAGECONTROL_ROUTER_PA
 assert_lacks "password is not shown" "hunter2" "$(cat "$TMP/err")"
 ( USAGECONTROL_ROUTER_PASSWORD='Box=a,=b'; run_usagecontrol ) >/dev/null 2>"$TMP/err" || true
 assert_contains "second password without a name stops the task" "USAGECONTROL_ROUTER_PASSWORD must be" "$(cat "$TMP/err")"
+( USAGECONTROL_CONTAINERS=maybe; run_usagecontrol ) >/dev/null 2>"$TMP/err" || true
+assert_contains "bad containers setting stops the task" "USAGECONTROL_CONTAINERS must be yes or no" "$(cat "$TMP/err")"
 assert_ok "bad settings: Docker was not touched" test ! -e "$TMP/reached"
 ( USAGECONTROL_PORT=8080 USAGECONTROL_IMAGE=ghcr.io/x/y:main
   port_owner() { echo nginx; }
@@ -65,13 +81,35 @@ assert_contains "32-bit OS stops the task" "needs a 64-bit OS" "$(cat "$TMP/err"
 assert_ok "port held by Docker's proxy goes on to Docker" test -e "$TMP/reached"
 unset -f container_require_docker port_owner dpkg
 
-# --- the router passwords file ---------------------------------------------------
+# --- the containers add-on --------------------------------------------------------
 container_require_docker() { :; }
 port_owner() { return 1; }
 dpkg() { echo arm64; }
 container_dir() { echo "$TMP/opt/$1"; }
 container_pull() { :; }
 container_up() { echo "$3" >"$TMP/recreate"; }
+container_wait_stable() { echo "$1" >>"$TMP/waited"; }
+mkdir -p "$TMP/docker/containers"
+docker() { [[ "$1" == info ]] && echo "$TMP/docker"; }
+compose="$TMP/opt/usagecontrol/docker-compose.yml"
+( run_usagecontrol ) >/dev/null 2>&1
+assert_contains "containers: on by default" "source: \"$TMP/docker/containers\"" "$(cat "$compose")"
+assert_contains "containers: add-on checked to stay up" "usage-control-containers" "$(cat "$TMP/waited")"
+( USAGECONTROL_CONTAINERS=no; run_usagecontrol ) >/dev/null 2>&1
+assert_lacks "containers: off leaves the add-on out" "usage-control-containers" "$(cat "$compose")"
+# shellcheck disable=SC2329 # called by run_usagecontrol
+docker() { [[ "$1" == info ]] && echo "$TMP/nodocker"; }
+( run_usagecontrol ) >/dev/null 2>"$TMP/err"
+assert_lacks "containers: no Docker folder leaves the add-on out" "usage-control-containers" "$(cat "$compose")"
+assert_contains "containers: no Docker folder warns" "containers add-on is left out" "$(cat "$TMP/err")"
+# shellcheck disable=SC2329 # called by run_usagecontrol
+docker() { [[ "$1" == info ]] && echo "/var/lib/do\$cker"; }
+( run_usagecontrol ) >/dev/null 2>"$TMP/err" || true
+assert_contains "containers: odd Docker folder stops the task" "set USAGECONTROL_CONTAINERS=no" "$(cat "$TMP/err")"
+# shellcheck disable=SC2329 # called by run_usagecontrol
+docker() { [[ "$1" == info ]] && echo "$TMP/docker"; }
+
+# --- the router passwords file ---------------------------------------------------
 chown() { echo "$1" >"$TMP/owner"; }
 save_secret() { printf '%s=%s\n' "$2" "$3" >"$TMP/saved"; }
 load_secret() { sed -nE "s/^$2=//p" "$TMP/saved" 2>/dev/null | grep . ; }
@@ -91,6 +129,6 @@ rm -f "$TMP/saved"
 ( run_usagecontrol ) >/dev/null 2>&1
 assert_ok "passwords: none removes the file" test ! -e "$secrets"
 assert_eq "passwords: removed file restarts the container" 1 "$(cat "$TMP/recreate")"
-unset -f container_require_docker port_owner dpkg container_dir container_pull container_up chown save_secret load_secret
+unset -f container_require_docker port_owner dpkg container_dir container_pull container_up container_wait_stable docker chown save_secret load_secret
 
 finish_tests
