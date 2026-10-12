@@ -25,9 +25,10 @@ sudo bash setup.sh web
   never overwritten.
 - `/usr/local/sbin/rpi-setup-web-links` and the `rpi-setup-web-links.timer`
   that runs it every minute. It writes the list of web pages,
-  `services.json`, and of Docker containers, `containers.json`, next to the
-  start page ([below](#the-start-page)), and copies the TeamSpeak usage
-  summary there as `teamspeak.json`.
+  `services.json`, of Docker containers, `containers.json`, and of the
+  rpi-setup tasks set up on the Pi, `tasks.json`, next to the start page
+  ([below](#the-start-page)), and copies the TeamSpeak usage summary there as
+  `teamspeak.json`.
 
 ## Reach it
 
@@ -37,7 +38,12 @@ sudo bash setup.sh web
 
 The page follows the light or dark setting of your browser or system on its
 own. Under the title it shows the Pi's host name and LAN IP address (the
-address of its default route). It shows one card per web page on the Pi, with a green dot when it
+address of its default route). It has up to three tabs: **Overview**,
+**Docker** (`#docker`, while there are containers) and **TeamSpeak**
+(`#teamspeak`, while there is TeamSpeak data); the tab bar only shows when
+there is more than the overview.
+
+The overview shows one card per web page on the Pi, with a green dot when it
 answers and a red one when it does not, and links each one on the address you
 opened the page with (`raspi.local` or the IP address).
 
@@ -67,9 +73,16 @@ container on the host network (it publishes no ports):
 `rpi-setup.link: "no"` hides a container from the list. Refresh the list
 right away with `sudo rpi-setup-web-links`.
 
-### Docker containers
+Below the cards, **Set up on this Pi** lists the rpi-setup tasks that
+finished on the Pi with their description, from `tasks.json`, next to a link
+to the rpi-setup repository on GitHub. The list comes from
+`/var/lib/rpi-setup/tasks.done`, where `setup.sh` records every task that
+finishes; a task last run with an rpi-setup version older than that record
+shows up once it runs again (`update.sh` re-runs them).
 
-Below the cards the page lists every Docker container on the Pi, running or
+### Docker
+
+The **Docker** tab lists every Docker container on the Pi, running or
 stopped: its name, image, the ports it publishes (`host:container/protocol`,
 or "host network"), and its state, with a green dot when it runs (and is
 healthy), yellow while its health check starts or it restarts, and red when
@@ -78,36 +91,30 @@ it is stopped or unhealthy. The uptime counts up in the page itself.
 It comes from `containers.json`, written by the same timer from one
 `docker inspect` call. The file holds start and stop times rather than the
 uptime, so it is only rewritten when a container starts, stops or changes.
-nginx gets no access to Docker. Without Docker the section is not shown.
+nginx gets no access to Docker. Without Docker or containers the tab is not
+shown.
 
 ### TeamSpeak
 
 With the `teamspeak` task's usage logger (`TEAMSPEAK_USAGE=yes`, the default)
-the page shows who is on the TeamSpeak server right now and for how long, a
-chart of how many people were online at the same time over the last 7 days
-(with the peak; hover or touch it for the number at any moment), the
-time each person was online over the last 7 days with their number of
-visits, their server groups (such as Server Admin) and when they were last
-seen, and the last 15 visits with start, end
-and length. The timer copies the logger's summary to `teamspeak.json`; when
-the logger is off or has not written it for 10 minutes the file is removed
-and the section is hidden.
-
-A **TeamSpeak** tab next to **Overview** (`#teamspeak`, shown while there is
-TeamSpeak data) has everything the server reports, refreshed every minute:
+the **TeamSpeak** tab has everything the server reports, refreshed every minute:
 the server (status, people online out of its slots, uptime, ping, packet
 loss, bandwidth, data sent and received, channels, connections ever,
 address, version, platform, created, welcome message); everyone online with
 their server groups, channel, client version and platform, country and
 state (away, muted, talking, recording, idle); the channel tree with who is
-in each channel; the same chart; a weekday-by-hour grid of the average
+in each channel; a chart of how many people were online at the same time
+over the last 7 days (with the peak; hover or touch it for the number at any
+moment); a weekday-by-hour grid of the average
 number of people online (in your browser's time zone); the busiest channels
 over the last 7 days; the last 7 days per person; everyone in the log with
 first and last seen, total time, visits, longest visit and platform; the
 visitors who connected from the same IP address, grouped and named after the
 nickname used last from it (the address itself is never shown), with their
-other nicknames; and the last 50 visits. Server groups are a column of their own everywhere. How the
-logging works:
+other nicknames; and the last 50 visits. Server groups are a column of their own everywhere.
+The timer copies the logger's summary to `teamspeak.json`; when the logger is
+off or has not written it for 10 minutes the file is removed and the tab is
+hidden. How the logging works:
 [teamspeak usage](teamspeak.md#who-is-online-and-when).
 
 ## Run it in Docker
@@ -135,6 +142,6 @@ Docker is installed first if it is missing.
 - Turn it off with `sudo systemctl disable --now nginx` (and the list with
   `sudo systemctl disable --now rpi-setup-web-links.timer`).
 - With your own `index.html` the lists are still written, so your page can
-  read `services.json` and `containers.json` too.
+  read `services.json`, `containers.json` and `tasks.json` too.
 - Anyone who can open the page sees the container names, images and ports.
   The `firewall` task keeps the page to `FIREWALL_ALLOW_FROM`.

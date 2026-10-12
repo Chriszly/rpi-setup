@@ -145,10 +145,12 @@ web_index_html() {
   .tabs a.on { color: var(--text); border-bottom-color: var(--accent); }
   .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
   .head a { color: var(--accent); font-size: .9rem; }
-  .ts-online { margin: 0 0 12px; }
+  .row.cols2 { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); }
+  .row.cols2 .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .95rem; }
   .row.cols4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
   .groups { color: var(--muted); font-size: .9rem; }
   @media (max-width: 600px) {
+    .row.cols2 { grid-template-columns: minmax(0, 1fr); }
     .row.cols4 { grid-template-columns: minmax(0, 1fr) auto; }
     .row.cols4 .groups { grid-column: 1 / -1; grid-row: 2; }
     .row.cols4 .image { grid-column: 1 / -1; grid-row: 3; }
@@ -200,23 +202,21 @@ web_index_html() {
   <p class="host" id="host"></p>
   <nav class="tabs" id="tabs" hidden>
     <a href="#" id="tab-overview">Overview</a>
-    <a href="#teamspeak" id="tab-teamspeak">TeamSpeak</a>
+    <a href="#docker" id="tab-docker" hidden>Docker</a>
+    <a href="#teamspeak" id="tab-teamspeak" hidden>TeamSpeak</a>
   </nav>
   <div id="page-overview">
-  <div class="grid" id="services"></div>
-  <p class="note" id="note">Looking for web pages on this Pi...</p>
-  <section id="docker" hidden>
+    <div class="grid" id="services"></div>
+    <p class="note" id="note">Looking for web pages on this Pi...</p>
+    <section id="tasks-box" hidden>
+      <div class="head"><h2>Set up on this Pi</h2>
+        <a href="https://github.com/Chriszly/rpi-setup">rpi-setup on GitHub</a></div>
+      <div class="list" id="tasks"></div>
+    </section>
+  </div>
+  <div id="page-docker" hidden>
     <h2>Docker containers</h2>
     <div class="list" id="containers"></div>
-  </section>
-  <section id="ts" hidden>
-    <div class="head"><h2>TeamSpeak</h2><a href="#teamspeak">All TeamSpeak data</a></div>
-    <p class="ts-online" id="ts-online"></p>
-    <div class="chart" id="ts-chart" hidden></div>
-    <div class="list" id="ts-users"></div>
-    <h2>Last visits</h2>
-    <div class="list" id="ts-recent"></div>
-  </section>
   </div>
   <div id="page-teamspeak" hidden>
     <section id="tsx-server-box">
@@ -259,9 +259,7 @@ web_index_html() {
   var grid = document.getElementById('services');
   var note = document.getElementById('note');
   var host = document.getElementById('host');
-  var docker = document.getElementById('docker');
   var rows = document.getElementById('containers');
-  var ts = document.getElementById('ts');
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -323,7 +321,7 @@ web_index_html() {
 
   function renderContainers(data) {
     var list = Array.isArray(data.containers) ? data.containers : [];
-    docker.hidden = !list.length;
+    showTabLink('docker', list.length > 0);
     rows.textContent = '';
     list.forEach(function (c) {
       var st = containerState(c);
@@ -340,6 +338,18 @@ web_index_html() {
       row.appendChild(image);
       row.appendChild(el('div', 'state', st.text));
       rows.appendChild(row);
+    });
+  }
+
+  // The rpi-setup tasks that ran on this Pi, from tasks.json.
+  function renderTasks(data) {
+    var list = Array.isArray(data.tasks) ? data.tasks : [];
+    document.getElementById('tasks-box').hidden = !list.length;
+    fill('tasks', list, function (box, t) {
+      var row = el('div', 'row cols2');
+      row.appendChild(el('div', 'name', t.name));
+      row.appendChild(el('div', 'image', t.description));
+      box.appendChild(row);
     });
   }
 
@@ -495,7 +505,6 @@ web_index_html() {
     charts.push(chart);
     return chart;
   }
-  var chartOverview = makeChart(document.getElementById('ts-chart'));
   var chartTab = makeChart(document.getElementById('tsx-chart'));
   window.addEventListener('resize', function () { charts.forEach(function (c) { c.draw(); }); });
 
@@ -597,23 +606,13 @@ web_index_html() {
       info: clock(v.start, true) + ' – ' + clock(v.end, false), right: duration(secs) });
   }
 
-  // The TeamSpeak section of the overview and the TeamSpeak tab, from
-  // teamspeak.json.
+  // The TeamSpeak tab, from teamspeak.json.
   function renderTeamspeak(data) {
     var online = Array.isArray(data.online) ? data.online : [];
     var users = Array.isArray(data.users) ? data.users : [];
     var recent = Array.isArray(data.recent) ? data.recent : [];
-    ts.hidden = false;
-    tabs.hidden = false;
-    chartOverview.render(data.concurrent);
+    showTabLink('teamspeak', true);
     chartTab.render(data.concurrent);
-    document.getElementById('ts-online').textContent = online.length
-      ? 'Online now: ' + online.map(function (c) { return c.nick + ' (' + since(c.since) + ')'; }).join(', ')
-      : 'Nobody is online right now.';
-    fill('ts-users', users, weekRow).hidden = !users.length;
-    var listRecent = fill('ts-recent', recent.slice(0, 15), visitRow);
-    listRecent.hidden = listRecent.previousElementSibling.hidden = !recent.length;
-
     renderServer(data.server || {});
     var clients = Array.isArray(data.clients) && data.clients.length ? data.clients
       : online.map(function (c) { return { nick: c.nick, since: c.since }; });
@@ -658,18 +657,27 @@ web_index_html() {
     });
     document.getElementById('tsx-conn-box').hidden = !conns.length;
     fill('tsx-recent', recent, visitRow, 'No visits yet.');
-    showTab();
   }
 
-  // The tabs: the overview, and the TeamSpeak tab (#teamspeak) once there
-  // is TeamSpeak data.
+  // The tabs: the overview, the Docker tab (#docker) while there are
+  // containers and the TeamSpeak tab (#teamspeak) while there is TeamSpeak
+  // data. The tab bar shows once there is more than the overview.
   var tabs = document.getElementById('tabs');
+  var tabNames = ['overview', 'docker', 'teamspeak'];
+  function showTabLink(name, on) {
+    var a = document.getElementById('tab-' + name);
+    if (a.hidden === !on) return;
+    a.hidden = !on;
+    tabs.hidden = !tabNames.some(function (n) { return n !== 'overview' && !document.getElementById('tab-' + n).hidden; });
+    showTab();
+  }
   function showTab() {
-    var tsTab = location.hash === '#teamspeak' && !tabs.hidden;
-    document.getElementById('page-overview').hidden = tsTab;
-    document.getElementById('page-teamspeak').hidden = !tsTab;
-    document.getElementById('tab-overview').className = tsTab ? '' : 'on';
-    document.getElementById('tab-teamspeak').className = tsTab ? 'on' : '';
+    var want = location.hash.slice(1), cur = 'overview';
+    if (want !== 'overview' && tabNames.indexOf(want) > 0 && !document.getElementById('tab-' + want).hidden) cur = want;
+    tabNames.forEach(function (n) {
+      document.getElementById('page-' + n).hidden = n !== cur;
+      document.getElementById('tab-' + n).className = n === cur ? 'on' : '';
+    });
     charts.forEach(function (c) { c.draw(); });
   }
   window.addEventListener('hashchange', function () { showTab(); window.scrollTo(0, 0); });
@@ -685,10 +693,12 @@ web_index_html() {
     get('services.json', render, function () {
       note.textContent = 'The list of web pages is not ready yet; it is retried every 30 seconds.';
     });
-    get('containers.json', renderContainers, function () { docker.hidden = true; });
-    get('teamspeak.json', renderTeamspeak, function () { ts.hidden = true; tabs.hidden = true; showTab(); });
+    get('tasks.json', renderTasks, function () { document.getElementById('tasks-box').hidden = true; });
+    get('containers.json', renderContainers, function () { showTabLink('docker', false); });
+    get('teamspeak.json', renderTeamspeak, function () { showTabLink('teamspeak', false); });
   }
 
+  showTab();
   load();
   setInterval(load, 30000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
@@ -756,9 +766,12 @@ web_links_script() {
   printf '# the start page. Re-run "sudo bash setup.sh web" instead of editing this file.\n'
   printf 'set -euo pipefail\n'
   printf 'WL_OUT=%q\n' "$1"
+  printf 'WL_DONE=%q\n' "${RPI_SETUP_DONE_FILE:-/var/lib/rpi-setup/tasks.done}"
+  printf 'WL_TASKS=%q\n' "$(printf '%s\n' "${TASKS[@]}")"
   declare -f have container_dir task_in_container pihole_ftl pihole_web_ports write_if_changed \
     web_links_run_json web_links_run_known web_links_run_ports web_links_run_ip web_links_run_http \
-    web_links_run_entry web_links_run_list web_links_run_containers web_links_run_teamspeak web_links_run
+    web_links_run_entry web_links_run_list web_links_run_containers web_links_run_tasks web_links_run_teamspeak \
+    web_links_run
   printf 'web_links_run\n'
 }
 
@@ -925,6 +938,24 @@ web_links_run_containers() {
   printf '\n]}\n'
 }
 
+# Print tasks.json: the rpi-setup tasks that finished on this Pi (setup.sh
+# records them in $WL_DONE), by name, with their description from WL_TASKS
+# ("name|description" lines). The web task is always listed: it wrote the page.
+web_links_run_tasks() {
+  local sep="" name line desc
+  printf '{"tasks":[\n'
+  while IFS= read -r name; do
+    [[ "$name" =~ ^[a-z0-9_-]+$ ]] || continue
+    desc=""
+    while IFS= read -r line; do
+      [[ "${line%%|*}" != "$name" ]] || desc="${line#*|}"
+    done <<<"$WL_TASKS"
+    printf '%s{"name":%s,"description":%s}' "$sep" "$(web_links_run_json "$name")" "$(web_links_run_json "$desc")"
+    sep=$',\n'
+  done < <({ cat "$WL_DONE" 2>/dev/null || true; echo web; } | sort -u)
+  printf '\n]}\n'
+}
+
 # Copy the TeamSpeak usage summary (teamspeak task, TEAMSPEAK_USAGE) to
 # teamspeak.json next to $WL_OUT while its logger keeps it fresh (it rewrites
 # it every minute), else remove it so the page hides the section.
@@ -938,11 +969,12 @@ web_links_run_teamspeak() {
   fi
 }
 
-# Write the lists to $WL_OUT, and containers.json and teamspeak.json next to
-# it; each file only changes when its list does.
+# Write the lists to $WL_OUT, and containers.json, tasks.json and
+# teamspeak.json next to it; each file only changes when its list does.
 web_links_run() {
   web_links_run_list | write_if_changed "$WL_OUT" 0644 || true
   web_links_run_containers | write_if_changed "${WL_OUT%/*}/containers.json" 0644 || true
+  web_links_run_tasks | write_if_changed "${WL_OUT%/*}/tasks.json" 0644 || true
   web_links_run_teamspeak
 }
 
