@@ -29,7 +29,7 @@ Every setting is optional; an empty value means the default.
 | `BASE_AUTO_UPDATES` | `yes` | Install security updates every day (unattended-upgrades, Debian security archive only). |
 | `BASE_AUTO_REBOOT` | `no` | Reboot on its own at 03:30 when an automatic update needs it. |
 | `BASE_SSH_PASSWORD_AUTH` | `yes` | `no` allows SSH key login only. The task refuses unless your user already has an SSH key set up (`~/.ssh/authorized_keys`, or the key from the flash scripts), so you cannot lock yourself out. |
-| `BASE_JOURNAL_MAX_SIZE` | `100M` | Disk space the system journal may use (`50M`, `1G`, ...); `no` keeps the journald default. |
+| `BASE_JOURNAL_MAX_SIZE` | `100M` | Disk space the system journal may use (`50M`, `1G`, ...); `no` keeps the journald default. The `log2ram` task sets its own, smaller limit. |
 | `BASE_PCIE_GEN3` | `no` | Pi 5 only: run the PCIe slot at Gen 3 for an NVMe HAT (about twice the speed, not officially certified). |
 | `BASE_PI5_4K_KERNEL` | `no` | Pi 5 only: boot the 4K-page kernel instead of the default 16K-page one. Only needed when a program or container crashes with page-size or jemalloc errors. |
 
