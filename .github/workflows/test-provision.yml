@@ -24,8 +24,15 @@ jobs:
   syntax:
     name: Syntax check, lint, and task registry
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks lists the commits of a pull request.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # gitleaks reads the commits of the push or pull request.
+          fetch-depth: 0
 
       - name: Validate bash syntax
         run: |
@@ -47,8 +54,16 @@ jobs:
       - name: Verify task registry loads
         run: bash setup.sh --list
 
+      # Scans the commits of the push or pull request with .gitleaks.toml.
       - name: No settings, keys or passwords committed
-        run: bash ci/check-no-secrets.sh
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: latest
+          GITLEAKS_ENABLE_COMMENTS: false
+
+      - name: Test the gitleaks rules
+        run: bash ci/test-no-secrets.sh
 
   unit:
     name: Unit tests (lib, setup.sh, flash.sh)
@@ -61,9 +76,6 @@ jobs:
 
       - name: Test setup.sh CLI and menu
         run: sudo bash ci/test-setup.sh
-
-      - name: Test the secrets check
-        run: bash ci/test-no-secrets.sh
 
       - name: Test task helpers (ci/test-task-*.sh)
         run: for t in ci/test-task-*.sh; do echo "== $t"; sudo bash "$t"; done
