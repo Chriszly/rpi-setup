@@ -200,7 +200,8 @@ the current version, runs `pihole -up` if Pi-hole is installed and
 `rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
 skipped, a failed step does not stop the others, and it tells you when a reboot
 is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,
-`--no-containers`, `--containers-only`.
+`--no-containers`, `--containers-only`, `--skip "a b"` (leave these tasks'
+containers, and for `web` the start page, alone).
 
 ## Documentation
 

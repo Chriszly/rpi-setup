@@ -111,6 +111,18 @@ assert_lacks "--containers-only skips Pi-hole" "[dry-run] pihole -up" "$OUT"
 assert_lacks "--containers-only skips the EEPROM" "[dry-run] rpi-eeprom-update" "$OUT"
 assert_contains "--containers-only is reported" "skipped (--containers-only)" "$OUT"
 
+upd all pi --dry-run --containers-only --skip netalertx,web
+assert_eq "--skip exits 0" 0 "$RC"
+assert_lacks "--skip leaves the task's containers alone" "$OPT/netalertx" "$OUT"
+assert_contains "and updates the others" "[dry-run] docker compose -f $OPT/teamspeak/docker-compose.yml pull" "$OUT"
+touch "$TMP/web-links"
+WEB_LINKS="$TMP/web-links" upd all pi --dry-run --containers-only --skip web
+assert_lacks "--skip web leaves the start page alone" "setup.sh web" "$OUT"
+assert_contains "and says so" "skipped (--skip)" "$OUT"
+rm -f "$TMP/web-links"
+upd all pi --dry-run --skip
+assert_eq "--skip without names exits non-zero" 1 "$RC"
+
 upd nodocker pc --dry-run
 assert_eq "dry-run without docker exits 0" 0 "$RC"
 assert_contains "no docker: containers skipped" "skipped (Docker not installed)" "$OUT"
