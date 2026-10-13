@@ -66,8 +66,9 @@ of one run: a deploy with no tasks reruns every recorded task but these, and
 an update neither sets them up nor touches their containers (`update.sh
 --skip`; for `web`, its start page). A name that is not a task in the
 checkout stops the run, so a typo never skips nothing silently. A deploy
-command written before `--skip` existed refuses it once: run the workflow
-one time without *skip* first, and it writes itself again with `--skip`.
+command written before `--skip` existed refuses it (`unknown argument
+'--skip'`): run Deploy to Pi once with the task `runner`, which touches no
+containers, and the command writes itself again with `--skip`.
 
 ## Update instead of deploy
 
