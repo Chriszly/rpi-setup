@@ -1,0 +1,3 @@
+# Findings gitleaks may skip: the fake private key an old ci/test-no-secrets.sh
+# committed as a test case.
+588d0edd3dce15686f9d65bd72edf34fd09f45a2:ci/test-no-secrets.sh:private-key:33
