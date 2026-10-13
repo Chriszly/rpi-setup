@@ -63,6 +63,7 @@ how to reach it and what to watch out for.
 | [`network`](docs/tasks/network.md) | Fixed LAN address for the Pi (static IPv4 via NetworkManager), or tips to reserve it | `NETWORK_STATIC_IP` (e.g. `192.168.1.10/24`) |
 | [`pihole`](docs/tasks/pihole.md) | Pi-hole ad blocker, admin UI at `http://<pi>/admin`, unattended | `PIHOLE_PASSWORD`, `PIHOLE_DNS` |
 | [`samba`](docs/tasks/samba.md) | Read-write NAS share `\\<pi>\nas-share` for your user | `SAMBA_PASSWORD` |
+| [`log2ram`](docs/tasks/log2ram.md) | log2ram: `/var/log` and the journal in RAM, copied to the SD card daily, fewer SD card writes (applies after a reboot) | `LOG2RAM_SIZE` |
 | [`backup`](docs/tasks/backup.md) | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
 | [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) that links the Pi's web pages and lists the tasks set up on it, with tabs for Docker containers and TeamSpeak, in light or dark | `WEB_PORT`, `WEB_TITLE` |
 | [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |

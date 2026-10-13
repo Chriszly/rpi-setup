@@ -310,6 +310,15 @@ check_tasks() {
     fi
   fi
 
+  if apt_installed log2ram; then
+    found=1
+    if findmnt -n -o SOURCE /var/log 2>/dev/null | grep -qx log2ram; then
+      report OK "log2ram" "/var/log in RAM, $(df -h --output=used,size /var/log 2>/dev/null | awk 'NR == 2 { print $1 " of " $2 }') used"
+    else
+      report WARN "log2ram" "installed but /var/log is not in RAM (reboot; else see: journalctl -u log2ram -b)"
+    fi
+  fi
+
   if [[ -f /opt/netalertx/docker-compose.yml ]]; then
     found=1; check_config netalertx
     if have docker; then check_container netalertx; fi

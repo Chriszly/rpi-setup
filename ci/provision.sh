@@ -24,9 +24,9 @@ case "$PROFILE" in
     # The nspawn gate (no Docker) in two halves that run as parallel jobs:
     # package installs under arm64 emulation dominate it.
     container-system)
-        TASKS=(base samba)
+        TASKS=(base samba log2ram)
         SERVICES=(smbd fail2ban)
-        ENABLED=(ssh)
+        ENABLED=(ssh log2ram)
         CONTAINERS=()
         ENDPOINTS=()
         ;;
@@ -39,9 +39,9 @@ case "$PROFILE" in
         ;;
     # The service tasks (QEMU VM).
     full)
-        TASKS=(base docker samba web pihole netalertx teamspeak)
+        TASKS=(base docker samba log2ram web pihole netalertx teamspeak)
         SERVICES=(docker smbd nginx fail2ban)
-        ENABLED=(ssh rpi-setup-web-links.timer)
+        ENABLED=(ssh log2ram rpi-setup-web-links.timer)
         CONTAINERS=(netalertx teamspeak)
         ENDPOINTS=("http://LANIP:80:12" "http://LANIP:20211:120")
         ;;
