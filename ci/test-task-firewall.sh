@@ -126,6 +126,11 @@ else
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   assert_contains "containers: Den-Watcher port from its settings" "8095/tcp web denwatcher" \
     "$(DENWATCHER_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
+  install -d "$ctr/apps"
+  printf '    ports:\n      - "0.0.0.0:8096:8080"\n    ports:\n      - "0.0.0.0:8097:80"\n' >"$ctr/apps/docker-compose.yml"
+  out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
+  assert_contains "containers: each app's port" "8096/tcp web apps" "$out"
+  assert_contains "containers: each app's port, not the one inside" "8097/tcp web apps" "$out"
   unset -f docker
 fi
 
