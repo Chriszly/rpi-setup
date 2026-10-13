@@ -1,0 +1,27 @@
+# Gitleaks settings for this public repository: gitleaks' own rules (private
+# keys, cloud and API tokens and so on) plus the device settings that must
+# never be committed. The Virtual Testing Environment workflow runs it on
+# every commit; ci/test-no-secrets.sh tests the rules below.
+# Run locally: gitleaks git
+[extend]
+useDefault = true
+
+[[rules]]
+id = "rpi-setup-settings-file"
+description = "A settings file; keep filled settings in a private folder outside this public repository"
+path = '''(^|/)config/local/|\.env(\.[^/]*)?$'''
+[[rules.allowlists]]
+paths = ['''^config/rpi-setup\.env\.example$''', '''^config/tasks/[^/]+\.env$''']
+
+[[rules]]
+id = "rpi-setup-filled-password"
+description = "A password, token or key has a value in a committed settings file; leave it empty"
+regex = '''(?m)^[ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:PASSWORD|AUTHKEY|TOKEN|SECRET)=[ \t]*([^\s#][^\r\n]*)'''
+path = '''\.env(\.[^/]*)?$'''
+keywords = ["password", "authkey", "token", "secret"]
+
+[[rules]]
+id = "tailscale-auth-key"
+description = "A Tailscale auth key"
+regex = '''tskey-[a-z]+-[A-Za-z0-9]{6,}-[A-Za-z0-9]{10,}'''
+keywords = ["tskey-"]

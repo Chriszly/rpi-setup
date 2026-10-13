@@ -26,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # gitleaks reads the commits of the pull request or push.
+          fetch-depth: 0
 
       - name: Validate bash syntax
         run: |
@@ -47,8 +50,38 @@ jobs:
       - name: Verify task registry loads
         run: bash setup.sh --list
 
+      # The newest gitleaks release, checked against its published checksums.
+      - name: Install gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo gitleaks/gitleaks --json tagName --jq .tagName)"
+          file="gitleaks_${tag#v}_linux_x64.tar.gz"
+          cd "$RUNNER_TEMP"
+          gh release download "$tag" --repo gitleaks/gitleaks --pattern "$file" --pattern "gitleaks_${tag#v}_checksums.txt"
+          grep " $file\$" "gitleaks_${tag#v}_checksums.txt" | sha256sum -c -
+          tar -xzf "$file" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # Scans the commits of the pull request or push (all of them on a manual
+      # run) with .gitleaks.toml and .gitleaksignore.
       - name: No settings, keys or passwords committed
-        run: bash ci/check-no-secrets.sh
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) range="$BASE..$HEAD" ;;
+            push) [[ "$BEFORE" =~ ^0+$ ]] && range="$GITHUB_SHA" || range="$BEFORE..$GITHUB_SHA" ;;
+            *) range='' ;;
+          esac
+          gitleaks git --no-banner --redact -v ${range:+--log-opts="$range"}
+
+      - name: Test the gitleaks rules
+        run: bash ci/test-no-secrets.sh
 
   unit:
     name: Unit tests (lib, setup.sh, flash.sh)
@@ -61,9 +94,6 @@ jobs:
 
       - name: Test setup.sh CLI and menu
         run: sudo bash ci/test-setup.sh
-
-      - name: Test the secrets check
-        run: bash ci/test-no-secrets.sh
 
       - name: Test task helpers (ci/test-task-*.sh)
         run: for t in ci/test-task-*.sh; do echo "== $t"; sudo bash "$t"; done
