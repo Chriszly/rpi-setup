@@ -37,8 +37,16 @@ this task through the [runner](runner.md)'s Deploy workflow with
 
 ## Images
 
-- The Pi pulls without a login, so each image must be public (on ghcr.io:
-  package settings > Change visibility).
+- A public image needs no login. For a private one, log in to its registry
+  once on the Pi as root, which the task pulls as; Docker keeps the login in
+  `/root/.docker/config.json`. On ghcr.io, with a personal access token
+  (classic) that has only `read:packages`:
+
+  ```bash
+  sudo docker login ghcr.io -u <your GitHub login>
+  ```
+
+  The token never goes in the settings file.
 - The image must run as any user: it gets the task's user, not its own, and
   can write only to `/tmp`. For a static site,
   `nginxinc/nginx-unprivileged` serves the files on 8080 and writes only
