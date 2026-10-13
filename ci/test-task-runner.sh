@@ -61,6 +61,9 @@ assert_fails "a task word starting with '-' is refused" args --tasks '--move-con
 assert_fails "an option hidden after a task is refused" args --tasks 'base --init-config'
 assert_fails "an option hidden after a comma is refused" args --tasks 'base,-x'
 assert_eq "a '-' inside a task name is fine" "main||my-task" "$(args --tasks my-task)"
+assert_eq "--skip may be comma separated" "pihole web" "$( (DP_BRANCHES=main; deploy_run_args --skip pihole,web && echo "$DP_SKIP") 2>/dev/null)"
+assert_fails "a skipped task with odd characters is refused" args --skip 'web;reboot'
+assert_fails "an option hidden in --skip is refused" args --skip 'web --init-config'
 assert_fails "a missing settings file is refused" args --config "$tmp/nope.env"
 if [[ $EUID -eq 0 ]] && id nobody >/dev/null 2>&1; then
     printf 'X=1\n' >"$tmp/root-only.env"; chmod 600 "$tmp/root-only.env"
@@ -188,6 +191,15 @@ out="$(deploy)"
 assert_eq "a recorded task removed from the checkout is skipped" "base web cfg=$tmp/etc" "$(cat "$tmp/ran")"
 assert_contains "and the workflow log says so" "skipping 'gone'" "$out"
 assert_fails "a given task missing from the checkout is still refused" eval 'deploy --tasks gone >/dev/null'
+out="$(deploy --skip web)"
+assert_eq "--skip leaves a recorded task out" "base cfg=$tmp/etc" "$(cat "$tmp/ran")"
+assert_contains "and the workflow log says so" "skipping 'web' (--skip)" "$out"
+deploy --tasks "base pihole web" --skip "pihole,web" >/dev/null
+assert_eq "--skip leaves a given task out" "base cfg=$tmp/etc" "$(cat "$tmp/ran")"
+out="$(deploy --tasks web --skip web)"
+assert_contains "skipping every task runs nothing" "none recorded" "$out"
+assert_ok "and runs no setup" test ! -e "$tmp/ran"
+assert_fails "an unknown task to skip is refused (a typo)" eval 'deploy --skip wbe >/dev/null'
 rm -rf "${tmp:?}/etc"
 mkdir -p "$tmp/pi/config"; printf 'X=1\n' >"$tmp/pi/config/rpi-setup.env"
 rm -f "$tmp/ran"
@@ -223,6 +235,10 @@ assert_contains "--update without tasks reports none new" "no new tasks" "$out"
 assert_ok "and reruns no recorded task" test ! -e "$tmp/ran"
 deploy --update --tasks "base pihole web" >/dev/null
 assert_eq "--update runs only the tasks not yet set up" "pihole cfg=$tmp/etc" "$(cat "$tmp/ran")"
+rm -f "$tmp/ran"
+deploy --update --tasks "base pihole web" --skip pihole >/dev/null
+assert_ok "--update with --skip leaves a new task out" test ! -e "$tmp/ran"
+assert_eq "and the containers of the skipped tasks alone" "--containers-only --skip pihole" "$(cat "$tmp/updated")"
 rm -f "$tmp/updated"
 assert_fails "--update refuses an unknown task" eval 'deploy --update --tasks nope >/dev/null'
 assert_ok "before updating anything" test ! -e "$tmp/updated"

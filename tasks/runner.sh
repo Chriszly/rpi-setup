@@ -136,7 +136,7 @@ runner_deploy_script() {
   printf '#!/usr/bin/env bash\n'
   printf '# Written by rpi-setup (tasks/runner.sh). Change the RUNNER_* settings and\n'
   printf '# re-run "sudo bash setup.sh runner" instead of editing this file.\n'
-  printf '# Usage: sudo %s [--branch NAME] [--config FILE] [--tasks "a b"]\n' "$RPI_DEPLOY_CMD"
+  printf '# Usage: sudo %s [--branch NAME] [--config FILE] [--tasks "a b"] [--skip "c d"] [--update]\n' "$RPI_DEPLOY_CMD"
   printf 'set -euo pipefail\n'
   printf 'DP_DIR=%q\n' "$dir"
   printf 'DP_BRANCHES=%q\n' "${branches//,/ }"
@@ -172,17 +172,19 @@ deploy_run_git() {
   fi
 }
 
-# Parse and check the arguments into DP_BRANCH, DP_CONFIG, DP_TASKS and
-# DP_UPDATE (1 with --update).
+# Parse and check the arguments into DP_BRANCH, DP_CONFIG, DP_TASKS, DP_SKIP
+# and DP_UPDATE (1 with --update).
 # Everything comes from a workflow, so anything unexpected stops the deploy.
 # shellcheck disable=SC2153  # DP_BRANCHES is set at the top of the deploy command
 deploy_run_args() {
-  DP_BRANCH="${DP_BRANCHES%% *}" DP_CONFIG='' DP_TASKS='' DP_UPDATE=0
+  DP_BRANCH="${DP_BRANCHES%% *}" DP_CONFIG='' DP_TASKS='' DP_SKIP='' DP_UPDATE=0
+  local opt words
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --branch) DP_BRANCH="${2:-}"; shift 2 ;;
       --config) DP_CONFIG="${2:-}"; shift 2 ;;
       --tasks) DP_TASKS="${2:-}"; shift 2 ;;
+      --skip) DP_SKIP="${2:-}"; shift 2 ;;
       --update) DP_UPDATE=1; shift ;;
       *) echo "rpi-setup-deploy: unknown argument '$1'" >&2; return 2 ;;
     esac
@@ -191,16 +193,19 @@ deploy_run_args() {
     *" $DP_BRANCH "*) ;;
     *) echo "rpi-setup-deploy: branch '$DP_BRANCH' is not allowed (RUNNER_BRANCHES: $DP_BRANCHES)" >&2; return 2 ;;
   esac
-  DP_TASKS="${DP_TASKS//,/ }"
-  if [[ ! "$DP_TASKS" =~ ^[a-z0-9_\ -]*$ ]]; then
-    echo "rpi-setup-deploy: task names may only use a-z, 0-9, '-' and '_' (got '$DP_TASKS')" >&2
-    return 2
-  fi
-  # A word starting with '-' would reach setup.sh as an option (--move-config).
-  if [[ " $DP_TASKS" == *" -"* ]]; then
-    echo "rpi-setup-deploy: task names may not start with '-' (got '$DP_TASKS')" >&2
-    return 2
-  fi
+  DP_TASKS="${DP_TASKS//,/ }" DP_SKIP="${DP_SKIP//,/ }"
+  for opt in tasks skip; do
+    [[ $opt == tasks ]] && words="$DP_TASKS" || words="$DP_SKIP"
+    if [[ ! "$words" =~ ^[a-z0-9_\ -]*$ ]]; then
+      echo "rpi-setup-deploy: --$opt: task names may only use a-z, 0-9, '-' and '_' (got '$words')" >&2
+      return 2
+    fi
+    # A word starting with '-' would reach setup.sh as an option (--move-config).
+    if [[ " $words" == *" -"* ]]; then
+      echo "rpi-setup-deploy: --$opt: task names may not start with '-' (got '$words')" >&2
+      return 2
+    fi
+  done
   if [[ -n "$DP_CONFIG" && ! -f "$DP_CONFIG" ]]; then
     echo "rpi-setup-deploy: settings file '$DP_CONFIG' not found" >&2
     return 2
@@ -239,12 +244,20 @@ deploy_run_check_config() {
 
 # Tasks to run: DP_TASKS, else every task that finished on this Pi. With
 # --update only the DP_TASKS not yet finished on this Pi (the new ones).
-# Each given task must exist as tasks/<name>.sh in the (updated) checkout; a
-# recorded one that does not was removed from rpi-setup and is skipped.
+# Tasks in DP_SKIP are left out. Each given or skipped task must exist as
+# tasks/<name>.sh in the (updated) checkout; a recorded one that does not
+# was removed from rpi-setup and is skipped.
 deploy_run_tasks() {
-  local -a t
+  local -a t s
   local n recorded=0
   read -r -a t <<<"$DP_TASKS"
+  read -r -a s <<<"$DP_SKIP"
+  for n in "${s[@]}"; do
+    if [[ ! -f "$DP_DIR/tasks/$n.sh" ]]; then
+      echo "rpi-setup-deploy: unknown task '$n' to skip (no $DP_DIR/tasks/$n.sh)" >&2
+      return 2
+    fi
+  done
   if [[ ${#t[@]} -eq 0 && $DP_UPDATE -eq 0 && -f "$DP_DONE_FILE" ]]; then
     mapfile -t t < <(grep -E '^[a-z0-9_-]+$' "$DP_DONE_FILE" || true)
     recorded=1
@@ -257,6 +270,10 @@ deploy_run_tasks() {
     if [[ ! -f "$DP_DIR/tasks/$n.sh" ]]; then
       echo "rpi-setup-deploy: unknown task '$n' (no $DP_DIR/tasks/$n.sh)" >&2
       return 2
+    fi
+    if [[ " ${s[*]} " == *" $n "* ]]; then
+      echo "rpi-setup-deploy: skipping '$n' (--skip)" >&2
+      continue
     fi
     if [[ $DP_UPDATE -eq 1 && -f "$DP_DONE_FILE" ]] && grep -qxF "$n" "$DP_DONE_FILE"; then
       continue
@@ -297,12 +314,12 @@ deploy_run_config() {
 
 # One deploy. setup.sh's full output (it prints generated passwords) goes
 # to a root-only log on the Pi; only the summary reaches the workflow log.
-# With --update: update.sh --containers-only first, then setup.sh only for
-# the new tasks.
+# With --update: update.sh --containers-only first (leaving out the
+# containers of the DP_SKIP tasks), then setup.sh only for the new tasks.
 deploy_run() {
   deploy_run_args "$@" || return $?
   local owner old new list log stamp rc=0
-  local -a tasks=()
+  local -a tasks=() upd=(--containers-only)
   owner="$(deploy_run_owner)" || return 1
   deploy_run_check_config || return 1
   exec 9>"$DP_LOCK"
@@ -326,13 +343,14 @@ deploy_run() {
   [[ -z "$DP_CONFIG" ]] || deploy_run_config "$DP_CONFIG"
   list="$(deploy_run_tasks)" || return $?
   [[ -z "$list" ]] || mapfile -t tasks <<<"$list"
+  [[ -z "${DP_SKIP// /}" ]] || upd+=(--skip "$DP_SKIP")
   install -m 0700 -d "$DP_LOG_DIR"
   stamp="$(date +%Y%m%d-%H%M%S)"
   if [[ $DP_UPDATE -eq 1 ]]; then
     log="$DP_LOG_DIR/update-$stamp.log"
     echo "rpi-setup-deploy: updating the containers (full output on the Pi: $log)"
     ( umask 077
-      bash "$DP_DIR/update.sh" --containers-only </dev/null >"$log" 2>&1 ) || rc=$?
+      bash "$DP_DIR/update.sh" "${upd[@]}" </dev/null >"$log" 2>&1 ) || rc=$?
     sed -n '/^Summary:/,$p' "$log"
     [[ $rc -eq 0 ]] || deploy_run_errors "$log"
     [[ $rc -eq 0 ]] || echo "rpi-setup-deploy: update.sh failed (exit $rc); details on the Pi: sudo less $log" >&2

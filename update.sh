@@ -17,6 +17,7 @@ DO_CONTAINERS=1
 DO_PIHOLE=1
 DO_EEPROM=1
 SKIP_REASON=''
+SKIP_TASKS=' '
 declare -a UPDATE_RESULTS=()
 UPDATE_FAILED=0
 
@@ -35,6 +36,8 @@ Options:
   --no-containers  skip the container update
   --containers-only
                    only update the containers (no apt, Pi-hole or EEPROM)
+  --skip "a b"     leave these tasks alone: their containers, and the start
+                   page for the web task (names, space or comma separated)
   -h, --help       show this help
 EOF
 }
@@ -56,15 +59,22 @@ result() {
 }
 
 # Compose files written by rpi-setup tasks: /opt/<task>/docker-compose.yml
-# where <task> is one of tasks/*.sh (e.g. /opt/netalertx, /opt/teamspeak).
+# where <task> is one of tasks/*.sh (e.g. /opt/netalertx, /opt/teamspeak),
+# except the tasks given with --skip.
 compose_projects() {
   local f task
   for f in "$SCRIPT_DIR"/tasks/*.sh; do
     task="$(basename "$f" .sh)"
+    skipped "$task" && continue
     [[ -f "$(container_dir "$task")/docker-compose.yml" ]] &&
       printf '%s\n' "$(container_dir "$task")/docker-compose.yml"
   done
   return 0
+}
+
+# True if task $1 was given with --skip.
+skipped() {
+  [[ "$SKIP_TASKS" == *" $1 "* ]]
 }
 
 # True if the web task set up its start page here: the script behind the
@@ -124,6 +134,9 @@ main() {
       --no-apt) DO_APT=0 SKIP_REASON=--no-apt ;;
       --no-containers) DO_CONTAINERS=0 ;;
       --containers-only) DO_APT=0 DO_PIHOLE=0 DO_EEPROM=0 SKIP_REASON=--containers-only ;;
+      --skip)
+        [[ $# -ge 2 ]] || die '--skip needs task names, e.g. --skip "pihole web"'
+        SKIP_TASKS+="${2//,/ } "; shift ;;
       -h|--help) usage; return 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -155,7 +168,9 @@ main() {
   # The page and its service list script are written by the web task, so
   # re-running it brings them to this checkout's version; with unchanged
   # WEB_* settings nothing else changes.
-  if web_page_installed; then
+  if skipped web; then
+    skip_step web '--skip'
+  elif web_page_installed; then
     do_step web run bash "$SCRIPT_DIR/setup.sh" web
   else
     skip_step web 'start page not installed'

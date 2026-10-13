@@ -32,9 +32,10 @@ The private repository's layout, workflow and step-by-step setup are in
 - `/usr/local/sbin/rpi-setup-deploy`, the only command `rpi-runner` may run as
   root (`/etc/sudoers.d/rpi-setup-runner`). It accepts `--branch` (only from
   `RUNNER_BRANCHES`), `--config` (a file the caller can read), `--tasks`
-  (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`)
-  and `--update`. After updating the checkout it writes itself again from
-  the checkout's `tasks/runner.sh` when that differs, and runs the new
+  (names of `tasks/<name>.sh` in the checkout; nothing starting with `-`),
+  `--skip` (tasks to leave out of this run, same rules) and `--update`.
+  After updating the checkout it writes itself again from the checkout's
+  `tasks/runner.sh` when that differs, and runs the new
   version, so a deploy never runs older deploy code than the checkout holds.
   A command written before this existed picks it up once `runner` reruns
   (Deploy to Pi with the task `runner`).
@@ -59,6 +60,14 @@ The private repository's layout, workflow and step-by-step setup are in
 
 You can run the same deploy by hand on the Pi:
 `sudo /usr/local/sbin/rpi-setup-deploy --tasks "base pihole"`.
+
+`--skip "pihole samba"` (the workflows' *skip* input) leaves those tasks out
+of one run: a deploy with no tasks reruns every recorded task but these, and
+an update neither sets them up nor touches their containers (`update.sh
+--skip`; for `web`, its start page). A name that is not a task in the
+checkout stops the run, so a typo never skips nothing silently. A deploy
+command written before `--skip` existed refuses it once: run the workflow
+one time without *skip* first, and it writes itself again with `--skip`.
 
 ## Update instead of deploy
 

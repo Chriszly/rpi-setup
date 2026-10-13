@@ -15,6 +15,10 @@ on:
         description: 'Tasks to run, space separated. Empty: every task already set up on the Pi'
         required: false
         default: ''
+      skip:
+        description: 'Tasks to leave out of this run, space or comma separated. Empty: skip none'
+        required: false
+        default: ''
       branch:
         description: 'Branch of rpi-setup to deploy (must be listed in RUNNER_BRANCHES on the Pi)'
         required: true
@@ -43,10 +47,14 @@ jobs:
         env:
           PI: ${{ inputs.pi }}
           TASKS: ${{ inputs.tasks }}
+          SKIP: ${{ inputs.skip }}
           BRANCH: ${{ inputs.branch }}
           SETTINGS: ${{ inputs.settings }}
         run: |
           args=(--branch "$BRANCH" --tasks "$TASKS")
+          # Passed only when set, so a Pi whose deploy command predates
+          # --skip still runs every other workflow.
+          [ -z "$SKIP" ] || args+=(--skip "$SKIP")
           if [ "$SETTINGS" = true ]; then
             test -f "pis/$PI/rpi-setup.env" || { echo "pis/$PI/rpi-setup.env not found in this repository"; exit 1; }
             args+=(--config "$PWD/pis/$PI/rpi-setup.env")
