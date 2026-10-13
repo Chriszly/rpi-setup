@@ -297,6 +297,10 @@ firewall_service_ports() {
     require_port DENWATCHER_PORT
     printf '%s/tcp web denwatcher\n' "$DENWATCHER_PORT"
   fi
+  # The apps task's ports, from its compose file (one per app).
+  if [[ -f "$(container_dir apps)/docker-compose.yml" ]]; then
+    sed -n 's/^ *- "0\.0\.0\.0:\([0-9]*\):[0-9]*"$/\1\/tcp web apps/p' "$(container_dir apps)/docker-compose.yml"
+  fi
   if apt_installed samba || task_in_container samba; then
     printf '445/tcp open samba\n139/tcp open samba\n137/udp open samba-netbios\n138/udp open samba-netbios\n'
   fi

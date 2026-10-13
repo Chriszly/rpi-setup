@@ -333,6 +333,15 @@ check_tasks() {
     check_http "denwatcher: web" "http://$host:$(port_setting DENWATCHER_PORT 9393)/api/metrics"
   fi
 
+  if [[ -f "$(container_dir apps)/docker-compose.yml" ]]; then
+    found=1; check_config apps
+    local app port
+    while read -r app port; do
+      if have docker; then check_container "$app"; fi
+      check_http "apps: $app" "http://$host:$port/"
+    done < <(sed -n 's/^    container_name: \(.*\)$/\1/p; s/^ *- "0\.0\.0\.0:\([0-9]*\):[0-9]*"$/\1/p' "$(container_dir apps)/docker-compose.yml" | paste -d' ' - -)
+  fi
+
   if have docker && docker info >/dev/null 2>&1; then
     local bad
     bad="$(docker ps -a --filter status=exited --filter status=restarting --filter status=dead \
