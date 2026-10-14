@@ -43,13 +43,35 @@ assert_ok "journald: first write reports a change" log2ram_journald 64M
 assert_contains "journald: SystemMaxUse set" "SystemMaxUse=64M" "$(cat "$L2R_JOURNALD_CONF")"
 assert_fails "journald: same limit changes nothing" log2ram_journald 64M
 
+# --- log2ram_valid_sync / log2ram_timer_dropin -------------------------------
+assert_ok    "sync accepts hourly"          log2ram_valid_sync hourly
+assert_ok    "sync accepts daily"           log2ram_valid_sync daily
+assert_ok    "sync accepts every 30 min"    log2ram_valid_sync '*:0/30'
+assert_fails "sync rejects empty"           log2ram_valid_sync ''
+assert_fails "sync rejects a newline"       log2ram_valid_sync $'hourly\nExecStart=/bin/sh'
+assert_fails "sync rejects a semicolon"     log2ram_valid_sync 'hourly;reboot'
+if have systemd-analyze; then
+  assert_fails "sync rejects nonsense"      log2ram_valid_sync 'every-now-and-then'
+else
+  skip "systemd-analyze not installed: calendar syntax not checked"
+fi
+L2R_TIMER_CONF="$TMP/log2ram-daily.timer.d/10-rpi-setup.conf"
+assert_ok "timer: hourly writes the drop-in" log2ram_timer_dropin hourly
+assert_eq "timer: drop-in resets and sets OnCalendar" "$(printf 'OnCalendar=\nOnCalendar=hourly')" \
+  "$(grep '^OnCalendar' "$L2R_TIMER_CONF")"
+assert_fails "timer: same time changes nothing" log2ram_timer_dropin hourly
+assert_ok "timer: daily removes the drop-in" log2ram_timer_dropin daily
+assert_eq "timer: drop-in gone" "no" "$([[ -e "$L2R_TIMER_CONF" ]] && echo yes || echo no)"
+assert_fails "timer: daily again changes nothing" log2ram_timer_dropin daily
+
 # --- run_log2ram rejects bad settings before changing anything ---------------
 apt_installed() { echo "apt_installed called" >&2; return 1; }
-check() { (LOG2RAM_SIZE="$1" LOG2RAM_JOURNAL_MAX_SIZE="$2" run_log2ram) 2>&1 || true; }
+check() { (LOG2RAM_SIZE="$1" LOG2RAM_JOURNAL_MAX_SIZE="$2" LOG2RAM_SYNC="${3:-}" run_log2ram) 2>&1 || true; }
 assert_contains "run: bad size"             "LOG2RAM_SIZE must be a size"   "$(check 128 64M)"
 assert_contains "run: bad journal size"     "LOG2RAM_JOURNAL_MAX_SIZE must" "$(check 128M 1T)"
 assert_contains "run: size below 16M"       "at least 16M"                  "$(check 8M 4M)"
 assert_contains "run: journal too large"    "at most 3/4"                   "$(check 128M 100M)"
+assert_contains "run: bad sync time"        "LOG2RAM_SYNC must be"          "$(check 128M 64M 'hourly;x')"
 assert_lacks    "run: nothing installed on bad settings" "apt_installed called" "$(check 128M 100M)"
 
 finish_tests

@@ -3,13 +3,14 @@
 # Settings: LOG2RAM_* in config/rpi-setup.env (names in config/tasks/log2ram.env).
 set -euo pipefail
 
-TASKS+=("log2ram|log2ram: /var/log in RAM, written to the SD card once a day")
+TASKS+=("log2ram|log2ram: /var/log in RAM, written to the SD card every hour")
 
 L2R_CONF=/etc/log2ram.conf
 L2R_JOURNALD_CONF=/etc/systemd/journald.conf.d/20-log2ram.conf
+L2R_TIMER_CONF=/etc/systemd/system/log2ram-daily.timer.d/10-rpi-setup.conf
 
 run_log2ram() {
-  : "${LOG2RAM_SIZE:=128M}" "${LOG2RAM_JOURNAL_MAX_SIZE:=64M}"
+  : "${LOG2RAM_SIZE:=128M}" "${LOG2RAM_JOURNAL_MAX_SIZE:=64M}" "${LOG2RAM_SYNC:=hourly}"
   local size_k journal_k used_k changed=no
 
   # Validate every setting before changing anything.
@@ -20,6 +21,8 @@ run_log2ram() {
   (( size_k >= 16 * 1024 )) || die "LOG2RAM_SIZE must be at least 16M (got '$LOG2RAM_SIZE')"
   (( journal_k * 4 <= size_k * 3 )) ||
     die "LOG2RAM_JOURNAL_MAX_SIZE ($LOG2RAM_JOURNAL_MAX_SIZE) must be at most 3/4 of LOG2RAM_SIZE ($LOG2RAM_SIZE), or the journal fills the RAM disk"
+  log2ram_valid_sync "$LOG2RAM_SYNC" ||
+    die "LOG2RAM_SYNC must be hourly, daily or a systemd calendar time such as *:0/30 (got '$LOG2RAM_SYNC')"
 
   if ! apt_installed log2ram; then
     log2ram_add_repo
@@ -40,6 +43,8 @@ run_log2ram() {
       systemctl restart systemd-journald || warn 'Could not restart systemd-journald; the journal limit applies after a reboot.'
     fi
   fi
+
+  log2ram_sync_timer "$LOG2RAM_SYNC"
 
   # Logs already on disk must fit, or log2ram refuses to start at boot.
   if ! log2ram_active; then
@@ -115,4 +120,35 @@ log2ram_journald() {
   install -m 0755 -d "${L2R_JOURNALD_CONF%/*}"
   printf '# Managed by rpi-setup (LOG2RAM_JOURNAL_MAX_SIZE); re-run "setup.sh log2ram" to change.\n[Journal]\nSystemMaxUse=%s\n' "$1" |
     write_if_changed "$L2R_JOURNALD_CONF" 0644
+}
+
+# True if $1 is a valid LOG2RAM_SYNC: daily, or a systemd OnCalendar time
+# (hourly, *:0/30, ...). systemd-analyze checks it where it exists.
+log2ram_valid_sync() {
+  [[ "$1" =~ ^[A-Za-z0-9*:/,.~\ -]+$ ]] || return 1
+  [[ "$1" == daily ]] && return 0
+  ! have systemd-analyze || systemd-analyze calendar "$1" >/dev/null 2>&1
+}
+
+# Drop-in for log2ram-daily.timer that copies the logs to the SD card at $1
+# instead of once a day; "daily" removes it and keeps the package's time.
+# Returns 0 if it changed.
+log2ram_timer_dropin() {
+  if [[ "$1" == daily ]]; then
+    [[ -f "$L2R_TIMER_CONF" ]] || return 1
+    rm -f "$L2R_TIMER_CONF"
+    return 0
+  fi
+  install -m 0755 -d "${L2R_TIMER_CONF%/*}"
+  printf '# Managed by rpi-setup (LOG2RAM_SYNC); re-run "setup.sh log2ram" to change.\n[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$1" |
+    write_if_changed "$L2R_TIMER_CONF" 0644
+}
+
+# Apply LOG2RAM_SYNC $1 and restart the timer when it changed.
+log2ram_sync_timer() {
+  if log2ram_timer_dropin "$1"; then
+    say "log2ram copies the logs to the SD card: $1 ($L2R_TIMER_CONF)"
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart log2ram-daily.timer 2>/dev/null || true
+  fi
 }
