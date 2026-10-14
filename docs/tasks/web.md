@@ -16,6 +16,7 @@ sudo bash setup.sh web
 | `WEB_TITLE` | `Raspberry Pi` | Title of the start page. Cannot contain `<`, `>` or `&`. |
 | `WEB_DOCKER` | `no` | `yes` runs nginx in its own Docker container instead of the apt package ([below](#run-it-in-docker)). |
 | `WEB_IMAGE` | `nginx:stable-alpine` | Docker image for `WEB_DOCKER=yes`. |
+| `WEB_UPDATES` | `yes` | `yes` looks for updates every 6 hours and lists them on the start page ([below](#updates)); `no` turns the check off and removes it. |
 
 ## What it installs and changes
 
@@ -29,6 +30,11 @@ sudo bash setup.sh web
   rpi-setup tasks set up on the Pi, `tasks.json`, next to the start page
   ([below](#the-start-page)), and copies the TeamSpeak usage summary there as
   `teamspeak.json`.
+- With `WEB_UPDATES=yes`: `/usr/local/sbin/rpi-setup-updates` and the
+  `rpi-setup-updates.timer` that runs it 15 minutes after boot (or after
+  the task installed it, so it does not get in the way of other tasks' package
+  installs) and then every 6 hours, writing `updates.json` next to the start
+  page ([below](#updates)). `update.sh` also starts it when it is done.
 
 ## Reach it
 
@@ -79,6 +85,39 @@ to the rpi-setup repository on GitHub. The list comes from
 `/var/lib/rpi-setup/tasks.done`, where `setup.sh` records every task that
 finishes; a task last run with an rpi-setup version older than that record
 shows up once it runs again (`update.sh` re-runs them).
+
+### Updates
+
+With `WEB_UPDATES=yes` (the default) the overview ends with **Updates**: what
+has a newer version than the one on the Pi, with a yellow dot, next to what
+is up to date (green) and what could not be checked (grey), and when the Pi
+last looked. The Pi looks every 6 hours, not when the page opens, so opening
+the page never waits on the network. It checks:
+
+- **rpi-setup** itself: the commit of the checkout `setup.sh` runs from
+  against the newest commit of the branch it follows, from `git ls-remote`
+  as the user who owns the checkout (so nothing in the checkout changes). A
+  checkout ahead of that commit counts as up to date.
+- **Pi-hole** on the host: the installed and newest Core, Web and FTL
+  versions from `/etc/pihole/versions`, which Pi-hole's own daily update
+  check keeps. Pi-hole in its container is checked as a container.
+- **EEPROM firmware** on a Raspberry Pi: `rpi-eeprom-update` without options,
+  which only reports.
+- Every **Docker container**: is the image it runs still the one its
+  registry (Docker Hub, ghcr.io, ...) serves for that tag? One `HEAD`
+  request per image, which does not count against Docker Hub's pull limit.
+  Images built on the Pi, pinned by digest or private are left out or shown
+  as not checked. The Docker tab marks those containers with "update
+  available".
+- **OS packages**: `apt-get update`, then the packages `update.sh` would
+  upgrade, how many of them are security updates, and their names.
+
+Below the list the page says how to install them: `git pull` in the
+rpi-setup folder when rpi-setup has a new version, then
+`sudo bash update.sh`, which also starts the check again so the list
+clears. Check right away with `sudo rpi-setup-updates` (or
+`sudo systemctl start rpi-setup-updates`); its log is in
+`journalctl -u rpi-setup-updates`.
 
 ### Docker
 
@@ -140,8 +179,12 @@ Docker is installed first if it is missing.
 - With the `firewall` task, the port is open only to `FIREWALL_ALLOW_FROM`
   when that is set.
 - Turn it off with `sudo systemctl disable --now nginx` (and the list with
-  `sudo systemctl disable --now rpi-setup-web-links.timer`).
+  `sudo systemctl disable --now rpi-setup-web-links.timer`). The update
+  check goes away with `WEB_UPDATES=no`.
+- The update check reaches out to the image registries, the rpi-setup
+  repository and the apt mirrors, and refreshes the apt package lists
+  (`apt-get update`) every 6 hours. It installs nothing.
 - With your own `index.html` the lists are still written, so your page can
-  read `services.json`, `containers.json` and `tasks.json` too.
+  read `services.json`, `containers.json`, `tasks.json` and `updates.json` too.
 - Anyone who can open the page sees the container names, images and ports.
   The `firewall` task keeps the page to `FIREWALL_ALLOW_FROM`.

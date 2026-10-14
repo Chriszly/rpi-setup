@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Overridable so the unit tests can point it at a temp dir.
 UPDATE_REBOOT_FILE="${RPI_SETUP_REBOOT_FILE:-/run/reboot-required}"
 UPDATE_WEB_LINKS="${RPI_SETUP_WEB_LINKS:-/usr/local/sbin/rpi-setup-web-links}"
+UPDATE_CHECK="${RPI_SETUP_UPDATE_CHECK:-/usr/local/sbin/rpi-setup-updates}"
 
 DRY_RUN=0
 DO_APT=1
@@ -192,6 +193,12 @@ main() {
     do_step eeprom run rpi-eeprom-update -a
   else
     skip_step eeprom 'rpi-eeprom-update not found'
+  fi
+
+  # The start page's update check (web task, WEB_UPDATES) looks again in the
+  # background, so the page stops listing what was just installed.
+  if [[ -e "$UPDATE_CHECK" ]]; then
+    run systemctl start --no-block rpi-setup-updates.service || true
   fi
 
   hr

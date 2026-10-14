@@ -57,6 +57,7 @@ upd() {
     OUT="$(env -i PATH="$TMP/$shims:$TMP/base" LOG="$LOG" SHIM_FAIL="${SHIM_FAIL:-}" \
         RPI_SETUP_CONTAINER_ROOT="$OPT" RPI_SETUP_MODEL_FILE="$TMP/model-$model" \
         RPI_SETUP_REBOOT_FILE="$TMP/reboot-required" RPI_SETUP_WEB_LINKS="${WEB_LINKS:-$TMP/no-web-links}" \
+        RPI_SETUP_UPDATE_CHECK="${UPDATE_CHECK:-$TMP/no-update-check}" \
         "$BASH_BIN" "$ROOT/update.sh" "$@" 2>&1)" || RC=$?
 }
 
@@ -93,6 +94,13 @@ WEB_LINKS="$TMP/web-links" upd all pi --dry-run --containers-only
 assert_contains "start page: re-run the web task" "[dry-run] bash $ROOT/setup.sh web" "$OUT"
 assert_contains "start page: also with --containers-only (the Update Pi workflow)" "web         ok" "$OUT"
 rm -f "$TMP/web-links"
+
+assert_lacks "no update check: nothing to refresh" "rpi-setup-updates" "$OUT"
+touch "$TMP/update-check"
+UPDATE_CHECK="$TMP/update-check" upd all pi --dry-run --containers-only
+assert_contains "update check: looks again for the start page" \
+    "[dry-run] systemctl start --no-block rpi-setup-updates.service" "$OUT"
+rm -f "$TMP/update-check"
 
 # --- Step selection ----------------------------------------------------------
 upd all pi --dry-run --no-apt --no-containers

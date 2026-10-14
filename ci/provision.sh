@@ -33,7 +33,7 @@ case "$PROFILE" in
     container-web)
         TASKS=(web pihole)
         SERVICES=(nginx)
-        ENABLED=(rpi-setup-web-links.timer)
+        ENABLED=(rpi-setup-web-links.timer rpi-setup-updates.timer)
         CONTAINERS=()
         ENDPOINTS=("http://LANIP:80:12" "http://LANIP:80/services.json:12")
         ;;
@@ -41,7 +41,7 @@ case "$PROFILE" in
     full)
         TASKS=(base docker samba log2ram web pihole netalertx teamspeak)
         SERVICES=(docker smbd nginx fail2ban)
-        ENABLED=(ssh log2ram rpi-setup-web-links.timer)
+        ENABLED=(ssh log2ram rpi-setup-web-links.timer rpi-setup-updates.timer)
         CONTAINERS=(netalertx teamspeak)
         ENDPOINTS=("http://LANIP:80:12" "http://LANIP:20211:120")
         ;;

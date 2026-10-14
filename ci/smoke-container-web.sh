@@ -26,6 +26,7 @@ assert_contains "nginx listens on $PORT in the container's config" "listen $PORT
 assert_contains "the container serves the service list" '"services":[' "$(page "$PORT" services.json)"
 assert_contains "the container overview lists the web container" '"name":"web"' "$(page "$PORT" containers.json)"
 assert_ok "the service list timer is on" systemctl is-enabled --quiet rpi-setup-web-links.timer
+assert_ok "the update check timer is on" systemctl is-enabled --quiet rpi-setup-updates.timer
 
 before="$(started)"
 setup WEB_DOCKER=yes

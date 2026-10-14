@@ -7,8 +7,9 @@ set -euo pipefail
 TASKS+=("web|nginx with a start page linking the web pages on this Pi (:80 or :8080)")
 
 run_web() {
-  : "${WEB_TITLE:=Raspberry Pi}" "${WEB_DOCKER:=no}"
+  : "${WEB_TITLE:=Raspberry Pi}" "${WEB_DOCKER:=no}" "${WEB_UPDATES:=yes}"
   [[ -z "${WEB_PORT:-}" ]] || require_port WEB_PORT
+  setting_on WEB_UPDATES || :  # dies unless yes or no
   [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
   if setting_on WEB_DOCKER; then run_web_container; return; fi
   container_leave web
@@ -49,6 +50,7 @@ run_web() {
 
   web_index_page /var/www/html/index.html
   web_links_install /var/www/html
+  web_updates_install /var/www/html
 
   nginx -t -q || die "nginx configuration test failed; check $site"
   systemctl enable --now nginx
@@ -162,6 +164,8 @@ web_index_html() {
   .tile .label { color: var(--muted); font-size: .85rem; }
   .tile.wide { grid-column: span 2; }
   .tile .value { font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+  .note code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; color: var(--text); }
+  .head .note { font-size: .9rem; }
   .welcome { color: var(--muted); margin: 12px 0 0; white-space: pre-line; }
   .bar { height: 8px; border-radius: 4px; background: var(--chart); min-width: 2px; }
   .heat {
@@ -212,6 +216,11 @@ web_index_html() {
       <div class="head"><h2>Set up on this Pi</h2>
         <a href="https://github.com/Chriszly/rpi-setup">rpi-setup on GitHub</a></div>
       <div class="list" id="tasks"></div>
+    </section>
+    <section id="updates-box" hidden>
+      <div class="head"><h2>Updates</h2><span class="note" id="updates-checked"></span></div>
+      <div class="list" id="updates"></div>
+      <p class="note" id="updates-how" hidden></p>
     </section>
   </div>
   <div id="page-docker" hidden>
@@ -319,7 +328,9 @@ web_index_html() {
     return { dot: c.state === 'created' ? '' : 'down', text: c.state + (ago ? ' ' + ago + ' ago' : '') };
   }
 
+  var lastContainers = null, newImage = {};
   function renderContainers(data) {
+    lastContainers = data;
     var list = Array.isArray(data.containers) ? data.containers : [];
     showTabLink('docker', list.length > 0);
     rows.textContent = '';
@@ -336,7 +347,7 @@ web_index_html() {
       var ports = (c.ports || []).join(' ') || (c.network === 'host' ? 'host network' : '');
       if (ports) image.appendChild(el('div', 'ports', ports));
       row.appendChild(image);
-      row.appendChild(el('div', 'state', st.text));
+      row.appendChild(el('div', 'state', st.text + (newImage[c.name] ? ' \u00b7 update available' : '')));
       rows.appendChild(row);
     });
   }
@@ -351,6 +362,58 @@ web_index_html() {
       row.appendChild(el('div', 'image', t.description));
       box.appendChild(row);
     });
+  }
+
+  // What is installed and what is newest for one entry of updates.json.
+  function updateInfo(u) {
+    var newer = u.update === true && u.latest;
+    if (u.kind === 'container') return u.image || '';
+    if (u.kind === 'git') {
+      return (u.branch ? 'branch ' + u.branch + ' at ' : 'at ') + u.current + (newer ? ', newest ' + u.latest : '');
+    }
+    if (u.kind === 'apt') {
+      var names = Array.isArray(u.packages) ? u.packages : [];
+      if (!u.count) return 'All packages are current';
+      return plural(u.count, 'package', 'packages') + (u.security ? ', ' + u.security + ' from security updates' : '') +
+        (names.length ? ': ' + names.slice(0, 12).join(', ') + (u.count > 12 ? ', ...' : '') : '');
+    }
+    return (u.current || '') + (newer ? '; newest: ' + u.latest : '');
+  }
+
+  // The Updates section, from updates.json, which the Pi rewrites every
+  // 6 hours. Containers with a newer image are marked on the Docker tab too.
+  function renderUpdates(data) {
+    var items = Array.isArray(data.items) ? data.items : [];
+    var due = items.filter(function (u) { return u.update === true; });
+    document.getElementById('updates-box').hidden = !items.length;
+    var ago = since(data.checked);
+    document.getElementById('updates-checked').textContent =
+      (due.length ? plural(due.length, 'update', 'updates') + ' available' : 'Everything is up to date') +
+      (ago ? ', checked ' + ago + ' ago' : '');
+    fill('updates', items, function (list, u) {
+      var row = el('div', 'row');
+      var name = el('div', 'name');
+      var dot = el('span', 'dot' + (u.update === true ? ' wait' : u.update === false ? ' up' : ''));
+      dot.title = u.update === true ? 'update available' : u.update === false ? 'up to date' : 'could not check';
+      name.appendChild(dot);
+      name.appendChild(document.createTextNode(u.name));
+      row.appendChild(name);
+      row.appendChild(el('div', 'image', updateInfo(u)));
+      row.appendChild(el('div', 'state', dot.title));
+      list.appendChild(row);
+    });
+    // rpi-setup itself first (git pull), then everything else (update.sh).
+    var how = document.getElementById('updates-how');
+    how.hidden = !due.length;
+    how.textContent = 'Install them on the Pi, in the rpi-setup folder: ';
+    if (due.some(function (u) { return u.kind === 'git'; })) {
+      how.appendChild(el('code', '', 'git pull'));
+      how.appendChild(document.createTextNode(', then '));
+    }
+    how.appendChild(el('code', '', 'sudo bash update.sh'));
+    newImage = {};
+    items.forEach(function (u) { if (u.kind === 'container' && u.update === true) newImage[u.name] = true; });
+    if (lastContainers) renderContainers(lastContainers);
   }
 
   // "<1 min", "12 min", "3 h 5 min", "2 d 4 h" for s seconds.
@@ -696,6 +759,7 @@ web_index_html() {
     get('tasks.json', renderTasks, function () { document.getElementById('tasks-box').hidden = true; });
     get('containers.json', renderContainers, function () { showTabLink('docker', false); });
     get('teamspeak.json', renderTeamspeak, function () { showTabLink('teamspeak', false); });
+    get('updates.json', renderUpdates, function () { renderUpdates({}); });
   }
 
   showTab();
@@ -978,6 +1042,277 @@ web_links_run() {
   web_links_run_teamspeak
 }
 
+# --- Update check (updates.json for the start page) ------------------------
+
+RPI_WEB_UPDATES_SCRIPT=/usr/local/sbin/rpi-setup-updates
+RPI_WEB_UPDATES_UNIT=rpi-setup-updates
+
+# WEB_UPDATES=yes: install the script that writes $1/updates.json and a timer
+# that runs it 15 minutes after boot (or after this install, so its
+# "apt-get update" does not get in the way of the tasks still running) and
+# then every 6 hours. WEB_UPDATES=no: remove them and the file.
+web_updates_install() {
+  local out="$1/updates.json" units=0
+  if ! setting_on WEB_UPDATES; then
+    if [[ -e "/etc/systemd/system/$RPI_WEB_UPDATES_UNIT.timer" ]]; then
+      systemctl disable --now "$RPI_WEB_UPDATES_UNIT.timer" >/dev/null 2>&1 || true
+      rm -f "/etc/systemd/system/$RPI_WEB_UPDATES_UNIT.timer" "/etc/systemd/system/$RPI_WEB_UPDATES_UNIT.service"
+      systemctl daemon-reload
+      info 'Update check turned off (WEB_UPDATES=no)'
+    fi
+    rm -f "$RPI_WEB_UPDATES_SCRIPT" "$out"
+    return 0
+  fi
+  install -m 0755 -d "$(dirname "$RPI_WEB_UPDATES_SCRIPT")"
+  web_updates_script "$out" | write_if_changed "$RPI_WEB_UPDATES_SCRIPT" 0755 || true
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Look for updates of what rpi-setup installed, for the start page (tasks/web.sh)' \
+    'After=network-online.target docker.service' \
+    'Wants=network-online.target' \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStart=$RPI_WEB_UPDATES_SCRIPT" \
+    'Nice=10' \
+    'IOSchedulingClass=idle' \
+    'TimeoutStartSec=30min' \
+    'PrivateTmp=yes' \
+    'ProtectHome=read-only' \
+    'NoNewPrivileges=yes' |
+    write_if_changed "/etc/systemd/system/$RPI_WEB_UPDATES_UNIT.service" && units=1
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Look for updates for the start page every 6 hours' \
+    '' \
+    '[Timer]' \
+    'OnActiveSec=15min' \
+    'OnUnitActiveSec=6h' \
+    'RandomizedDelaySec=5min' \
+    '' \
+    '[Install]' \
+    'WantedBy=timers.target' |
+    write_if_changed "/etc/systemd/system/$RPI_WEB_UPDATES_UNIT.timer" && units=1
+  if [[ $units -eq 1 ]]; then
+    systemctl daemon-reload
+    systemctl restart "$RPI_WEB_UPDATES_UNIT.timer" 2>/dev/null || true
+  fi
+  systemctl enable --now "$RPI_WEB_UPDATES_UNIT.timer"
+}
+
+# Print the standalone update check script writing to $1, built like
+# web_links_script so the unit tests run the very code the timer runs.
+web_updates_script() {
+  printf '#!/usr/bin/env bash\n'
+  printf '# Written by rpi-setup (tasks/web.sh): looks for updates of what rpi-setup\n'
+  printf '# installed, for the start page. Re-run "sudo bash setup.sh web" instead of\n'
+  printf '# editing this file.\n'
+  printf 'set -euo pipefail\n'
+  printf 'WU_OUT=%q\n' "$1"
+  printf 'WU_ROOT=%q\n' "$RPI_SETUP_ROOT"
+  # shellcheck disable=SC2016 # expanded by the written script
+  printf ': "${WU_PIHOLE_VERSIONS:=/etc/pihole/versions}"\n'
+  declare -f have write_if_changed web_links_run_json web_updates_run_item web_updates_run_digest \
+    web_updates_run_containers web_updates_run_git_as web_updates_run_git web_updates_run_apt \
+    web_updates_run_pihole web_updates_run_eeprom web_updates_run_list web_updates_run
+  printf 'web_updates_run\n'
+}
+
+# --- Code of the update check script (uses only WU_* variables, plain tools
+# and the helpers named in web_updates_script) -----------------------------
+
+# Print one entry of updates.json: name $1, kind $2, current version $3,
+# newest version $4, update $5 (true, false or null when it could not be
+# checked), then $6, more JSON fields starting with a comma. Uses the
+# caller's "sep".
+web_updates_run_item() {
+  printf '%s{"name":%s,"kind":%s,"current":%s,"latest":%s,"update":%s%s}' "$sep" \
+    "$(web_links_run_json "$1")" "$(web_links_run_json "$2")" "$(web_links_run_json "$3")" \
+    "$(web_links_run_json "$4")" "$5" "${6:-}"
+  sep=$',\n'
+}
+
+# The digest a registry serves for image $1 (e.g. nginx:stable-alpine or
+# ghcr.io/owner/app:main) right now, without pulling it: a HEAD request for
+# the manifest, with an anonymous token where the registry asks for one.
+# Docker Hub does not count HEAD requests against its pull limit. Fails for
+# an image pinned by digest, a private image or no answer.
+web_updates_run_digest() {
+  local ref="$1" reg repo tag last first url hdr realm service scope token digest
+  local -a accept=(
+    -H 'Accept: application/vnd.oci.image.index.v1+json'
+    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json'
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json'
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json'
+  )
+  [[ "$ref" != *@* ]] || return 1
+  last="${ref##*/}"
+  if [[ "$last" == *:* ]]; then tag="${last##*:}" repo="${ref%:*}"; else tag=latest repo="$ref"; fi
+  first="${repo%%/*}"
+  if [[ "$repo" == */* && ( "$first" == *.* || "$first" == *:* || "$first" == localhost ) ]]; then
+    reg="$first" repo="${repo#*/}"
+  else
+    reg=docker.io
+    [[ "$repo" == */* ]] || repo="library/$repo"
+  fi
+  [[ "$reg" != docker.io ]] || reg=registry-1.docker.io
+  [[ "$reg/$repo:$tag" =~ ^[A-Za-z0-9.:-]+/[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] || return 1
+  url="https://$reg/v2/$repo/manifests/$tag"
+  hdr="$(curl -sSI --max-time 20 "${accept[@]}" "$url" 2>/dev/null | tr -d '\r')" || return 1
+  # The last status line: a proxy puts its own answer first.
+  if [[ "$(sed -nE 's#^HTTP/[0-9.]+ ([0-9]+).*#\1#p' <<<"$hdr" | tail -n1)" == 401 ]]; then
+    realm="$(sed -nE 's/^www-authenticate:.*realm="([^"]*)".*/\1/Ip' <<<"$hdr" | head -n1)"
+    service="$(sed -nE 's/^www-authenticate:.*service="([^"]*)".*/\1/Ip' <<<"$hdr" | head -n1)"
+    scope="$(sed -nE 's/^www-authenticate:.*scope="([^"]*)".*/\1/Ip' <<<"$hdr" | head -n1)"
+    [[ "$realm" == https://* ]] || return 1
+    token="$(curl -fsS --max-time 20 -G --data-urlencode "service=$service" \
+      --data-urlencode "scope=${scope:-repository:$repo:pull}" "$realm" 2>/dev/null |
+      sed -nE 's/.*"(token|access_token)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)" || return 1
+    [[ -n "$token" ]] || return 1
+    hdr="$(curl -sSI --max-time 20 "${accept[@]}" -H "Authorization: Bearer $token" "$url" 2>/dev/null |
+      tr -d '\r')" || return 1
+  fi
+  [[ "$(sed -nE 's#^HTTP/[0-9.]+ ([0-9]+).*#\1#p' <<<"$hdr" | tail -n1)" == 200 ]] || return 1
+  digest="$(sed -nE 's/^docker-content-digest:[[:space:]]*(sha256:[0-9a-f]{64})[[:space:]]*$/\1/Ip' <<<"$hdr" | head -n1)"
+  [[ -n "$digest" ]] || return 1
+  printf '%s\n' "$digest"
+}
+
+# One entry per container: is the image it runs still the one its registry
+# serves for that tag? Images built on the Pi and images pinned by digest
+# have nothing to compare with and are left out. Each image is asked once.
+web_updates_run_containers() {
+  local name ref id digests current latest update
+  local -A remote=()
+  have docker && docker info >/dev/null 2>&1 || return 0
+  while IFS=$'\x1f' read -r name ref id; do
+    [[ -n "$name" && -n "$ref" && "$ref" != *@* ]] || continue
+    digests="$(docker image inspect -f '{{range .RepoDigests}}{{.}} {{end}}' "$id" 2>/dev/null)" || digests=""
+    [[ "$digests" == *@sha256:* ]] || continue
+    current="${digests#*@}" current="${current%% *}"
+    [[ -n "${remote[$ref]+x}" ]] || remote[$ref]="$(web_updates_run_digest "$ref" || true)"
+    latest="${remote[$ref]}"
+    if [[ -z "$latest" ]]; then update=null
+    elif [[ " $digests" == *"@$latest "* ]]; then update=false
+    else update=true
+    fi
+    web_updates_run_item "${name#/}" container "$current" "$latest" "$update" \
+      ",\"image\":$(web_links_run_json "$ref")"
+  done < <(docker ps -aq 2>/dev/null |
+    xargs -r docker inspect -f $'{{.Name}}\x1f{{.Config.Image}}\x1f{{.Image}}' 2>/dev/null | sort)
+}
+
+# git in the rpi-setup checkout as the user who owns it (their credentials
+# for a private repository, and root never touches their files), without
+# ever waiting for a password.
+web_updates_run_git_as() {
+  local owner
+  owner="$(stat -c %U "$WU_ROOT")"
+  if [[ "$owner" == "$(id -un)" ]]; then
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' timeout 60 git -C "$WU_ROOT" "$@"
+  else
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' timeout 60 runuser -u "$owner" -- git -C "$WU_ROOT" "$@"
+  fi
+}
+
+# The rpi-setup checkout: its commit against the newest commit of the branch
+# it follows (git ls-remote, so nothing in the checkout changes). A checkout
+# ahead of that commit is up to date.
+web_updates_run_git() {
+  local head branch="" upstream=origin ref=HEAD latest update
+  have git && [[ -e "$WU_ROOT/.git" ]] || return 0
+  head="$(web_updates_run_git_as rev-parse HEAD 2>/dev/null)" || return 0
+  if branch="$(web_updates_run_git_as symbolic-ref -q --short HEAD 2>/dev/null)"; then
+    upstream="$(web_updates_run_git_as config "branch.$branch.remote" 2>/dev/null)" || upstream=origin
+    ref="$(web_updates_run_git_as config "branch.$branch.merge" 2>/dev/null)" || ref="refs/heads/$branch"
+  fi
+  latest="$(web_updates_run_git_as ls-remote "$upstream" "$ref" 2>/dev/null | awk -v r="$ref" '$2 == r { print $1; exit }')" || latest=""
+  if [[ -z "$latest" ]]; then update=null
+  elif [[ "$latest" == "$head" ]]; then update=false
+  elif web_updates_run_git_as merge-base --is-ancestor "$latest" "$head" 2>/dev/null; then update=false
+  else update=true
+  fi
+  web_updates_run_item rpi-setup git "${head:0:7}" "${latest:0:7}" "$update" \
+    ",\"branch\":$(web_links_run_json "$branch")"
+}
+
+# OS packages: refresh the package lists, then the packages "apt-get upgrade
+# --with-new-pkgs" (what update.sh runs) would install, how many come from a
+# security repository, and their names (the first 50). A busy package
+# manager just leaves the lists as they are.
+web_updates_run_apt() {
+  local sim count security names="" p
+  have apt-get || return 0
+  timeout 600 apt-get update -qq >/dev/null 2>&1 || true
+  sim="$(apt-get -s -q upgrade --with-new-pkgs 2>/dev/null | grep '^Inst ')" || sim=""
+  count=0 security=0
+  if [[ -n "$sim" ]]; then
+    count="$(wc -l <<<"$sim")"
+    security="$(grep -ci 'security' <<<"$sim")" || security=0
+    for p in $(awk '{ print $2 }' <<<"$sim" | head -n 50); do
+      names+="${names:+,}$(web_links_run_json "$p")"
+    done
+  fi
+  web_updates_run_item 'OS packages' apt "" "" "$( ((count)) && echo true || echo false)" \
+    ",\"count\":$((count)),\"security\":$((security)),\"packages\":[$names]"
+}
+
+# Pi-hole installed on the host: its own update check (the "pihole
+# updatechecker" its cron job runs) keeps the installed and the newest
+# versions of Core, Web and FTL in /etc/pihole/versions.
+web_updates_run_pihole() {
+  local f="$WU_PIHOLE_VERSIONS" part label c l cur="" new="" update=false
+  have pihole && [[ -f "$f" ]] || return 0
+  for part in CORE WEB FTL; do
+    case "$part" in CORE) label=Core ;; WEB) label=Web ;; *) label=FTL ;; esac
+    c="$(sed -nE "s/^${part}_VERSION=['\"]?([^'\"]*)['\"]?\$/\\1/p" "$f" | head -n1)"
+    l="$(sed -nE "s/^GITHUB_${part}_VERSION=['\"]?([^'\"]*)['\"]?\$/\\1/p" "$f" | head -n1)"
+    [[ -n "$c" ]] || continue
+    cur+="${cur:+, }$label $c"
+    [[ -z "$l" ]] || new+="${new:+, }$label $l"
+    [[ -z "$l" || "$l" == "$c" ]] || update=true
+  done
+  [[ -n "$cur" ]] || return 0
+  [[ -n "$new" ]] || update=null
+  web_updates_run_item Pi-hole pihole "$cur" "$new" "$update"
+}
+
+# The Raspberry Pi bootloader (EEPROM): rpi-eeprom-update without options
+# only reports, as update.sh would install with -a.
+web_updates_run_eeprom() {
+  local out update cur new
+  have rpi-eeprom-update || return 0
+  out="$(timeout 60 rpi-eeprom-update 2>/dev/null)" || true
+  case "$out" in
+    *'BOOTLOADER: update available'*) update=true ;;
+    *'BOOTLOADER: up to date'*) update=false ;;
+    *) return 0 ;;
+  esac
+  cur="$(sed -nE '/BOOTLOADER/,/^[[:space:]]*$/ s/^[[:space:]]*CURRENT:[[:space:]]*(.*[^[:space:]])[[:space:]]*\([0-9]+\).*/\1/p' <<<"$out" | head -n1)"
+  new="$(sed -nE '/BOOTLOADER/,/^[[:space:]]*$/ s/^[[:space:]]*LATEST:[[:space:]]*(.*[^[:space:]])[[:space:]]*\([0-9]+\).*/\1/p' <<<"$out" | head -n1)"
+  web_updates_run_item 'EEPROM firmware' eeprom "$cur" "$new" "$update"
+}
+
+# Print updates.json: when it was checked, then rpi-setup itself, Pi-hole,
+# the bootloader, the containers and the OS packages.
+web_updates_run_list() {
+  local sep=""
+  printf '{"checked":%s,"items":[\n' "$(web_links_run_json "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+  web_updates_run_git
+  web_updates_run_pihole
+  web_updates_run_eeprom
+  web_updates_run_containers
+  web_updates_run_apt
+  printf '\n]}\n'
+}
+
+# Write updates.json to $WU_OUT, only once the whole list is there.
+web_updates_run() {
+  local list
+  list="$(web_updates_run_list)"
+  printf '%s\n' "$list" | write_if_changed "$WU_OUT" 0644 || true
+}
+
 # The IPv4 port of the default site's first "listen" line, e.g. "80".
 nginx_site_port() {
   sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)([[:space:];]).*/\1/p' "$1" 2>/dev/null | head -n1
@@ -1024,6 +1359,7 @@ run_web_container() {
   container_copy_once "$dir" /var/www/html "$dir/html" || true
   web_index_page "$dir/html/index.html"
   web_links_install "$dir/html"
+  web_updates_install "$dir/html"
   local extra=""
   if [[ -d /etc/nginx/sites-enabled ]]; then
     extra="$(find /etc/nginx/sites-enabled -mindepth 1 ! -name default -printf '%f ' 2>/dev/null)" || extra=""
