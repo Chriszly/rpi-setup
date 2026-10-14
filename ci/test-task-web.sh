@@ -22,6 +22,7 @@ assert_contains "page: reads the service list" "get('services.json'" "$page"
 assert_contains "page: reads the container list" "get('containers.json'" "$page"
 assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
 assert_contains "page: reads the tasks set up here" "get('tasks.json'" "$page"
+assert_contains "page: reads the update check" "get('updates.json'" "$page"
 assert_contains "page: links the rpi-setup repository" 'href="https://github.com/Chriszly/rpi-setup"' "$page"
 assert_contains "page: charts how many were online at once" "chartTab.render(data.concurrent)" "$page"
 assert_contains "page: shows each user's server groups" "groups: u.groups" "$page"
@@ -172,5 +173,146 @@ rm -f "$opt/pihole/docker-compose.yml"
 assert_ok "script: runs without Docker" run_links
 assert_eq "list: empty without Docker or Pi-hole; the address from hostname -I without a route" $'{"host":"rasPi","ip":"192.168.60.10","services":[\n\n]}' "$(cat "$TMP/html/services.json")"
 assert_eq "containers: empty without Docker" $'{"containers":[\n\n]}' "$(cat "$TMP/html/containers.json")"
+
+# --- the update check script -----------------------------------------------------
+d1="sha256:$(printf '1%.0s' {1..64})" d2="sha256:$(printf '2%.0s' {1..64})" d3="sha256:$(printf '3%.0s' {1..64})"
+RPI_SETUP_ROOT="$TMP/checkout"
+web_updates_script "$TMP/html/updates.json" >"$TMP/updates"
+assert_ok "updates: valid bash" bash -n "$TMP/updates"
+assert_contains "updates: writes to the given file" "WU_OUT=$TMP/html/updates.json" "$(cat "$TMP/updates")"
+
+ubin="$TMP/ubin"
+install -d "$ubin"
+# Containers: web and web2 run the newest nginx, den-watcher an old image,
+# built is built on the Pi, pinned is pinned by digest, private cannot be
+# asked.
+cat >"$ubin/docker" <<EOF
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  'info '*) exit 0 ;;
+  'ps -aq') printf '%s\n' a b c d e f ;;
+  'inspect -f')
+    printf '/web\x1fnginx:stable-alpine\x1fsha256:i1\n'
+    printf '/web2\x1fnginx:stable-alpine\x1fsha256:i1\n'
+    printf '/den-watcher\x1fghcr.io/chriszly/den-watcher:main\x1fsha256:i2\n'
+    printf '/built\x1fteamspeak-usage\x1fsha256:i3\n'
+    printf '/pinned\x1fbusybox@$d1\x1fsha256:i4\n'
+    printf '/private\x1fghcr.io/me/private:1\x1fsha256:i5\n' ;;
+  'image inspect')
+    case "\${*: -1}" in
+      sha256:i1) printf 'nginx@$d1 ' ;;
+      sha256:i2) printf 'ghcr.io/chriszly/den-watcher@$d1 ' ;;
+      sha256:i4) printf 'busybox@$d1 ' ;;
+      sha256:i5) printf 'ghcr.io/me/private@$d3 ' ;;
+    esac ;;
+esac
+EOF
+# Registries: a token first (behind a proxy), then the digest of the tag.
+cat >"$ubin/curl" <<EOF
+#!/usr/bin/env bash
+url="\${*: -1}"
+echo "\$url \$*" >>"\${0%/*}/curl.log"
+case "\$url" in
+  https://auth.docker.io/token|https://ghcr.io/token) echo '{"token":"t0k"}'; exit ;;
+esac
+if [[ "\$*" != *'Bearer t0k'* ]]; then
+  realm=https://auth.docker.io/token
+  [[ "\$url" != https://ghcr.io/* ]] || realm=https://ghcr.io/token
+  printf 'HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 401\r\nwww-authenticate: Bearer realm="%s",service="reg",scope="repository:x:pull"\r\n\r\n' "\$realm"
+  exit
+fi
+case "\$url" in
+  https://registry-1.docker.io/v2/library/nginx/manifests/stable-alpine) d=$d1 ;;
+  https://ghcr.io/v2/chriszly/den-watcher/manifests/main) d=$d2 ;;
+  *) printf 'HTTP/2 403\r\n\r\n'; exit ;;
+esac
+printf 'HTTP/2 200\r\nDocker-Content-Digest: %s\r\n\r\n' "\$d"
+EOF
+cat >"$ubin/apt-get" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  update) echo update >>"${0%/*}/apt.log" ;;
+  -s) printf '%s\n' 'Reading package lists...' \
+    'Inst libssl3 [3.0.1] (3.0.2 Debian-Security:12/stable-security [arm64])' \
+    'Inst curl [7.88.1-10] (7.88.1-11 Debian:12.5/stable [arm64])' \
+    'Conf libssl3 (3.0.2 Debian-Security:12/stable-security [arm64])' ;;
+esac
+EOF
+printf '#!/usr/bin/env bash\nexit 0\n' >"$ubin/pihole"
+cat >"$ubin/rpi-eeprom-update" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'BOOTLOADER: update available' '   CURRENT: Mon 22 Jan 10:41:21 UTC 2024 (1705920081)' \
+  '    LATEST: Thu 10 Oct 12:00:00 UTC 2024 (1728561600)' '   RELEASE: default' '' \
+  '   VL805_FW: Using bootloader EEPROM' '     VL805: up to date' '   CURRENT: 000138c0 (1)'
+exit 1
+EOF
+chmod +x "$ubin"/*
+printf '%s\n' "CORE_VERSION='v6.1'" "GITHUB_CORE_VERSION='v6.2'" 'WEB_VERSION=v6.2' 'GITHUB_WEB_VERSION=v6.2' \
+  'FTL_VERSION=v6.1' 'GITHUB_FTL_VERSION=' >"$TMP/pihole-versions"
+
+# rpi-setup itself: a clone of a local "upstream" repository.
+gitq() { git -c user.name=Sam -c user.email=sam@example.com -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
+gitq init -q --bare "$TMP/upstream.git"
+gitq clone -q "$TMP/upstream.git" "$TMP/checkout"
+gitq -C "$TMP/checkout" commit -q --allow-empty -m one
+gitq -C "$TMP/checkout" push -q -u origin HEAD:main
+head="$(git -C "$TMP/checkout" rev-parse --short=7 HEAD)"
+
+run_updates() { PATH="$ubin:$PATH" WU_PIHOLE_VERSIONS="$TMP/pihole-versions" bash "$TMP/updates"; }
+assert_ok "updates: runs" run_updates
+updates="$(cat "$TMP/html/updates.json" 2>/dev/null || true)"
+if command -v python3 >/dev/null 2>&1; then
+  summary="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("checked" if d["checked"].endswith("Z") else d["checked"])
+for u in d["items"]:
+    extra = u.get("image") or u.get("branch") or ""
+    if u["kind"] == "apt":
+        extra = "%s %s %s" % (u["count"], u["security"], ",".join(u["packages"]))
+    print("%s|%s|%s|%s|%s|%s" % (u["name"], u["kind"], u["current"][:12], u["latest"][:12], u["update"], extra))
+' "$TMP/html/updates.json" 2>&1)" || summary="not JSON: $summary"
+  expected="checked
+rpi-setup|git|$head|$head|False|main
+Pi-hole|pihole|Core v6.1, W|Core v6.2, W|True|
+EEPROM firmware|eeprom|Mon 22 Jan 1|Thu 10 Oct 1|True|
+den-watcher|container|sha256:11111|sha256:22222|True|ghcr.io/chriszly/den-watcher:main
+private|container|sha256:33333||None|ghcr.io/me/private:1
+web|container|sha256:11111|sha256:11111|False|nginx:stable-alpine
+web2|container|sha256:11111|sha256:11111|False|nginx:stable-alpine
+OS packages|apt|||True|2 1 libssl3,curl"
+  assert_eq "updates: rpi-setup, Pi-hole, the bootloader, the containers by name and the OS packages" "$expected" "$summary"
+else
+  skip "updates: python3 not installed"
+fi
+assert_contains "updates: a Pi-hole part without a newest version is left out" '"latest":"Core v6.2, Web v6.2"' "$updates"
+assert_eq "updates: each image is asked once" 1 "$(grep -c 'nginx/manifests/stable-alpine .*Bearer' "$ubin/curl.log")"
+assert_eq "updates: the package lists are refreshed first" update "$(cat "$ubin/apt.log" 2>/dev/null)"
+assert_lacks "updates: an image built on the Pi is left out" '"built"' "$updates"
+assert_lacks "updates: an image pinned by digest is left out" '"pinned"' "$updates"
+
+gitq clone -q "$TMP/upstream.git" "$TMP/other"
+gitq -C "$TMP/other" commit -q --allow-empty -m two
+gitq -C "$TMP/other" push -q origin main
+latest="$(git -C "$TMP/other" rev-parse --short=7 HEAD)"
+run_updates
+assert_contains "updates: a newer commit upstream is an update" \
+  "\"name\":\"rpi-setup\",\"kind\":\"git\",\"current\":\"$head\",\"latest\":\"$latest\",\"update\":true" \
+  "$(cat "$TMP/html/updates.json")"
+gitq -C "$TMP/checkout" pull -q
+gitq -C "$TMP/checkout" commit -q --allow-empty -m three
+run_updates
+assert_contains "updates: a checkout ahead of upstream is up to date" '"latest":"'"$latest"'","update":false' \
+  "$(grep '"kind":"git"' "$TMP/html/updates.json")"
+
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ubin/docker"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$ubin/apt-get"
+rm -f "$ubin/pihole" "$ubin/rpi-eeprom-update"
+RPI_SETUP_ROOT="$TMP/no-checkout"
+web_updates_script "$TMP/html/updates.json" >"$TMP/updates"
+assert_ok "updates: runs without Docker, Pi-hole, a bootloader or a checkout" run_updates
+assert_eq "updates: then only the OS packages, all current" \
+  $'{"name":"OS packages","kind":"apt","current":"","latest":"","update":false,"count":0,"security":0,"packages":[]}\n]}' \
+  "$(sed '1d' "$TMP/html/updates.json")"
 
 finish_tests
