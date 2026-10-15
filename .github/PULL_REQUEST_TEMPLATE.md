@@ -2,15 +2,7 @@
 
 <!-- What does this PR do and why? Keep it short. -->
 
-## Type of change
-
-<!-- Check all that apply -->
-
-- [ ] Bug fix
-- [ ] New feature / new task
-- [ ] Documentation update
-- [ ] Refactor / cleanup
-- [ ] Build / CI / tooling
+<!-- Add at least one changetype label (why: bug, feature, ...) and one domaintype label (what: task, ui, docs, ...). -->
 
 ## Checklist
 

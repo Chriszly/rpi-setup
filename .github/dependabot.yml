@@ -10,3 +10,8 @@ updates:
       github-actions:
         patterns:
           - "*"
+    # A changetype and a domaintype label; without this Dependabot would add its
+    # own default labels.
+    labels:
+      - chore
+      - ci

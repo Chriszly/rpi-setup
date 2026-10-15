@@ -2,32 +2,51 @@ name: PR Template Validation
 
 on:
   pull_request:
-    types: [opened, edited, synchronize]
+    # "labeled" and "unlabeled" re-run the check when the labels change.
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
 
 permissions:
+  issues: read
   pull-requests: read
 
 jobs:
   validate-pr-template:
+    # Dependabot's PRs need no validation. Skipping the job still reports the
+    # check as passed.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Check PR body matches template
+      - name: Check PR body matches template and PR has a label of each type
         uses: actions/github-script@v9
         with:
           script: |
-            const body = context.payload.pull_request.body || '';
-            const requiredSections = [
-              '## Summary',
-              '## Type of change',
-              '## Checklist',
-              '## Testing'
-            ];
+            // The PR and its labels are fetched fresh, as a re-run of an older run
+            // would otherwise check the description and labels it started with.
+            const pull_number = context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number });
+            const labels = await github.paginate(github.rest.issues.listLabelsOnIssue,
+              { ...context.repo, issue_number: pull_number, per_page: 100 });
+            const errors = [];
 
+            const body = pr.body || '';
+            const requiredSections = ['## Summary', '## Checklist', '## Testing'];
             const heading = (section) => new RegExp(`^${section}(?: |\r?$|:|\n)`, 'm');
             const missing = requiredSections.filter(section => !heading(section).test(body));
-
             if (missing.length > 0) {
-              core.setFailed(`PR description is missing required sections: ${missing.join(', ')}. Please use the PR template.`);
+              errors.push(`PR description is missing required sections: ${missing.join(', ')}. Please use the PR template.`);
+            }
+
+            // A label's type is the first word of its description, e.g.
+            // "changetype: Something isn't working".
+            const type = (label) => ((label.description || '').trim().split(/[\s:]+/)[0] || '').toLowerCase();
+            for (const wanted of ['changetype', 'domaintype']) {
+              if (!labels.some(label => type(label) === wanted)) {
+                errors.push(`PR needs at least one ${wanted} label (a label whose description starts with "${wanted}").`);
+              }
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join('\n'));
             } else {
-              console.log('PR template validation passed.');
+              console.log(`PR template validation passed. Labels: ${labels.map(label => label.name).join(', ')}`);
             }
