@@ -68,7 +68,7 @@ The two flash-script workflows are separate:
 itself) changes; [`pr-template-validation.yml`](../.github/workflows/pr-template-validation.yml)
 checks the PR description and that the PR has at least one `changetype` and
 one `domaintype` label (the first word of a label's description is its type;
-Dependabot's PRs only need the labels), and
+Dependabot's PRs are skipped), and
 [`pr-links.yml`](../.github/workflows/pr-links.yml) fails a PR whose title,
 description or commit messages link anywhere but GitHub (Dependabot's PRs are
 skipped).

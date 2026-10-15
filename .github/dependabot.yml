@@ -10,7 +10,8 @@ updates:
       github-actions:
         patterns:
           - "*"
-    # The PR Template Validation workflow needs a changetype and a domaintype label.
+    # A changetype and a domaintype label; without this Dependabot would add its
+    # own default labels.
     labels:
       - chore
       - ci
