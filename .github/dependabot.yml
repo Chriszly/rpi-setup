@@ -10,3 +10,7 @@ updates:
       github-actions:
         patterns:
           - "*"
+    # The PR Template Validation workflow needs a changetype and a domaintype label.
+    labels:
+      - chore
+      - ci
