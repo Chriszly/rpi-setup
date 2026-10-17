@@ -1,9 +1,13 @@
 version: 2
 updates:
-  # Keep the actions in .github/workflows and .github/actions current,
-  # including the SHA-pinned pinspawn/piqemu actions.
+  # Keep the actions current in .github/workflows, the prepare-image composite
+  # action and the workflows the private-repo template copies, including the
+  # SHA-pinned pinspawn/piqemu actions. "/" alone only covers .github/workflows.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/prepare-image
+      - /templates/private-repo
     schedule:
       interval: weekly
     groups:
