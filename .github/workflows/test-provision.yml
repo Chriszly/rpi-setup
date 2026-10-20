@@ -261,42 +261,19 @@ jobs:
 
       # pinspawn-action needs systemd-container, qemu-user-static and
       # binfmt-support, and skips its own apt install when they are present.
-      # The runner's Ubuntu mirror serves them at 70-110 kB/s (2-4 minutes per
-      # run), so their .debs are cached, keyed on the runner image so they
-      # always match its base system.
-      - name: Restore cached nspawn host packages
-        id: nspawn-debs
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ runner.temp }}/nspawn-debs
-          key: nspawn-debs-${{ runner.arch }}-${{ env.ImageOS }}-${{ env.ImageVersion }}
-
+      # apt-get resolves them against the runner's current packages (a .deb
+      # cache keyed on env.ImageOS was always "X64--": the env context only
+      # holds the workflow's own variables, so it went stale), and the check
+      # stops here, not deep inside pinspawn, when arm64 emulation is missing.
       - name: Install nspawn host packages
-        env:
-          DEB_DIR: ${{ runner.temp }}/nspawn-debs
-          CACHE_HIT: ${{ steps.nspawn-debs.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          if [[ "$CACHE_HIT" != true ]]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --download-only systemd-container qemu-user-static binfmt-support
-            mkdir -p "$DEB_DIR"
-            find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} "$DEB_DIR/" \;
-          fi
-          shopt -s nullglob
-          debs=("$DEB_DIR"/*.deb)
-          if [[ ${#debs[@]} -eq 0 ]]; then
-            echo "Nothing to install; the packages are already on the runner"
-          else
-            sudo DEBIAN_FRONTEND=noninteractive dpkg -i "${debs[@]}"
-          fi
-
-      - name: Save nspawn host packages to cache
-        if: steps.nspawn-debs.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ runner.temp }}/nspawn-debs
-          key: ${{ steps.nspawn-debs.outputs.cache-primary-key }}
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq systemd-container qemu-user-static binfmt-support
+          # qemu-user-static registers its handlers through systemd-binfmt.
+          sudo systemctl restart systemd-binfmt || true
+          [[ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]] || sudo update-binfmts --enable qemu-aarch64
+          [[ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]] || { echo '::error::arm64 emulation (qemu-aarch64 binfmt) is not registered'; exit 1; }
 
       - name: Provision tasks in booted container
         uses: ethanjli/pinspawn-action@ff063750a0e85cf96bd513df9134c27d31899285
