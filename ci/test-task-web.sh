@@ -12,11 +12,11 @@ TASKS=()
 . "$ROOT/tasks/web.sh"
 
 # web_port: the start page gets port 80, moving Pi-hole's admin UI off it.
-web_port_with() {  # owner of port 80, WEB_PORT, whether Pi-hole can move
+web_port_with() {  # owner of port 80, WEB_PORT, whether Pi-hole can move, port used so far
   ( OWNER80="$1" WEB_PORT="$2" MOVES="$3"
     port_owner() { [[ "$1" == 80 && -n "$OWNER80" ]] && echo "$OWNER80"; }
     web_move_pihole() { echo moved; [[ "$MOVES" == yes ]]; }
-    web_port 2>/dev/null )
+    web_port "${4:-}" 2>/dev/null )
 }
 assert_eq "web_port takes a free port 80" "80" "$(web_port_with '' '' yes)"
 assert_eq "web_port keeps port 80 from nginx" "80" "$(web_port_with nginx '' yes)"
@@ -25,6 +25,9 @@ assert_eq "web_port uses 8080 when Pi-hole must keep 80" "8080" "$(web_port_with
 assert_eq "web_port uses 8080 when another server has 80" "8080" "$(web_port_with apache2 '' yes)"
 assert_eq "web_port follows WEB_PORT" "8081" "$(web_port_with pihole-FTL 8081 yes)"
 assert_fails "web_port dies when WEB_PORT and PIHOLE_WEB_PORT both want 80" web_port_with pihole-FTL 80 no
+assert_eq "web_port keeps the port used so far" "8090" "$(web_port_with pihole-FTL '' yes 8090)"
+assert_eq "web_port leaves the old 8080 fallback for port 80" "80" "$(web_port_with pihole-FTL '' yes 8080)"
+assert_eq "web_port follows WEB_PORT over the port used so far" "8091" "$(web_port_with '' 8091 yes 8090)"
 
 # web_move_pihole: the Pi-hole container's admin port moves to PIHOLE_WEB_PORT.
 mkdir -p "$TMP/opt/pihole"

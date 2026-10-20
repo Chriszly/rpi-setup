@@ -14,7 +14,7 @@ run_web() {
   if setting_on WEB_DOCKER; then run_web_container; return; fi
   container_leave web
   local site=/etc/nginx/sites-available/default owner want cur
-  want="$(web_port)"
+  want="$(web_port "$(nginx_site_port "$site" || true)")"
 
   if ! apt_installed nginx; then
     owner="$(port_owner 80)" || owner=""
@@ -1313,11 +1313,14 @@ web_updates_run() {
   printf '%s\n' "$list" | write_if_changed "$WU_OUT" 0644 || true
 }
 
-# Port nginx listens on: WEB_PORT, else 80, so http://<pi>/ opens the start
-# page. Pi-hole's admin UI is moved off port 80 when it holds it; anything
-# else on 80 (or PIHOLE_WEB_PORT=80) leaves nginx on 8080.
+# Port nginx listens on: WEB_PORT, else the port $1 it used so far, else 80,
+# so http://<pi>/ opens the start page. 8080 used so far is the old fallback
+# next to Pi-hole and counts as unset. Pi-hole's admin UI is moved off port
+# 80 when it holds it; anything else on 80 (or PIHOLE_WEB_PORT=80) leaves
+# nginx on 8080.
 web_port() {
-  local want="${WEB_PORT:-}" owner
+  local want="${WEB_PORT:-}" cur="${1:-}" owner
+  if [[ -z "$want" && -n "$cur" && "$cur" != 8080 ]]; then echo "$cur"; return; fi
   owner="$(port_owner "${want:-80}")" || owner=""
   if [[ "${want:-80}" == 80 && "$owner" == pihole-FTL ]]; then
     if web_move_pihole >&2; then echo 80; return; fi
@@ -1385,7 +1388,10 @@ run_web_container() {
   container_require_docker
   dir="$(container_dir web)"
 
-  port="$(web_port)"
+  # nginx_site_port fails (sed: no such file) when the file is missing.
+  port="$(nginx_site_port "$dir/conf/default.conf" || true)"
+  [[ -n "$port" ]] || port="$(nginx_site_port /etc/nginx/sites-available/default || true)"
+  port="$(web_port "$port")"
   owner="$(port_owner "$port")" || owner=""
   [[ -z "$owner" || "$owner" == nginx ]] ||
     die "Port $port is already used by '$owner'; set WEB_PORT to a free port"

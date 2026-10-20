@@ -12,7 +12,7 @@ sudo bash setup.sh web
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `WEB_PORT` | `80` | Port nginx listens on. Re-runs move nginx when you change it. Pi-hole's admin page moves off port 80 to make room ([below](#good-to-know)). |
+| `WEB_PORT` | `80` | Port nginx listens on. Re-runs move nginx when you change it; empty keeps the port nginx already has (8080 from older versions moves to 80). Pi-hole's admin page moves off port 80 to make room ([below](#good-to-know)). |
 | `WEB_TITLE` | `Raspberry Pi` | Title of the start page. Cannot contain `<`, `>` or `&`. |
 | `WEB_DOCKER` | `no` | `yes` runs nginx in its own Docker container instead of the apt package ([below](#run-it-in-docker)). |
 | `WEB_IMAGE` | `nginx:stable-alpine` | Docker image for `WEB_DOCKER=yes`. |
