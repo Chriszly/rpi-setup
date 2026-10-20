@@ -11,6 +11,34 @@ set -euo pipefail
 TASKS=()
 . "$ROOT/tasks/web.sh"
 
+# web_port: the start page gets port 80, moving Pi-hole's admin UI off it.
+web_port_with() {  # owner of port 80, WEB_PORT, whether Pi-hole can move
+  ( OWNER80="$1" WEB_PORT="$2" MOVES="$3"
+    port_owner() { [[ "$1" == 80 && -n "$OWNER80" ]] && echo "$OWNER80"; }
+    web_move_pihole() { echo moved; [[ "$MOVES" == yes ]]; }
+    web_port 2>/dev/null )
+}
+assert_eq "web_port takes a free port 80" "80" "$(web_port_with '' '' yes)"
+assert_eq "web_port keeps port 80 from nginx" "80" "$(web_port_with nginx '' yes)"
+assert_eq "web_port moves Pi-hole off port 80" "80" "$(web_port_with pihole-FTL '' yes)"
+assert_eq "web_port uses 8080 when Pi-hole must keep 80" "8080" "$(web_port_with pihole-FTL '' no)"
+assert_eq "web_port uses 8080 when another server has 80" "8080" "$(web_port_with apache2 '' yes)"
+assert_eq "web_port follows WEB_PORT" "8081" "$(web_port_with pihole-FTL 8081 yes)"
+assert_fails "web_port dies when WEB_PORT and PIHOLE_WEB_PORT both want 80" web_port_with pihole-FTL 80 no
+
+# web_move_pihole: the Pi-hole container's admin port moves to PIHOLE_WEB_PORT.
+mkdir -p "$TMP/opt/pihole"
+printf 'services:\n  pihole:\n    environment:\n      FTLCONF_webserver_port: "80o,[::]:80o"\n' >"$TMP/opt/pihole/docker-compose.yml"
+out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt" PIHOLE_WEB_PORT=8085
+  task_in_container() { true; }; port_owner() { return 1; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  web_move_pihole 2>&1 )"
+assert_contains "move Pi-hole: says where the admin went" ":8085/admin" "$out"
+assert_contains "move Pi-hole: rewrites the compose port" 'FTLCONF_webserver_port: "8085o,[::]:8085o"' \
+    "$(cat "$TMP/opt/pihole/docker-compose.yml")"
+assert_fails "move Pi-hole: refuses when PIHOLE_WEB_PORT is 80" eval 'PIHOLE_WEB_PORT=80 web_move_pihole'
+
 # --- the start page --------------------------------------------------------------
 WEB_TITLE='My "Pi" \1 home'
 web_index_page "$TMP/index.html" >/dev/null

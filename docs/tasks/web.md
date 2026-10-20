@@ -12,7 +12,7 @@ sudo bash setup.sh web
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `WEB_PORT` | `80`, or `8080` if Pi-hole already has 80 | Port nginx listens on. Re-runs move nginx when you change it. |
+| `WEB_PORT` | `80` | Port nginx listens on. Re-runs move nginx when you change it. Pi-hole's admin page moves off port 80 to make room ([below](#good-to-know)). |
 | `WEB_TITLE` | `Raspberry Pi` | Title of the start page. Cannot contain `<`, `>` or `&`. |
 | `WEB_DOCKER` | `no` | `yes` runs nginx in its own Docker container instead of the apt package ([below](#run-it-in-docker)). |
 | `WEB_IMAGE` | `nginx:stable-alpine` | Docker image for `WEB_DOCKER=yes`. |
@@ -38,7 +38,8 @@ sudo bash setup.sh web
 
 ## Reach it
 
-`http://<pi>` (or `http://<pi>:8080`); the task prints the address.
+`http://<pi>`, the Pi's address with no port, so the start page is what a
+browser shows for the Pi. The task prints the address.
 
 ## The start page
 
@@ -174,8 +175,12 @@ Docker is installed first if it is missing.
 
 - `update.sh` (and the *Update Pi* workflow) re-runs this task, so the start
   page and the script behind it follow the rpi-setup version on the Pi.
-- Pi-hole and nginx can run together: whichever comes second moves to port
-  8080.
+- Port 80 belongs to the start page. When Pi-hole's admin page holds it,
+  the task moves Pi-hole to `PIHOLE_WEB_PORT` (default `8080`), so the admin
+  page is then at `http://<pi>:8080/admin` and linked from the start page.
+  With the `firewall` task on, re-run it afterwards so it opens the new port.
+- nginx falls back to port 8080 only when `PIHOLE_WEB_PORT=80` keeps Pi-hole
+  on port 80, or a web server that rpi-setup did not install holds it.
 - With the `firewall` task, the port is open only to `FIREWALL_ALLOW_FROM`
   when that is set.
 - Turn it off with `sudo systemctl disable --now nginx` (and the list with

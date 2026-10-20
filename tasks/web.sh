@@ -4,7 +4,7 @@
 set -euo pipefail
 . "$RPI_SETUP_ROOT/lib/containers.sh"
 
-TASKS+=("web|nginx with a start page linking the web pages on this Pi (:80 or :8080)")
+TASKS+=("web|nginx with a start page on port 80 linking the web pages on this Pi")
 
 run_web() {
   : "${WEB_TITLE:=Raspberry Pi}" "${WEB_DOCKER:=no}" "${WEB_UPDATES:=yes}"
@@ -13,15 +13,15 @@ run_web() {
   [[ "$WEB_TITLE" != *[\<\>\&]* ]] || die "WEB_TITLE cannot contain <, > or & (got '$WEB_TITLE')"
   if setting_on WEB_DOCKER; then run_web_container; return; fi
   container_leave web
-  local site=/etc/nginx/sites-available/default owner="" want="${WEB_PORT:-}" cur
+  local site=/etc/nginx/sites-available/default owner want cur
+  want="$(web_port)"
 
   if ! apt_installed nginx; then
     owner="$(port_owner 80)" || owner=""
     if [[ -n "$owner" ]]; then
-      # Something else (usually Pi-hole's web UI) holds port 80. nginx's
-      # postinst would fail to start on it and abort the install, so keep the
-      # service down during install and move the default site elsewhere.
-      [[ -n "$want" ]] || want=8080
+      # Something else holds port 80. nginx's postinst would fail to start on
+      # it and abort the install, so keep the service down during install
+      # and move the default site elsewhere.
       info "Port 80 is used by '$owner'; nginx will listen on $want instead"
       local own_policy=0
       if [[ ! -e /usr/sbin/policy-rc.d ]]; then
@@ -39,10 +39,10 @@ run_web() {
   fi
 
   cur="$(nginx_site_port "$site")"
-  if [[ -n "$want" && -n "$cur" && "$want" != "$cur" ]]; then
+  if [[ -n "$cur" && "$want" != "$cur" ]]; then
     owner="$(port_owner "$want")" || owner=""
     if [[ -n "$owner" && "$owner" != nginx ]]; then
-      die "WEB_PORT=$want is already used by '$owner'; pick another port"
+      die "Port $want is already used by '$owner'; set WEB_PORT to a free port"
     fi
     nginx_move_port "$site" "$cur" "$want"
     info "nginx moved from port $cur to $want"
@@ -1313,6 +1313,56 @@ web_updates_run() {
   printf '%s\n' "$list" | write_if_changed "$WU_OUT" 0644 || true
 }
 
+# Port nginx listens on: WEB_PORT, else 80, so http://<pi>/ opens the start
+# page. Pi-hole's admin UI is moved off port 80 when it holds it; anything
+# else on 80 (or PIHOLE_WEB_PORT=80) leaves nginx on 8080.
+web_port() {
+  local want="${WEB_PORT:-}" owner
+  owner="$(port_owner "${want:-80}")" || owner=""
+  if [[ "${want:-80}" == 80 && "$owner" == pihole-FTL ]]; then
+    if web_move_pihole >&2; then echo 80; return; fi
+    [[ -z "$want" ]] || die 'WEB_PORT=80 and PIHOLE_WEB_PORT=80 both ask for port 80; change one of them'
+    warn 'PIHOLE_WEB_PORT=80 keeps Pi-hole on port 80; nginx will listen on 8080'
+  elif [[ -n "$want" ]]; then
+    echo "$want"; return
+  elif [[ -z "$owner" || "$owner" == nginx ]]; then
+    echo 80; return
+  else
+    warn "Port 80 is used by '$owner'; nginx will listen on 8080 (free port 80 or set WEB_PORT)"
+  fi
+  echo 8080
+}
+
+# Move Pi-hole's admin UI from port 80 to PIHOLE_WEB_PORT, else 8080, in its
+# container or on the host. Fails when PIHOLE_WEB_PORT is 80.
+web_move_pihole() {
+  local to dir owner
+  # A subshell, so the pihole settings do not leak into this task.
+  to="$(load_task_config pihole >/dev/null; printf '%s' "${PIHOLE_WEB_PORT:-8080}")"
+  [[ "$to" != 80 ]] || return 1
+  owner="$(port_owner "$to")" || owner=""
+  [[ -z "$owner" || "$owner" == pihole-FTL ]] ||
+    die "Port 80 is for the start page, but Pi-hole cannot move to $to: '$owner' uses it (set PIHOLE_WEB_PORT)"
+  info "Moving Pi-hole's web admin from port 80 to $to so the start page gets port 80"
+  if task_in_container pihole; then
+    dir="$(container_dir pihole)"
+    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${to}o,[::]:${to}o\"/" "$dir/docker-compose.yml"
+    docker compose -f "$dir/docker-compose.yml" up -d >/dev/null || die 'Could not restart the Pi-hole container'
+  else
+    pihole-FTL --config webserver.port "${to}o,[::]:${to}o" >/dev/null
+    systemctl restart pihole-FTL
+  fi
+  for _ in $(seq 1 30); do
+    [[ "$(port_owner 80 || true)" == pihole-FTL ]] || break
+    sleep 1
+  done
+  [[ "$(port_owner 80 || true)" != pihole-FTL ]] || die 'Pi-hole still holds port 80 after the move'
+  say "Pi-hole web admin moved to $(service_url "$to")/admin"
+  if have ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    warn "Re-run the firewall task to open port $to for Pi-hole: sudo bash setup.sh firewall"
+  fi
+}
+
 # The IPv4 port of the default site's first "listen" line, e.g. "80".
 nginx_site_port() {
   sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)([[:space:];]).*/\1/p' "$1" 2>/dev/null | head -n1
@@ -1329,24 +1379,13 @@ nginx_move_port() {
 # stopped and its /var/www/html copied over once.
 run_web_container() {
   : "${WEB_IMAGE:=nginx:stable-alpine}"
-  local dir name=web port="${WEB_PORT:-}" owner="" changed=0 native=/etc/nginx/sites-available/default
+  local dir name=web port owner="" changed=0
   require_image_ref WEB_IMAGE
   container_require_64bit WEB_DOCKER
   container_require_docker
   dir="$(container_dir web)"
 
-  # Port: WEB_PORT, else the one used so far (container or native nginx),
-  # else 80, or 8080 when something other than nginx (Pi-hole) holds 80.
-  if [[ -z "$port" ]]; then
-    # nginx_site_port fails (sed: no such file) when the file is missing.
-    port="$(nginx_site_port "$dir/conf/default.conf" || true)"
-    [[ -n "$port" ]] || port="$(nginx_site_port "$native" || true)"
-    if [[ -z "$port" ]]; then
-      port=80
-      owner="$(port_owner 80)" || owner=""
-      [[ -z "$owner" || "$owner" == nginx ]] || port=8080
-    fi
-  fi
+  port="$(web_port)"
   owner="$(port_owner "$port")" || owner=""
   [[ -z "$owner" || "$owner" == nginx ]] ||
     die "Port $port is already used by '$owner'; set WEB_PORT to a free port"

@@ -20,7 +20,7 @@ run if you do not want the installer to run.
 | `PIHOLE_INTERFACE` | the default route's | Interface Pi-hole answers on, e.g. `eth0` or `wlan0`. Install only. |
 | `PIHOLE_DNS` | `1.1.1.1,1.0.0.1` | Upstream DNS servers, comma separated (`#port` suffix allowed). Install only. |
 | `PIHOLE_QUERY_LOGGING` | `yes` | Log DNS queries. Install only. |
-| `PIHOLE_WEB_PORT` | `80`, or `8080` if port 80 is taken | Port of the web admin. Re-runs move it when you change it. |
+| `PIHOLE_WEB_PORT` | `80`, or `8080` if port 80 is taken | Port of the web admin. Re-runs move it when you change it. The `web` task moves the admin page from 80 to this port (`8080` when empty), so set `80` only to keep the start page off port 80. |
 | `PIHOLE_LISTEN_ALL` | empty: leave as it is | `yes`: answer DNS queries from any network, e.g. your tailnet (only safe behind a firewall). `no`: only from local subnets. Applied on every run. |
 | `PIHOLE_DOCKER` | `no` | `yes` runs Pi-hole in its own Docker container instead of the installer ([below](#run-it-in-docker)). |
 | `PIHOLE_IMAGE` | `pihole/pihole:latest` | Docker image for `PIHOLE_DOCKER=yes`. |
@@ -31,8 +31,8 @@ apply on every run instead.
 
 ## Reach it
 
-- Web admin: `http://<pi>/admin` (or `http://<pi>:8080/admin` when the `web`
-  task already had port 80). The task prints the address.
+- Web admin: `http://<pi>/admin`, or `http://<pi>:8080/admin` together with
+  the `web` task, whose start page takes port 80. The task prints the address.
 - Generated password: printed once and kept in
   `/var/lib/rpi-setup/secrets/pihole.env` (root only).
 - To use it, set your router's DNS server (DHCP option) to the Pi's address.
@@ -58,8 +58,9 @@ it is missing, and the `curl | bash` installer is not used.
 
 ## Good to know
 
-- Pi-hole and nginx (`web`) can run together: whichever comes second moves to
-  port 8080.
+- Pi-hole and nginx (`web`) can run together: the start page gets port 80
+  and Pi-hole's admin page moves to `PIHOLE_WEB_PORT` (default `8080`),
+  whichever task runs first.
 - Pi-hole needs port 53 and does not install inside a container (CI skips it).
 - Update with `sudo bash update.sh` (runs `pihole -up`). Debug with
   `pihole -d`. Remove with `pihole uninstall`.

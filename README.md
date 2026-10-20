@@ -65,7 +65,7 @@ how to reach it and what to watch out for.
 | [`samba`](docs/tasks/samba.md) | Read-write NAS share `\\<pi>\nas-share` for your user | `SAMBA_PASSWORD` |
 | [`log2ram`](docs/tasks/log2ram.md) | log2ram: `/var/log` and the journal in RAM, copied to the SD card hourly, fewer SD card writes (applies after a reboot) | `LOG2RAM_SIZE` |
 | [`backup`](docs/tasks/backup.md) | Nightly archive of container data, Pi-hole, Samba, SSH and rpi-setup settings (systemd timer, keeps 7) | `BACKUP_DEST` (a USB disk) |
-| [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (`:8080` if Pi-hole already uses port 80) that links the Pi's web pages and lists the tasks set up on it and the updates available for them, with tabs for Docker containers and TeamSpeak, in light or dark | `WEB_PORT`, `WEB_TITLE`, `WEB_UPDATES` |
+| [`web`](docs/tasks/web.md) | nginx with a start page on `http://<pi>` (port 80; Pi-hole's admin page moves to `:8080`) that links the Pi's web pages and lists the tasks set up on it and the updates available for them, with tabs for Docker containers and TeamSpeak, in light or dark | `WEB_PORT`, `WEB_TITLE`, `WEB_UPDATES` |
 | [`netalertx`](docs/tasks/netalertx.md) | NetAlertX LAN device tracker on `http://<pi>:20211`, with a login (needs `docker`) | `NETALERTX_PASSWORD` (empty = generated) |
 | [`teamspeak`](docs/tasks/teamspeak.md) | TeamSpeak 6 server, voice `:9987`, file `:30033`, web query `:10080`, who is online and when on the start page (needs `docker`, 64-bit OS) | `TEAMSPEAK_QUERY_ADMIN_PASSWORD` |
 | [`denwatcher`](docs/tasks/denwatcher.md) | Den-Watcher website with the Pi's CPU, memory and temperatures on `http://<pi>:9393` (needs `docker`, 64-bit OS) | `DENWATCHER_PORT` |
