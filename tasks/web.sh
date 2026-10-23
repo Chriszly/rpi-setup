@@ -1319,11 +1319,13 @@ web_updates_run() {
 # 80 when it holds it; anything else on 80 (or PIHOLE_WEB_PORT=80) leaves
 # nginx on 8080.
 web_port() {
-  local want="${WEB_PORT:-}" cur="${1:-}" owner
+  local want="${WEB_PORT:-}" cur="${1:-}" owner to
   if [[ -z "$want" && -n "$cur" && "$cur" != 8080 ]]; then echo "$cur"; return; fi
   owner="$(port_owner "${want:-80}")" || owner=""
   if [[ "${want:-80}" == 80 && "$owner" == pihole-FTL ]]; then
-    if web_move_pihole >&2; then echo 80; return; fi
+    # A subshell, so the pihole settings do not leak into this task.
+    to="$(load_task_config pihole >/dev/null; printf '%s' "${PIHOLE_WEB_PORT:-8080}")"
+    if [[ "$to" != 80 ]]; then web_move_pihole "$to" >&2; echo 80; return; fi
     [[ -z "$want" ]] || die 'WEB_PORT=80 and PIHOLE_WEB_PORT=80 both ask for port 80; change one of them'
     warn 'PIHOLE_WEB_PORT=80 keeps Pi-hole on port 80; nginx will listen on 8080'
   elif [[ -n "$want" ]]; then
@@ -1336,24 +1338,31 @@ web_port() {
   echo 8080
 }
 
-# Move Pi-hole's admin UI from port 80 to PIHOLE_WEB_PORT, else 8080, in its
-# container or on the host. Fails when PIHOLE_WEB_PORT is 80.
+# Move Pi-hole's admin UI from port 80 to port $1, in its container or on the
+# host. nginx on that port (8080, the old fallback) is stopped first, so the
+# two can swap; the caller starts it again on port 80. web_port runs it in
+# $( ), where errexit is off, so every step checks its own result.
 web_move_pihole() {
-  local to dir owner
-  # A subshell, so the pihole settings do not leak into this task.
-  to="$(load_task_config pihole >/dev/null; printf '%s' "${PIHOLE_WEB_PORT:-8080}")"
-  [[ "$to" != 80 ]] || return 1
+  local to="$1" dir owner
   owner="$(port_owner "$to")" || owner=""
+  if [[ "$owner" == nginx ]]; then
+    info "Stopping nginx on port $to so Pi-hole can move there"
+    if task_in_container web; then docker stop web >/dev/null; else systemctl stop nginx; fi ||
+      die "Could not stop nginx on port $to"
+    owner=""
+  fi
   [[ -z "$owner" || "$owner" == pihole-FTL ]] ||
     die "Port 80 is for the start page, but Pi-hole cannot move to $to: '$owner' uses it (set PIHOLE_WEB_PORT)"
   info "Moving Pi-hole's web admin from port 80 to $to so the start page gets port 80"
   if task_in_container pihole; then
     dir="$(container_dir pihole)"
-    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${to}o,[::]:${to}o\"/" "$dir/docker-compose.yml"
+    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${to}o,[::]:${to}o\"/" "$dir/docker-compose.yml" ||
+      die "Could not change the port in $dir/docker-compose.yml"
     docker compose -f "$dir/docker-compose.yml" up -d >/dev/null || die 'Could not restart the Pi-hole container'
   else
-    pihole-FTL --config webserver.port "${to}o,[::]:${to}o" >/dev/null
-    systemctl restart pihole-FTL
+    pihole-FTL --config webserver.port "${to}o,[::]:${to}o" >/dev/null ||
+      die "Could not set Pi-hole's web admin port to $to"
+    systemctl restart pihole-FTL || die 'Could not restart pihole-FTL'
   fi
   for _ in $(seq 1 30); do
     [[ "$(port_owner 80 || true)" == pihole-FTL ]] || break
