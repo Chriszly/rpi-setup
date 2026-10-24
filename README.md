@@ -23,7 +23,7 @@ which the flash scripts write, or Bookworm).
 
    ```bash
    sudo apt-get update && sudo apt-get install -y git
-   git clone https://github.com/Chriszly/rpi-setup.git
+   git clone https://github.com/Programmer-Den/rpi-setup.git
    cd rpi-setup
    bash setup.sh --init-config      # creates config/rpi-setup.env
    nano config/rpi-setup.env        # every setting is optional
