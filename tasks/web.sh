@@ -214,7 +214,7 @@ web_index_html() {
     <p class="note" id="note">Looking for web pages on this Pi...</p>
     <section id="tasks-box" hidden>
       <div class="head"><h2>Set up on this Pi</h2>
-        <a href="https://github.com/Chriszly/rpi-setup">rpi-setup on GitHub</a></div>
+        <a href="https://github.com/Programmer-Den/rpi-setup">rpi-setup on GitHub</a></div>
       <div class="list" id="tasks"></div>
     </section>
     <section id="updates-box" hidden>
@@ -260,7 +260,7 @@ web_index_html() {
     <div class="list" id="tsx-recent"></div>
   </div>
   <noscript><p class="note">Turn on JavaScript to see the web pages on this Pi.</p></noscript>
-  <footer>Provisioned by <a href="https://github.com/Chriszly/rpi-setup">rpi-setup</a>.
+  <footer>Provisioned by <a href="https://github.com/Programmer-Den/rpi-setup">rpi-setup</a>.
     New services and containers show up here on their own within a minute.</footer>
 </main>
 <script>

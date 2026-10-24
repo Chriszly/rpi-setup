@@ -1088,7 +1088,7 @@ try {
         if (-not $piHost) { $piHost = 'raspberrypi' }
         Write-Host ("    ssh {0}@{1}.local" -f $cred.User, $piHost)
         Write-Info 'Then on the Pi:'
-        Write-Host '    git clone https://github.com/Chriszly/rpi-setup.git'
+        Write-Host '    git clone https://github.com/Programmer-Den/rpi-setup.git'
         Write-Host '    cd rpi-setup && sudo bash setup.sh'
         if ($firstBoot['GITHUB_KEY']) { Write-GitHubKeyNotice $firstBoot['GITHUB_KEY'].Public }
     }

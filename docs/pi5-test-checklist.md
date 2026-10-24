@@ -29,7 +29,7 @@ Put the card in the Pi, connect the network, power it on and note the time.
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/Chriszly/rpi-setup.git
+git clone https://github.com/Programmer-Den/rpi-setup.git
 cd rpi-setup
 bash setup.sh --init-config
 nano config/rpi-setup.env

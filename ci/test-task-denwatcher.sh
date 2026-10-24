@@ -11,8 +11,8 @@ TASKS=()
 . "$ROOT/tasks/denwatcher.sh"
 
 # --- the compose file -----------------------------------------------------------
-out="$(denwatcher_compose ghcr.io/chriszly/den-watcher:1.2.3 8090)"
-assert_contains "compose: image" 'image: "ghcr.io/chriszly/den-watcher:1.2.3"' "$out"
+out="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090)"
+assert_contains "compose: image" 'image: "ghcr.io/programmer-den/den-watcher:1.2.3"' "$out"
 assert_contains "compose: port on the host" '"0.0.0.0:8090:9393"' "$out"
 assert_contains "compose: port the page is reachable on" 'PUBLIC_PORT: "8090"' "$out"
 assert_contains "compose: history kept in a volume" "data:/data" "$out"
@@ -25,14 +25,14 @@ assert_contains "compose: card name on the start page" 'rpi-setup.link.name: "De
 assert_contains "compose: card description on the start page" 'rpi-setup.link.description: "CPU, memory, temperature and disks of this Pi, with their history"' "$out"
 assert_contains "compose: card links to the port on the host" 'rpi-setup.link.port: "8090"' "$out"
 assert_contains "compose: router passwords mounted read-only" "./router-secrets:/run/secrets:ro" "$out"
-out="$(denwatcher_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 'Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1')"
+out="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090 'Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1')"
 assert_contains "compose: routers" 'HUB_ROUTERS: "Router=upnp:192.168.1.1,Box=fritzbox:monitor@192.168.178.1"' "$out"
 assert_lacks "compose: no containers add-on without Docker's folder" "den-watcher-containers" "$out"
 assert_lacks "compose: no add-on folder without the add-on" "addons" "$out"
-with="$(denwatcher_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 '' /srv/docker)"
+with="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090 '' /srv/docker)"
 assert_contains "containers: add-on service" "entrypoint: [\"/den-watcher-containers\"]" "$with"
-assert_contains "containers: same image" $'den-watcher-containers:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"' "$with"
-assert_contains "compose: the website as den-watcher" $'den-watcher:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"\n    container_name: den-watcher\n' "$with"
+assert_contains "containers: same image" $'den-watcher-containers:\n    image: "ghcr.io/programmer-den/den-watcher:1.2.3"' "$with"
+assert_contains "compose: the website as den-watcher" $'den-watcher:\n    image: "ghcr.io/programmer-den/den-watcher:1.2.3"\n    container_name: den-watcher\n' "$with"
 assert_contains "containers: names from Docker's folder" 'source: "/srv/docker/containers"' "$with"
 assert_contains "containers: cgroups read-only" "/sys/fs/cgroup:/host/sys/fs/cgroup:ro" "$with"
 assert_contains "containers: no network" "network_mode: none" "$with"
@@ -40,8 +40,8 @@ assert_lacks "containers: never the Docker socket" "docker.sock" "$with"
 assert_contains "containers: website reads the add-on folder" "ADDONS_DIR: /addons" "$with"
 assert_contains "containers: website mounts it read-only" "addons:/addons:ro" "$with"
 assert_contains "containers: add-on folder in memory" "type: tmpfs" "$with"
-all="$(denwatcher_compose ghcr.io/chriszly/den-watcher:1.2.3 8090 '' '' "$denwatcher_all_addons" 365)"
-assert_contains "addons: power runs its program" $'den-watcher-power:\n    image: "ghcr.io/chriszly/den-watcher:1.2.3"\n    container_name: den-watcher-power\n    restart: unless-stopped\n    entrypoint: ["/den-watcher-power"]\n    user: "0:0"' "$all"
+all="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090 '' '' "$denwatcher_all_addons" 365)"
+assert_contains "addons: power runs its program" $'den-watcher-power:\n    image: "ghcr.io/programmer-den/den-watcher:1.2.3"\n    container_name: den-watcher-power\n    restart: unless-stopped\n    entrypoint: ["/den-watcher-power"]\n    user: "0:0"' "$all"
 assert_contains "addons: processes as the image's user" $'entrypoint: ["/den-watcher-processes"]\n    environment:' "$all"
 assert_contains "addons: bluetooth reads the system D-Bus read-only" "/run/dbus:/host/run/dbus:ro" "$all"
 assert_eq "addons: one service per add-on" 8 "$(grep -c 'entrypoint: \["/den-watcher-' <<<"$all")"
@@ -70,9 +70,14 @@ assert_contains "bad port stops the task" "DENWATCHER_PORT" "$(cat "$TMP/err")"
 ( DENWATCHER_IMAGE='Bad Image'; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "bad image stops the task" "DENWATCHER_IMAGE must be a Docker image" "$(cat "$TMP/err")"
 ( DENWATCHER_IMAGE=ghcr.io/chriszly/usage-control:2.0.7a; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
-assert_contains "old image name stops the task" "set it to ghcr.io/chriszly/den-watcher with the same tag" "$(cat "$TMP/err")"
+assert_contains "old image name stops the task" "set it to ghcr.io/programmer-den/den-watcher:main" "$(cat "$TMP/err")"
 ( DENWATCHER_IMAGE=registry.local:5000/chriszly/usage-control@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "old image name by digest stops the task" "Den-Watcher's old image" "$(cat "$TMP/err")"
+# The quote stops the task after the image checks, before anything is set up.
+( DENWATCHER_IMAGE=ghcr.io/chriszly/den-watcher:latest; DENWATCHER_ROUTERS='Router=upnp:192.168.1.1"'; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "image under the old owner warns" "gets no new versions since Den-Watcher moved" "$(cat "$TMP/err")"
+( DENWATCHER_ROUTERS='Router=upnp:192.168.1.1"'; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_lacks "new image name does not warn" "gets no new versions" "$(cat "$TMP/err")"
 ( DENWATCHER_ROUTERS='Router=upnp:192.168.1.1"'; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "router with a quote stops the task" "DENWATCHER_ROUTERS must be" "$(cat "$TMP/err")"
 # shellcheck disable=SC2016 # a literal $, as compose would expand it

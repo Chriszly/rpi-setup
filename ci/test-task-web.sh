@@ -23,7 +23,7 @@ assert_contains "page: reads the container list" "get('containers.json'" "$page"
 assert_contains "page: reads the TeamSpeak usage" "get('teamspeak.json'" "$page"
 assert_contains "page: reads the tasks set up here" "get('tasks.json'" "$page"
 assert_contains "page: reads the update check" "get('updates.json'" "$page"
-assert_contains "page: links the rpi-setup repository" 'href="https://github.com/Chriszly/rpi-setup"' "$page"
+assert_contains "page: links the rpi-setup repository" 'href="https://github.com/Programmer-Den/rpi-setup"' "$page"
 assert_contains "page: charts how many were online at once" "chartTab.render(data.concurrent)" "$page"
 assert_contains "page: shows each user's server groups" "groups: u.groups" "$page"
 assert_contains "page: has a Docker tab" 'href="#docker"' "$page"
@@ -66,7 +66,7 @@ case "$1" in
     if [[ "$3" == '{{.Name}}'* ]]; then
       printf '/web\x1fnginx:stable-alpine\x1frunning\x1f\x1f2026-10-03T09:55:01.123456789Z\x1f0001-01-01T00:00:00Z\x1f0\x1fhost\x1f\n'
       printf '/old\x1fbusybox\x1fexited\x1f\x1f2026-10-01T08:00:00.5Z\x1f2026-10-02T08:00:00.5Z\x1f3\x1fbridge\x1f\n'
-      printf '/den-watcher\x1fghcr.io/chriszly/den-watcher:main\x1frunning\x1fhealthy\x1f2026-10-03T10:00:00.1Z\x1f0001-01-01T00:00:00Z\x1f0\x1fbridge\x1f'
+      printf '/den-watcher\x1fghcr.io/programmer-den/den-watcher:main\x1frunning\x1fhealthy\x1f2026-10-03T10:00:00.1Z\x1f0001-01-01T00:00:00Z\x1f0\x1fbridge\x1f'
       printf '0.0.0.0:8090>9393/tcp :::8090>9393/tcp 127.0.0.1:9999>80/tcp \n'
       exit
     fi
@@ -136,7 +136,7 @@ assert_lacks "list: a label cannot set a javascript: link" 'javascript' "$json"
 containers="$(cat "$TMP/html/containers.json" 2>/dev/null || true)"
 assert_eq "containers: every container by name, ports once each, times in seconds" \
 '{"containers":[
-{"name":"den-watcher","image":"ghcr.io/chriszly/den-watcher:main","state":"running","health":"healthy","started":"2026-10-03T10:00:00Z","finished":"","restarts":0,"network":"bridge","ports":["8090:9393/tcp"]},
+{"name":"den-watcher","image":"ghcr.io/programmer-den/den-watcher:main","state":"running","health":"healthy","started":"2026-10-03T10:00:00Z","finished":"","restarts":0,"network":"bridge","ports":["8090:9393/tcp"]},
 {"name":"old","image":"busybox","state":"exited","health":"","started":"2026-10-01T08:00:00Z","finished":"2026-10-02T08:00:00Z","restarts":3,"network":"bridge","ports":[]},
 {"name":"web","image":"nginx:stable-alpine","state":"running","health":"","started":"2026-10-03T09:55:01Z","finished":"","restarts":0,"network":"host","ports":[]}
 ]}' "$containers"
@@ -194,14 +194,14 @@ case "\$1 \$2" in
   'inspect -f')
     printf '/web\x1fnginx:stable-alpine\x1fsha256:i1\n'
     printf '/web2\x1fnginx:stable-alpine\x1fsha256:i1\n'
-    printf '/den-watcher\x1fghcr.io/chriszly/den-watcher:main\x1fsha256:i2\n'
+    printf '/den-watcher\x1fghcr.io/programmer-den/den-watcher:main\x1fsha256:i2\n'
     printf '/built\x1fteamspeak-usage\x1fsha256:i3\n'
     printf '/pinned\x1fbusybox@$d1\x1fsha256:i4\n'
     printf '/private\x1fghcr.io/me/private:1\x1fsha256:i5\n' ;;
   'image inspect')
     case "\${*: -1}" in
       sha256:i1) printf 'nginx@$d1 ' ;;
-      sha256:i2) printf 'ghcr.io/chriszly/den-watcher@$d1 ' ;;
+      sha256:i2) printf 'ghcr.io/programmer-den/den-watcher@$d1 ' ;;
       sha256:i4) printf 'busybox@$d1 ' ;;
       sha256:i5) printf 'ghcr.io/me/private@$d3 ' ;;
     esac ;;
@@ -223,7 +223,7 @@ if [[ "\$*" != *'Bearer t0k'* ]]; then
 fi
 case "\$url" in
   https://registry-1.docker.io/v2/library/nginx/manifests/stable-alpine) d=$d1 ;;
-  https://ghcr.io/v2/chriszly/den-watcher/manifests/main) d=$d2 ;;
+  https://ghcr.io/v2/programmer-den/den-watcher/manifests/main) d=$d2 ;;
   *) printf 'HTTP/2 403\r\n\r\n'; exit ;;
 esac
 printf 'HTTP/2 200\r\nDocker-Content-Digest: %s\r\n\r\n' "\$d"
@@ -276,7 +276,7 @@ for u in d["items"]:
 rpi-setup|git|$head|$head|False|main
 Pi-hole|pihole|Core v6.1, W|Core v6.2, W|True|
 EEPROM firmware|eeprom|Mon 22 Jan 1|Thu 10 Oct 1|True|
-den-watcher|container|sha256:11111|sha256:22222|True|ghcr.io/chriszly/den-watcher:main
+den-watcher|container|sha256:11111|sha256:22222|True|ghcr.io/programmer-den/den-watcher:main
 private|container|sha256:33333||None|ghcr.io/me/private:1
 web|container|sha256:11111|sha256:11111|False|nginx:stable-alpine
 web2|container|sha256:11111|sha256:11111|False|nginx:stable-alpine
