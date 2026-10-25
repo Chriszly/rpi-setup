@@ -11,6 +11,48 @@ set -euo pipefail
 TASKS=()
 . "$ROOT/tasks/web.sh"
 
+# web_port: the start page gets port 80, moving Pi-hole's admin UI off it.
+web_port_with() {  # owner of port 80, WEB_PORT, PIHOLE_WEB_PORT, port used so far
+  ( OWNER80="$1" WEB_PORT="$2" PIHOLE_WEB_PORT="$3"
+    port_owner() { [[ "$1" == 80 && -n "$OWNER80" ]] && echo "$OWNER80"; }
+    web_move_pihole() { echo "$1" >"$TMP/moved"; }
+    web_port "${4:-}" 2>/dev/null )
+}
+assert_eq "web_port takes a free port 80" "80" "$(web_port_with '' '' '')"
+assert_eq "web_port keeps port 80 from nginx" "80" "$(web_port_with nginx '' '')"
+assert_eq "web_port moves Pi-hole off port 80" "80" "$(web_port_with pihole-FTL '' '')"
+assert_eq "web_port moves Pi-hole to 8080 by default" "8080" "$(cat "$TMP/moved")"
+web_port_with pihole-FTL '' 8085 >/dev/null
+assert_eq "web_port moves Pi-hole to PIHOLE_WEB_PORT" "8085" "$(cat "$TMP/moved")"
+assert_eq "web_port uses 8080 when Pi-hole must keep 80" "8080" "$(web_port_with pihole-FTL '' 80)"
+assert_eq "web_port uses 8080 when another server has 80" "8080" "$(web_port_with apache2 '' '')"
+assert_eq "web_port follows WEB_PORT" "8081" "$(web_port_with pihole-FTL 8081 '')"
+assert_fails "web_port dies when WEB_PORT and PIHOLE_WEB_PORT both want 80" web_port_with pihole-FTL 80 80
+assert_eq "web_port keeps the port used so far" "8090" "$(web_port_with pihole-FTL '' '' 8090)"
+assert_eq "web_port leaves the old 8080 fallback for port 80" "80" "$(web_port_with pihole-FTL '' '' 8080)"
+assert_eq "web_port follows WEB_PORT over the port used so far" "8091" "$(web_port_with '' 8091 '' 8090)"
+
+# web_move_pihole: the Pi-hole container's admin port moves to PIHOLE_WEB_PORT.
+mkdir -p "$TMP/opt/pihole"
+printf 'services:\n  pihole:\n    environment:\n      FTLCONF_webserver_port: "80o,[::]:80o"\n' >"$TMP/opt/pihole/docker-compose.yml"
+out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
+  task_in_container() { true; }; port_owner() { return 1; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  web_move_pihole 8085 2>&1 )"
+assert_contains "move Pi-hole: says where the admin went" ":8085/admin" "$out"
+assert_contains "move Pi-hole: rewrites the compose port" 'FTLCONF_webserver_port: "8085o,[::]:8085o"' \
+    "$(cat "$TMP/opt/pihole/docker-compose.yml")"
+# nginx on 8080 (the old fallback) is stopped so Pi-hole can take that port.
+out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
+  task_in_container() { [[ "$1" == pihole ]]; }; port_owner() { [[ "$1" == 8080 ]] && echo nginx; }
+  systemctl() { echo "systemctl $*"; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  web_move_pihole 8080 2>&1 )"
+assert_contains "move Pi-hole: stops nginx on the target port" "systemctl stop nginx" "$out"
+assert_contains "move Pi-hole: then moves it there" ":8080/admin" "$out"
+
 # --- the start page --------------------------------------------------------------
 WEB_TITLE='My "Pi" \1 home'
 web_index_page "$TMP/index.html" >/dev/null
