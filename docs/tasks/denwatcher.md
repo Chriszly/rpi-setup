@@ -1,6 +1,6 @@
 # denwatcher - Den-Watcher website
 
-Runs [Den-Watcher](https://github.com/Chriszly/den-watcher), a website
+Runs [Den-Watcher](https://github.com/Programmer-Den/den-watcher), a website
 that shows the Pi's CPU and memory usage, temperatures and uptime, from its
 published Docker image (arm64 and amd64). It was the `usagecontrol` task
 before Den-Watcher's rename; see [Renamed from usagecontrol](#renamed-from-usagecontrol).
@@ -18,7 +18,7 @@ shown and it is taken down again.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `DENWATCHER_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
-| `DENWATCHER_IMAGE` | `ghcr.io/chriszly/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. |
+| `DENWATCHER_IMAGE` | `ghcr.io/programmer-den/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. |
 | `DENWATCHER_ROUTERS` | empty | Routers to show as devices of their own (Den-Watcher 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes Den-Watcher's `HUB_ROUTERS`. |
 | `DENWATCHER_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
 | `DENWATCHER_ADDONS` | `all` | Den-Watcher's other add-ons, each in a container of its own (see [Add-ons](#add-ons)): `all`, `none`, or a comma-separated list of `power`, `pressure`, `kernel`, `wifi`, `bluetooth`, `memory`, `ports` and `processes`. |
@@ -126,4 +126,10 @@ history, remove it with `sudo docker volume rm usagecontrol_data`.
 `USAGECONTROL_*` lines in the settings file still work, with a warning per
 line; rename them to `DENWATCHER_*`. The old image name
 `ghcr.io/chriszly/usage-control` stops the task: set `DENWATCHER_IMAGE` to
-`ghcr.io/chriszly/den-watcher` with the same tag (2.0.8a or later).
+`ghcr.io/programmer-den/den-watcher:main` or a release published there.
+
+Den-Watcher moved from Chriszly to the Programmer-Den organization. Its images
+are now published as `ghcr.io/programmer-den/den-watcher`; the image under the
+old owner, `ghcr.io/chriszly/den-watcher`, keeps its versions but gets no new
+ones, and the task warns when `DENWATCHER_IMAGE` still names it. Version tags
+and `:latest` exist under the new name from the first release after the move.

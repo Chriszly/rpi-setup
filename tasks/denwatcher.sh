@@ -202,14 +202,18 @@ denwatcher_move_old() {
 }
 
 run_denwatcher() {
-  : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/chriszly/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
+  : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/programmer-den/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
     "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}"
   require_port DENWATCHER_PORT
   require_image_ref DENWATCHER_IMAGE
   # Images under Den-Watcher's old name run the containers add-on under its old
   # name too, and that name is published only up to 3.0.0.
   [[ ! "$DENWATCHER_IMAGE" =~ /usage-control([:@][^/]*)?$ ]] ||
-    die "DENWATCHER_IMAGE names Den-Watcher's old image ($DENWATCHER_IMAGE); set it to ghcr.io/chriszly/den-watcher with the same tag (2.0.8a or later)"
+    die "DENWATCHER_IMAGE names Den-Watcher's old image ($DENWATCHER_IMAGE); set it to ghcr.io/programmer-den/den-watcher:main or a release published there"
+  # Den-Watcher moved to Programmer-Den; the image under the old owner keeps
+  # its versions but gets no new ones.
+  [[ ! "$DENWATCHER_IMAGE" =~ (^|/)chriszly/den-watcher([:@][^/]*)?$ ]] ||
+    warn "DENWATCHER_IMAGE ($DENWATCHER_IMAGE) gets no new versions since Den-Watcher moved; set it to ghcr.io/programmer-den/den-watcher with :main or a release published there"
   local containers=0
   if setting_on DENWATCHER_CONTAINERS; then containers=1; fi
   local addons="" addon
