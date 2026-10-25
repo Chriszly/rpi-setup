@@ -831,7 +831,7 @@ main() {
     say 'After the Pi boots (1-2 minutes), connect over SSH:'
     echo "    ssh $USER@${FLASH_HOSTNAME:-raspberrypi}.local"
     echo 'Then on the Pi:'
-    echo '    git clone https://github.com/Chriszly/rpi-setup.git'
+    echo '    git clone https://github.com/Programmer-Den/rpi-setup.git'
     echo '    cd rpi-setup && sudo bash setup.sh'
     [[ -z "$FLASH_GH_PUB" ]] || github_key_notice
   fi

@@ -23,7 +23,7 @@ For the equivalent guide on a Linux host, see [setup-linux.md](setup-linux.md).
 ## Step 1 - Get the repo
 
 ```powershell
-git clone https://github.com/Chriszly/rpi-setup.git
+git clone https://github.com/Programmer-Den/rpi-setup.git
 cd rpi-setup
 ```
 
@@ -34,7 +34,7 @@ Clone over HTTPS with your GitHub username and a **Personal Access Token**
 HTTPS):
 
 ```bash
-git clone https://<USER>:<TOKEN>@github.com/Chriszly/rpi-setup.git
+git clone https://<USER>:<TOKEN>@github.com/Programmer-Den/rpi-setup.git
 cd rpi-setup
 ```
 
@@ -42,7 +42,7 @@ Right after cloning, remove the credentials from the remote URL so pull/push do
 not embed your token in `.git/config`:
 
 ```bash
-git remote set-url origin https://github.com/Chriszly/rpi-setup.git
+git remote set-url origin https://github.com/Programmer-Den/rpi-setup.git
 ```
 
 > Note: you only need to authenticate to *clone*; the setup scripts themselves
@@ -165,7 +165,7 @@ On the Pi:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/Chriszly/rpi-setup.git
+git clone https://github.com/Programmer-Den/rpi-setup.git
 cd rpi-setup
 bash setup.sh --init-config     # creates config/rpi-setup.env
 nano config/rpi-setup.env       # passwords, ports, host name, ... (all optional)
@@ -181,9 +181,9 @@ If the repository is private, clone with your credentials as in Step 1, then
 drop the credentials from the remote right after:
 
 ```bash
-git clone https://<USER>:<TOKEN>@github.com/Chriszly/rpi-setup.git
+git clone https://<USER>:<TOKEN>@github.com/Programmer-Den/rpi-setup.git
 cd rpi-setup
-git remote set-url origin https://github.com/Chriszly/rpi-setup.git
+git remote set-url origin https://github.com/Programmer-Den/rpi-setup.git
 sudo bash setup.sh
 ```
 
