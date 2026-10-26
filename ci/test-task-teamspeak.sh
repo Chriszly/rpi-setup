@@ -58,20 +58,37 @@ unset -f docker
 assign_uid() { echo 12345; }
 chown() { :; }
 RPI_SETUP_ROOT="$ROOT"
-svc="$(teamspeak_usage_service "$TMP/ts" 030 secretpw)"
+svc="$(teamspeak_usage_service "$TMP/ts" 030 secretpw 09988 kims-den.example 443)"
+svc_default="$(teamspeak_usage_service "$TMP/ts" 30 secretpw)"
 unset -f assign_uid chown
 assert_contains "usage: builds the logger with its UID" 'UID: "12345"' "$svc"
 assert_contains "usage: days as a plain number" 'USAGE_DAYS: "30"' "$svc"
 assert_contains "usage: gets the serveradmin password" 'TS_QUERY_PASSWORD: "secretpw"' "$svc"
+assert_contains "usage: gets the voice port on the Pi" 'TS_VOICE_PORT: "9988"' "$svc"
+assert_contains "usage: gets the internet address" 'TS_PUBLIC_ADDRESS: "kims-den.example"' "$svc"
+assert_contains "usage: gets the forwarded port" 'TS_PUBLIC_PORT: "443"' "$svc"
+assert_contains "usage: no address looks up the public IP" 'TS_PUBLIC_ADDRESS: ""' "$svc_default"
+assert_contains "usage: forwarded port defaults to the voice port" 'TS_PUBLIC_PORT: "9987"' "$svc_default"
 assert_contains "usage: keeps its log next to the server" "source: $TMP/ts/usage/data" "$svc"
 assert_ok "usage: copies the Dockerfile" cmp "$ROOT/templates/teamspeak-usage/Dockerfile" "$TMP/ts/usage/Dockerfile"
 assert_ok "usage: copies the logger, runnable" test -x "$TMP/ts/usage/tsusage.py"
+
+# --- internet address setting -------------------------------------------------
+assert_eq "public address: empty looks it up" "" "$(teamspeak_public_address '')"
+assert_eq "public address: a DynDNS name" "kims-den.dyndns.example" "$(teamspeak_public_address kims-den.dyndns.example)"
+assert_eq "public address: an IPv4 address" "203.0.113.7" "$(teamspeak_public_address 203.0.113.7)"
+assert_eq "public address: an IPv6 address" "2001:db8::7" "$(teamspeak_public_address 2001:db8::7)"
+assert_eq "public address: Off turns it off" "no" "$(teamspeak_public_address Off)"
+assert_fails "public address: a URL is refused" teamspeak_public_address 'http://kims-den.example'
+assert_fails "public address: quotes are refused" teamspeak_public_address 'a"b'
+assert_fails "public address: a blank is refused" teamspeak_public_address 'a b'
 
 # --- usage logger: tsusage.py against a fake SSH query ------------------------------
 if command -v python3 >/dev/null 2>&1; then
   bot="$ROOT/templates/teamspeak-usage/tsusage.py"
   data="$TMP/usage"
   mkdir -p "$data"
+  export TS_PUBLIC_ADDRESS=no  # no lookups on the internet; the first run uses a file instead
   assert_eq "bot: answers ssh's password prompt" "pw 1" \
     "$(TSUSAGE_ASKPASS=1 TS_QUERY_PASSWORD='pw 1' python3 "$bot" 'Password:')"
 
@@ -108,7 +125,16 @@ while IFS= read -r cmd; do
   esac
 done
 EOF
-  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" timeout 2 python3 -B "$bot" 2>/dev/null || true
+  printf '203.0.113.7\n' >"$TMP/myip"
+  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" TS_VOICE_PORT=9988 TS_PUBLIC_ADDRESS= \
+    TS_PUBLIC_IP_URLS="file://$TMP/no-such-file file://$TMP/myip" timeout 2 python3 -B "$bot" 2>/dev/null || true
+  assert_eq "bot: looks up the public IP (the first service that answers), with the voice port" \
+    "203.0.113.7 203.0.113.7 9988 9988 True" "$(python3 -c '
+import json, sys
+u = json.load(open(sys.argv[1] + "/usage.json"))
+p = u["public"]
+print(p["address"], p["ip"], p["port"], u["voice_port"], p["checked"].endswith("Z"))
+' "$data" 2>&1)"
   first="$(python3 -c '
 import json, sys
 d = sys.argv[1]
@@ -165,6 +191,33 @@ w = 7 * 86400
 s = [{"uid": "a", "nick": "A", "start": -100, "end": 50}, {"uid": "b", "nick": "B", "start": 10, "end": 60},
      {"uid": "c", "nick": "C", "start": 60, "end": 70}, {"uid": "e", "nick": "E", "start": -900, "end": -5}]
 print(t.concurrent({"1": {"uid": "d", "nick": "D", "since": 65}}, s, w + 0.5))
+' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
+  # The internet address: a lookup every 30 minutes, 5 after a failure that
+  # keeps the last address; a DynDNS name with what it resolves to; or none.
+  assert_eq "bot: internet address from a lookup, a name or none" \
+"lookup 198.51.100.4 198.51.100.4 9987
+not again within 30 min True
+kept after a failure, retried in 5 min 198.51.100.4 True
+name localhost 127.0.0.1 443
+unknown name no-such-host.invalid  443
+off {}" "$(python3 -I -B -c '
+import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+answers = ["198.51.100.4", ""]
+t.public_ip = lambda urls: answers.pop(0)
+t.log = lambda msg: None
+t.PUBLIC_ADDRESS, t.PUBLIC_PORT = "", "9987"
+u = t.Usage.__new__(t.Usage); u.public = {}; u.public_next = 0
+u.set_public(1000); p = u.public; print("lookup", p["address"], p["ip"], p["port"])
+u.set_public(1000 + t.PUBLIC_EVERY - 1); print("not again within 30 min", len(answers) == 1)
+u.set_public(1000 + t.PUBLIC_EVERY)
+print("kept after a failure, retried in 5 min", u.public["ip"], u.public_next == 1000 + t.PUBLIC_EVERY + t.PUBLIC_RETRY)
+t.PUBLIC_ADDRESS, t.PUBLIC_PORT = "localhost", "443"
+u.public_next = 0; u.set_public(5000); p = u.public; print("name", p["address"], p["ip"], p["port"])
+t.PUBLIC_ADDRESS = "no-such-host.invalid"
+u.public_next = 0; u.set_public(6000); p = u.public; print("unknown name", p["address"], p["ip"], p["port"])
+t.PUBLIC_ADDRESS = "No"
+u.public = {}; u.public_next = 0; u.set_public(7000); print("off", u.public)
 ' "$ROOT/templates/teamspeak-usage" 2>&1)"
 
   cat >"$TMP/fake3" <<'EOF'

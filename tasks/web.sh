@@ -617,7 +617,12 @@ web_index_html() {
     return parts.join(' · ');
   }
 
-  function renderServer(sv) {
+  // host:port, with an IPv6 address in brackets.
+  function hostPort(h, port) { return (h.indexOf(':') >= 0 && h[0] !== '[' ? '[' + h + ']' : h) + ':' + port; }
+
+  // The server tiles. pub: the address people on the internet connect to,
+  // lanPort: the voice port on the Pi (both from teamspeak.json).
+  function renderServer(sv, pub, lanPort) {
     var tiles = [], up = sv.status ? sv.status === 'online' : null;
     if (sv.status) tiles.push(['Status', sv.status]);
     if (sv.clients_online !== undefined) {
@@ -634,13 +639,21 @@ web_index_html() {
     if (sv.channels !== undefined) tiles.push(['Channels', String(sv.channels)]);
     if (sv.client_connections !== undefined) tiles.push(['Connections ever', String(sv.client_connections)]);
     if (sv.reserved_slots) tiles.push(['Reserved slots', String(sv.reserved_slots)]);
-    if (sv.port) tiles.push(['Address', location.hostname + ':' + sv.port]);
+    var port = lanPort || sv.port;
+    if (pub.address && (pub.port || port)) {
+      tiles.push(['Internet address', hostPort(pub.address, pub.port || port),
+        pub.checked ? 'Checked ' + since(pub.checked) + ' ago' : '']);
+      if (pub.ip && pub.ip !== pub.address) tiles.push(['Public IP', pub.ip]);
+      else if (!pub.ip) tiles.push(['Public IP', 'does not resolve']);
+    }
+    if (port) tiles.push([pub.address ? 'LAN address' : 'Address', hostPort(location.hostname, port)]);
     if (sv.version) tiles.push(['Version', String(sv.version).split(' [')[0]]);
     if (sv.platform) tiles.push(['Platform', String(sv.platform)]);
     if (sv.created) tiles.push(['Created', new Date(sv.created * 1000).toLocaleDateString()]);
     document.getElementById('tsx-name').textContent = sv.name ? 'Server: ' + sv.name : 'Server';
     fill('tsx-server', tiles, function (list, t) {
       var tile = el('div', String(t[1]).length > 12 ? 'tile wide' : 'tile');
+      if (t[2]) tile.title = t[2];
       tile.appendChild(el('div', 'label', t[0]));
       var value = el('div', 'value', t[1]);
       if (t[0] === 'Status' && up !== null) {
@@ -676,7 +689,7 @@ web_index_html() {
     var recent = Array.isArray(data.recent) ? data.recent : [];
     showTabLink('teamspeak', true);
     chartTab.render(data.concurrent);
-    renderServer(data.server || {});
+    renderServer(data.server || {}, data.public || {}, data.voice_port);
     var clients = Array.isArray(data.clients) && data.clients.length ? data.clients
       : online.map(function (c) { return { nick: c.nick, since: c.since }; });
     fill('tsx-clients', clients, function (list, c) {

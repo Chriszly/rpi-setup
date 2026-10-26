@@ -140,7 +140,10 @@ With the `teamspeak` task's usage logger (`TEAMSPEAK_USAGE=yes`, the default)
 the **TeamSpeak** tab has everything the server reports, refreshed every minute:
 the server (status, people online out of its slots, uptime, ping, packet
 loss, bandwidth, data sent and received, channels, connections ever,
-address, version, platform, created, welcome message); everyone online with
+address on the LAN and the one to reach it from the internet (a DynDNS name
+or the Pi's public IP, see
+[internet address](teamspeak.md#internet-address)), version, platform,
+created, welcome message); everyone online with
 their server groups, channel, client version and platform, country and
 state (away, muted, talking, recording, idle); the channel tree with who is
 in each channel; a chart of how many people were online at the same time

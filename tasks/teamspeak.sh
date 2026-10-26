@@ -36,7 +36,9 @@ run_teamspeak() {
   : "${TEAMSPEAK_QUERY_HTTP:=yes}" "${TEAMSPEAK_ACCEPT_LICENSE:=yes}"
   : "${TEAMSPEAK_IMAGE:=teamspeaksystems/teamspeak6-server:latest}"
   : "${TEAMSPEAK_USAGE:=yes}" "${TEAMSPEAK_USAGE_DAYS:=90}"
+  : "${TEAMSPEAK_PUBLIC_ADDRESS:=}" "${TEAMSPEAK_PUBLIC_PORT:=${TEAMSPEAK_VOICE_PORT}}"
   require_port TEAMSPEAK_VOICE_PORT
+  require_port TEAMSPEAK_PUBLIC_PORT
   require_port TEAMSPEAK_FILE_PORT
   require_port TEAMSPEAK_QUERY_PORT
   require_image_ref TEAMSPEAK_IMAGE
@@ -57,6 +59,9 @@ run_teamspeak() {
   if ! [[ "$TEAMSPEAK_USAGE_DAYS" =~ ^[0-9]{1,4}$ ]] || (( 10#$TEAMSPEAK_USAGE_DAYS < 1 )); then
     die "TEAMSPEAK_USAGE_DAYS must be a number of days from 1 to 9999 (got '$TEAMSPEAK_USAGE_DAYS')"
   fi
+  local public
+  public="$(teamspeak_public_address "$TEAMSPEAK_PUBLIC_ADDRESS")" ||
+    die "TEAMSPEAK_PUBLIC_ADDRESS must be a host name or IP address, or no (got '$TEAMSPEAK_PUBLIC_ADDRESS')"
 
   # The official image is published for amd64 and arm64 only, so a Pi on a
   # 32-bit OS (armhf) cannot run it.
@@ -83,7 +88,8 @@ run_teamspeak() {
       new_secret admin_pw teamspeak TEAMSPEAK_QUERY_ADMIN_PASSWORD 'serveradmin query password'
     fi
     ssh_query='      TSSERVER_QUERY_SSH_ENABLED: "true"'
-    usage_service="$(teamspeak_usage_service "$dir" "$TEAMSPEAK_USAGE_DAYS" "$admin_pw")"
+    usage_service="$(teamspeak_usage_service "$dir" "$TEAMSPEAK_USAGE_DAYS" "$admin_pw" \
+      "$TEAMSPEAK_VOICE_PORT" "$public" "$TEAMSPEAK_PUBLIC_PORT")"
   fi
 
   # The official image runs as uid:gid 9987 and ignores PUID/PGID, so the data
@@ -173,11 +179,25 @@ EOF
   say "Connect with the TeamSpeak 6 client and enter the privilege key when asked."
 }
 
+# TEAMSPEAK_PUBLIC_ADDRESS $1 as the usage logger takes it: empty (look up the
+# public IP), "no" (for no, off, false or 0) or a host name or IP address.
+# Returns 1 for anything else.
+teamspeak_public_address() {
+  case "${1,,}" in
+    no|off|false|0) echo no ;;
+    *) [[ -z "$1" || "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.:-]{0,252})$ ]] || return 1
+       printf '%s\n' "$1" ;;
+  esac
+}
+
 # Copy the usage logger (templates/teamspeak-usage) to DIR/usage and print the
 # compose service that runs it, keeping DAYS days of visits, with the
-# serveradmin password PW. Its data folder gets its own UID.
+# serveradmin password PW, the voice port VOICE on the Pi and, for the start
+# page, the internet address PUBLIC (see teamspeak_public_address) with its
+# port PUBLIC_PORT. Its data folder gets its own UID.
 teamspeak_usage_service() {
-  local dir="$1" days="$2" pw="$3" src="$RPI_SETUP_ROOT/templates/teamspeak-usage" uid
+  local dir="$1" days="$2" pw="$3" voice="${4:-9987}" public="${5:-}" public_port="${6:-${4:-9987}}"
+  local src="$RPI_SETUP_ROOT/templates/teamspeak-usage" uid
   uid="$(assign_uid teamspeak-usage)"
   install -m 0755 -d "$dir/usage" "$dir/usage/data"
   chown "$uid:$uid" "$dir/usage/data"
@@ -202,6 +222,9 @@ teamspeak_usage_service() {
       TS_HOST: teamspeak
       USAGE_DAYS: "$((10#$days))"
       TS_QUERY_PASSWORD: "$pw"
+      TS_VOICE_PORT: "$((10#$voice))"
+      TS_PUBLIC_ADDRESS: "$public"
+      TS_PUBLIC_PORT: "$((10#$public_port))"
     volumes:
       - type: bind
         source: $dir/usage/data
