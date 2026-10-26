@@ -25,6 +25,8 @@ shown and it is taken down again.
 | `TEAMSPEAK_IMAGE` | `teamspeaksystems/teamspeak6-server:latest` | Docker image. |
 | `TEAMSPEAK_USAGE` | `yes` | Log who is online and when, for the start page ([below](#who-is-online-and-when)). |
 | `TEAMSPEAK_USAGE_DAYS` | `90` | Days of visits the usage log keeps (1 to 9999). |
+| `TEAMSPEAK_PUBLIC_ADDRESS` | empty: look up the public IP | The address friends outside your LAN connect to, shown on the start page: a DynDNS name or fixed address, empty to look up the Pi's public IPv4 address every 30 minutes, or `no` for none ([below](#internet-address)). Needs `TEAMSPEAK_USAGE=yes`. |
+| `TEAMSPEAK_PUBLIC_PORT` | `TEAMSPEAK_VOICE_PORT` | The UDP port your router forwards to the voice port, shown with the internet address. |
 
 ## What it installs and changes
 
@@ -49,6 +51,8 @@ shown and it is taken down again.
   shown only once; enter it in the client to become server admin. Find it
   later with `docker logs teamspeak`.
 - Forward UDP 9987 and TCP 30033 on your router for friends outside your LAN.
+  They connect to the internet address the start page's TeamSpeak tab shows
+  ([below](#internet-address)).
 
 ## Voice port
 
@@ -100,6 +104,33 @@ generated password). While the bot cannot reach the server it stops updating
 `usage.json`, so the start page hides its TeamSpeak tab after 10 minutes instead of
 showing an old list. The bot and its image are rebuilt when the `teamspeak`
 task runs, not by `update.sh`.
+
+## Internet address
+
+With `TEAMSPEAK_USAGE=yes` the start page's TeamSpeak tab shows, next to the
+address on your LAN, the **internet address** friends outside it connect to,
+as `address:port` with `TEAMSPEAK_PUBLIC_PORT` (default: the voice port). The
+usage bot works it out every 30 minutes (5 after a failure):
+
+- `TEAMSPEAK_PUBLIC_ADDRESS` empty (the default): it asks a "what is my IP"
+  service, `https://api.ipify.org` and else `https://ipv4.icanhazip.com`, for
+  the public IPv4 address the Pi connects from. Neither needs an account, and
+  they only learn that address. Most home connections get a new one now and
+  then, so the tab shows when it was checked (hover the tile) and keeps the
+  last address while the services cannot be reached.
+- A DynDNS name (e.g. `kims-den.dyndns.example`) or a fixed address: shown as
+  it is, with the IPv4 address the name resolves to (`does not resolve` when
+  it does not), so you can see whether your DynDNS name is up to date. Nothing
+  outside your DNS is asked. Give friends the name: it keeps working when the
+  address changes.
+- `no`: no internet address, and nothing is looked up.
+
+The address only reaches the server when the router forwards UDP
+`TEAMSPEAK_PUBLIC_PORT` (and TCP `TEAMSPEAK_FILE_PORT` for file transfers) to
+the Pi. Behind carrier-grade NAT (many mobile and some fibre or cable
+connections) the looked-up address is your provider's and cannot be
+forwarded; ask the provider for a public IPv4 address. Only IPv4 is looked
+up.
 
 ## Good to know
 

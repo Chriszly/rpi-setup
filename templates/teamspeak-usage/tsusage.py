@@ -15,7 +15,12 @@ $USAGE_DATA (default /data):
 
 Once a minute it also reads the server info, the channels and the details of
 each client online (channel, client version and platform, country, away and
-muted state, idle time) for the page's TeamSpeak tab.
+muted state, idle time) for the page's TeamSpeak tab, and every 30 minutes
+the address people on the internet connect to: $TS_PUBLIC_ADDRESS (a DynDNS
+name or a fixed address) and the IPv4 address it resolves to, or, when that is
+empty, the public IPv4 address a "what is my IP" service ($TS_PUBLIC_IP_URLS)
+sees the Pi connect from. TS_PUBLIC_ADDRESS=no shows none and looks up
+nothing.
 
 Visits older than $USAGE_DAYS days are dropped. When the connection or the
 bot stops, the people online stay recorded; on the next connect the ones still
@@ -23,22 +28,32 @@ there keep their start time and the others' visits end at the last check.
 
 Run with --summary to print usage.json from the files without connecting.
 """
+import ipaddress
 import json
 import os
 import queue
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 DATA = os.environ.get("USAGE_DATA", "/data")
 HOST = os.environ.get("TS_HOST", "teamspeak")
 PORT = os.environ.get("TS_QUERY_SSH_PORT", "10022")
 SERVER_ID = os.environ.get("TS_SERVER_ID", "1")
 DAYS = max(1, int(os.environ.get("USAGE_DAYS", "90") or 90))
+VOICE_PORT = os.environ.get("TS_VOICE_PORT", "")
+PUBLIC_ADDRESS = os.environ.get("TS_PUBLIC_ADDRESS", "").strip()
+PUBLIC_PORT = os.environ.get("TS_PUBLIC_PORT", "") or VOICE_PORT
+PUBLIC_IP_URLS = os.environ.get("TS_PUBLIC_IP_URLS",
+                                "https://api.ipify.org https://ipv4.icanhazip.com").split()
+PUBLIC_EVERY = 1800  # look up the public address again after, seconds
+PUBLIC_RETRY = 300   # ... and after a failed lookup
 TICK = 60          # keepalive and usage.json refresh, seconds
 SILENT = 3 * TICK  # reconnect when the server said nothing for this long
 WEEK = 7 * 86400
@@ -176,6 +191,27 @@ def channel_tree(channels):
     return out
 
 
+def public_ip(urls):
+    """The public IPv4 address the first of urls that answers reports (a
+    "what is my IP" service: the address as plain text), or ""."""
+    for url in urls:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                return str(ipaddress.IPv4Address(r.read(64).decode("ascii").strip()))
+        except Exception:  # no answer, an HTTP error or no address: try the next
+            continue
+    return ""
+
+
+def resolve(name):
+    """The IPv4 address host name name resolves to (an address stays as it
+    is), or ""."""
+    try:
+        return socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
+    except (OSError, UnicodeError, IndexError):
+        return ""
+
+
 def client_ip(rec):
     """The client's IP from clientlist -ip or a join event; an empty
     connection_client_ip (the server does not tell) gives ''."""
@@ -229,6 +265,8 @@ class Usage:
         stats = read_json("stats.json", {})
         self.channel_minutes = stats.get("channel_minutes") or {}
         self.sampled = 0
+        self.public = {}
+        self.public_next = 0
         self.connected = False
         self.pruned = 0
 
@@ -261,7 +299,25 @@ class Usage:
 
     def live(self):
         return {"server": self.server, "channels": self.channels, "details": self.details,
-                "channel_minutes": self.channel_minutes}
+                "channel_minutes": self.channel_minutes, "public": self.public,
+                "voice_port": number(VOICE_PORT) if VOICE_PORT else None}
+
+    def set_public(self, now):
+        """Every 30 minutes (5 after a failed lookup): the address people on
+        the internet connect to, its IPv4 address and port, and when that was
+        checked. A failed lookup keeps the last address found."""
+        if PUBLIC_ADDRESS.lower() == "no" or now < self.public_next:
+            return
+        ip = resolve(PUBLIC_ADDRESS) if PUBLIC_ADDRESS else public_ip(PUBLIC_IP_URLS)
+        self.public_next = now + (PUBLIC_EVERY if ip else PUBLIC_RETRY)
+        if not ip:
+            log("Could not %s; trying again in %d min" % (
+                "resolve " + PUBLIC_ADDRESS if PUBLIC_ADDRESS else "look up the public IP address",
+                PUBLIC_RETRY // 60))
+            if self.public and not PUBLIC_ADDRESS:
+                return
+        self.public = {"address": PUBLIC_ADDRESS or ip, "ip": ip,
+                       "port": number(PUBLIC_PORT) if PUBLIC_PORT else None, "checked": iso(now)}
 
     def set_live(self, server, channels, clients, now):
         """Take the server info, the channels and the client details read
@@ -503,7 +559,8 @@ def live_summary(online, live, names):
     for c in clients:
         c.pop("cid", None)
     return {"server": live.get("server") or {}, "channels": channels, "clients": clients,
-            "busy_channels": busy}
+            "busy_channels": busy, "public": live.get("public") or {},
+            "voice_port": live.get("voice_port")}
 
 
 def summary(online, sessions, now, names=lambda ids: [], live=None):
@@ -641,6 +698,7 @@ def run(usage):
             # Group names and members, channels and the clients' state change
             # at any time; once a minute is soon enough for the page.
             usage.set_groups(q.command("servergrouplist"))
+            usage.set_public(time.time())
             usage.set_live(q.command("serverinfo"), q.command("channellist -topic"),
                            q.command("clientlist -uid -groups -ip -away -voice -times -info -country"),
                            time.time())

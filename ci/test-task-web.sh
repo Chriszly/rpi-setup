@@ -76,6 +76,8 @@ assert_lacks "page: the overview has no TeamSpeak data" 'TeamSpeak' "$overview"
 assert_lacks "page: the overview has no container list" 'containers' "$overview"
 assert_contains "page: groups visitors from the same connection" "data.connections" "$page"
 assert_contains "page: TeamSpeak tab shows the server, channels and busy times" "renderServer(data.server" "$page"
+assert_contains "page: TeamSpeak tab shows the internet address" "'Internet address'" "$page"
+assert_contains "page: ... with the voice port on the Pi for the LAN address" "data.voice_port" "$page"
 assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
 WEB_TITLE=Other
 web_index_page "$TMP/index.html" >/dev/null
