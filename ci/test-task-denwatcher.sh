@@ -44,6 +44,7 @@ all="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090 '' '' "$
 assert_contains "addons: power runs its program" $'den-watcher-power:\n    image: "ghcr.io/programmer-den/den-watcher:1.2.3"\n    container_name: den-watcher-power\n    restart: unless-stopped\n    entrypoint: ["/den-watcher-power"]\n    user: "0:0"' "$all"
 assert_contains "addons: processes as the image's user" $'entrypoint: ["/den-watcher-processes"]\n    environment:' "$all"
 assert_contains "addons: bluetooth reads the system D-Bus read-only" "/run/dbus:/host/run/dbus:ro" "$all"
+assert_contains "addons: wifi reads the system D-Bus too" $'entrypoint: ["/den-watcher-wifi"]\n    environment:\n      HOST_PROC: /host/proc\n      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket' "$all"
 assert_eq "addons: one service per add-on" 8 "$(grep -c 'entrypoint: \["/den-watcher-' <<<"$all")"
 assert_eq "addons: none with network" 8 "$(grep -c 'network_mode: none' <<<"$all")"
 assert_contains "addons: website reads them without the containers add-on" "addons:/addons:ro" "$all"
@@ -153,10 +154,13 @@ assert_lacks "addons: only those listed" "den-watcher-power" "$(cat "$compose")"
 assert_contains "addons: all by default, each checked to stay up" "den-watcher-processes" "$(cat "$TMP/waited")"
 if [[ -S /run/dbus/system_bus_socket ]]; then
   assert_contains "addons: bluetooth with a system D-Bus" "den-watcher-bluetooth" "$(cat "$compose")"
+  assert_contains "addons: wifi with a system D-Bus" "den-watcher-wifi" "$(cat "$compose")"
 else
   ( run_denwatcher ) >/dev/null 2>"$TMP/err"
   assert_lacks "addons: no system D-Bus leaves bluetooth out" "den-watcher-bluetooth" "$(cat "$compose")"
   assert_contains "addons: and says so" "bluetooth add-on is left out" "$(cat "$TMP/err")"
+  assert_lacks "addons: no system D-Bus leaves wifi out" "den-watcher-wifi" "$(cat "$compose")"
+  assert_contains "addons: and says so for wifi" "wifi add-on is left out" "$(cat "$TMP/err")"
 fi
 # shellcheck disable=SC2329 # called by run_denwatcher
 docker() { [[ "$1" == info ]] && echo "$TMP/nodocker"; }

@@ -128,8 +128,9 @@ EOF2
 # program from the same image, reading the host's /proc or /sys read-only and
 # writing to the in-memory addons volume, without any capability, network or
 # writable file system. It runs as the image's non-root user, except power,
-# which needs root for the CPU's energy counters; bluetooth also reads the
-# host's system D-Bus (a file socket, not network), only to list devices.
+# which needs root for the CPU's energy counters; bluetooth and wifi also read
+# the host's system D-Bus (a file socket, not network), only to list the
+# devices and the Wi-Fi networks nearby that NetworkManager found.
 denwatcher_compose_addon() {
   local user="" env mounts
   case "$2" in
@@ -140,6 +141,9 @@ denwatcher_compose_addon() {
     bluetooth)
       env=$'      HOST_SYS: /host/sys\n      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket'
       mounts=$'      - /sys:/host/sys:ro\n      - /run/dbus:/host/run/dbus:ro' ;;
+    wifi)
+      env=$'      HOST_PROC: /host/proc\n      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket'
+      mounts=$'      - /proc:/host/proc:ro\n      - /run/dbus:/host/run/dbus:ro' ;;
     *)
       env='      HOST_PROC: /host/proc'
       mounts='      - /proc:/host/proc:ro' ;;
@@ -300,12 +304,16 @@ run_denwatcher() {
     fi
   fi
 
-  # The Bluetooth add-on asks BlueZ through the system D-Bus; without it
-  # Docker would create an empty /run/dbus, so the add-on is left out.
-  if [[ " $addons " == *" bluetooth "* && ! -S /run/dbus/system_bus_socket ]]; then
-    warn "No system D-Bus (/run/dbus/system_bus_socket), so the bluetooth add-on is left out"
-    addons="$(tr ' ' '\n' <<<"$addons" | grep -vx bluetooth | xargs)"
-  fi
+  # The Bluetooth add-on asks BlueZ and the Wi-Fi add-on NetworkManager
+  # through the system D-Bus; without it Docker would create an empty
+  # /run/dbus, so they are left out.
+  local addon
+  for addon in bluetooth wifi; do
+    if [[ " $addons " == *" $addon "* && ! -S /run/dbus/system_bus_socket ]]; then
+      warn "No system D-Bus (/run/dbus/system_bus_socket), so the $addon add-on is left out"
+      addons="$(tr ' ' '\n' <<<"$addons" | grep -vx "$addon" | xargs)"
+    fi
+  done
 
   local dir name=den-watcher changed=0
   dir="$(container_dir denwatcher)"

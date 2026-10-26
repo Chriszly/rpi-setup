@@ -58,7 +58,7 @@ container from the same image, writes what it reads to the in-memory
 | `power` | Power the CPU and the kernel's hwmon sensors report. Runs as root, as only root may read the CPU's energy counters, but without any capability. A Pi 5's total power needs `vcgencmd` on the host, which a container does not reach. |
 | `pressure` | How much of the time tasks waited for the CPU, memory and disks (`/proc/pressure`; Raspberry Pi OS's kernel has it switched off, so it may show nothing). |
 | `kernel` | Context switches, interrupts, new processes, open files, sockets, TCP connections and retransmissions. |
-| `wifi` | Link quality and signal of each connected Wi-Fi interface. |
+| `wifi` | Link quality and signal of each connected Wi-Fi interface, and the Wi-Fi networks nearby from the scans NetworkManager makes on its own (it starts none), asked through the host's system D-Bus (`/run/dbus`, read-only); a hub compares them under *Compare devices*, *Wi-Fi nearby*. Left out with a warning where there is no system D-Bus; without NetworkManager (Raspberry Pi OS before bookworm) the networks nearby are left out. |
 | `bluetooth` | Connected Bluetooth devices with their name, kind or battery, asked from BlueZ through the host's system D-Bus (`/run/dbus`, read-only); left out with a warning where there is none. It only lists devices. |
 | `memory` | Memory details such as dirty and slab memory, page faults and swapping. |
 | `ports` | The TCP and UDP ports the Pi listens on. |
