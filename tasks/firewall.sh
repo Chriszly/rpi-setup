@@ -296,6 +296,11 @@ firewall_service_ports() {
     : "${DENWATCHER_PORT:=9393}"
     require_port DENWATCHER_PORT
     printf '%s/tcp web denwatcher\n' "$DENWATCHER_PORT"
+    # The status page is meant for outside the local network.
+    if [[ -n "${DENWATCHER_STATUS_PORT:-}" ]]; then
+      require_port DENWATCHER_STATUS_PORT
+      printf '%s/tcp open denwatcher-status\n' "$DENWATCHER_STATUS_PORT"
+    fi
   fi
   # The apps task's ports, from its compose file (one per app).
   if [[ -f "$(container_dir apps)/docker-compose.yml" ]]; then

@@ -50,6 +50,11 @@ assert_contains "addons: website reads them without the containers add-on" "addo
 assert_contains "compose: history kept for the days set" 'RETENTION_DAYS: "365"' "$all"
 assert_lacks "compose: Den-Watcher's own history length by default" "RETENTION_DAYS" "$out"
 assert_contains "compose: the Pi's time zone" "/etc/localtime:/etc/localtime:ro" "$out"
+assert_lacks "compose: no status page by default" "9443" "$out"
+status="$(denwatcher_compose ghcr.io/programmer-den/den-watcher:1.2.3 8090 '' '' '' '' 9444)"
+assert_contains "status page: published on its port" $'      - "0.0.0.0:8090:9393"\n      - "0.0.0.0:9444:9443"\n    environment:' "$status"
+assert_contains "status page: served inside the container" 'STATUS_ADDR: ":9443"' "$status"
+assert_contains "status page: port the Devices dialog names" 'STATUS_PUBLIC_PORT: "9444"' "$status"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   printf '%s\n' "$out" >"$TMP/docker-compose.yml"
   assert_ok "compose: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
@@ -57,6 +62,8 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   assert_ok "addons: docker compose accepts them" docker compose -f "$TMP/docker-compose.yml" config -q
   printf '%s\n' "$with" >"$TMP/docker-compose.yml"
   assert_ok "containers: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
+  printf '%s\n' "$status" >"$TMP/docker-compose.yml"
+  assert_ok "status page: docker compose accepts it" docker compose -f "$TMP/docker-compose.yml" config -q
 else
   skip "compose: docker compose not installed"
 fi
@@ -94,6 +101,10 @@ assert_contains "unknown add-on stops the task" "DENWATCHER_ADDONS must be all, 
 assert_contains "too long a history stops the task" "DENWATCHER_RETENTION_DAYS must be a number of days from 1 to 3650" "$(cat "$TMP/err")"
 ( DENWATCHER_RETENTION_DAYS=0; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "no history stops the task" "DENWATCHER_RETENTION_DAYS must be" "$(cat "$TMP/err")"
+( DENWATCHER_STATUS_PORT=70000; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "bad status port stops the task" "DENWATCHER_STATUS_PORT" "$(cat "$TMP/err")"
+( DENWATCHER_STATUS_PORT=9393; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "status page on the website's port stops the task" "DENWATCHER_STATUS_PORT must differ from DENWATCHER_PORT" "$(cat "$TMP/err")"
 ( DENWATCHER_CONTAINERS=maybe; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "bad containers setting stops the task" "DENWATCHER_CONTAINERS must be yes or no" "$(cat "$TMP/err")"
 assert_ok "bad settings: Docker was not touched" test ! -e "$TMP/reached"
@@ -102,6 +113,11 @@ assert_ok "bad settings: Docker was not touched" test ! -e "$TMP/reached"
   run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "port held by another program stops the task" "Port 8080 is used by nginx" "$(cat "$TMP/err")"
 assert_ok "port held: Docker was not touched" test ! -e "$TMP/reached"
+( DENWATCHER_PORT=8080 DENWATCHER_STATUS_PORT=9443 DENWATCHER_IMAGE=ghcr.io/x/y:main
+  port_owner() { [[ "$1" == 9443 ]] && echo caddy; }
+  run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "status port held by another program stops the task" "Port 9443 is used by caddy; set DENWATCHER_STATUS_PORT" "$(cat "$TMP/err")"
+assert_ok "status port held: Docker was not touched" test ! -e "$TMP/reached"
 ( DENWATCHER_PORT=8080 DENWATCHER_IMAGE=ghcr.io/x/y:main
   dpkg() { echo armhf; }
   run_denwatcher ) >/dev/null 2>"$TMP/err" || true

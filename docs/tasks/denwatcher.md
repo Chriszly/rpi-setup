@@ -23,6 +23,7 @@ shown and it is taken down again.
 | `DENWATCHER_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
 | `DENWATCHER_ADDONS` | `all` | Den-Watcher's other add-ons, each in a container of its own (see [Add-ons](#add-ons)): `all`, `none`, or a comma-separated list of `power`, `pressure`, `kernel`, `wifi`, `bluetooth`, `memory`, `ports` and `processes`. |
 | `DENWATCHER_RETENTION_DAYS` | empty: Den-Watcher's own, 30 | Days of history to keep, 1 to 3650; older values are deleted. A longer history takes more room on the SD card. |
+| `DENWATCHER_STATUS_PORT` | empty: no status page | Port of Den-Watcher's status page for outside the local network (TCP), such as `9443`; see [Status from anywhere](#status-from-anywhere). The task stops if it is `DENWATCHER_PORT` or another program already uses it. |
 | `DENWATCHER_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/denwatcher.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
@@ -90,6 +91,37 @@ container, and the task says so.
 
 Open `http://<pi>:9393` from a device on the local network. The website
 answers only requests from private addresses (LAN, loopback, link-local).
+
+## Status from anywhere
+
+With `DENWATCHER_STATUS_PORT`, such as `9443`, Den-Watcher also serves its
+status page on that port: a minimal page that tells only whether each device
+is online, offline or switched off and how many alerts it has, with no values,
+addresses or version. It is the only part of Den-Watcher meant to be reached
+from the internet, so it answers only HTTPS, with a certificate Den-Watcher
+makes itself, and shows nothing but a sign-in form until its password is
+given. The task publishes it as Den-Watcher's `STATUS_ADDR` (`:9443` inside
+the container) and `STATUS_PUBLIC_PORT`, and the `firewall` task opens the
+port to anyone, not only `FIREWALL_ALLOW_FROM`.
+
+Then, once:
+
+1. Open `http://<pi>:9393` on the local network, click *Devices* and set a
+   password under *Remote status page* (it asks for the password for
+   changing devices). Until it is set, the status page shows no devices.
+   Choose a long one: it is the only thing between the internet and the list
+   of your devices.
+2. Forward the port on the router to the Pi, such as TCP 9443 to
+   `192.168.1.20:9443`, and open `https://<your public address>:9443` from
+   outside. With a public address that changes, a dynamic DNS name from the
+   router helps.
+3. The browser warns about the certificate the first time. Compare the
+   fingerprint it shows with the one in the *Devices* dialog before you go on.
+
+How the page limits guessing and keeps visitors signed in is in Den-Watcher's
+[setup guide](https://github.com/Programmer-Den/den-watcher/blob/main/docs/setup.md#8-check-the-devices-from-outside).
+Emptying the setting and running the task again takes the page down; close
+the port on the router too.
 
 ## Good to know
 
