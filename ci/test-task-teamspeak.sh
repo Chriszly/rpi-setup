@@ -126,7 +126,7 @@ while IFS= read -r cmd; do
 done
 EOF
   printf '203.0.113.7\n' >"$TMP/myip"
-  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" TS_VOICE_PORT=9988 TS_PUBLIC_ADDRESS= \
+  USAGE_DATA="$data" TS_SSH_CMD="bash $TMP/fake1" TS_VOICE_PORT=9988 TS_PUBLIC_ADDRESS='' \
     TS_PUBLIC_IP_URLS="file://$TMP/no-such-file file://$TMP/myip" timeout 2 python3 -B "$bot" 2>/dev/null || true
   assert_eq "bot: looks up the public IP (the first service that answers), with the voice port" \
     "203.0.113.7 203.0.113.7 9988 9988 True" "$(python3 -c '
