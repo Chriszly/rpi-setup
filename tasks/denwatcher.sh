@@ -11,7 +11,7 @@ TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the br
 # container (they need the host's tools, filesystems or raw disks).
 denwatcher_all_addons='power pressure kernel wifi bluetooth memory ports processes'
 
-# denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] [ADDONS] [RETENTION_DAYS]
+# denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] [ADDONS] [RETENTION_DAYS] [STATUS_PORT]
 # - the compose file:
 # the host's /proc and /sys read-only (gopsutil reads them through
 # HOST_PROC/HOST_SYS), the website on PORT (the container listens on 9393),
@@ -22,7 +22,9 @@ denwatcher_all_addons='power pressure kernel wifi bluetooth memory ports process
 # (Docker's data folder) also Den-Watcher's containers add-on, see
 # denwatcher_compose_containers, and with ADDONS (space separated, from
 # denwatcher_all_addons) those add-ons, see denwatcher_compose_addon. The
-# host's time zone is mounted so the page shows local times.
+# host's time zone is mounted so the page shows local times. With STATUS_PORT
+# also Den-Watcher's status page for outside the local network, published on
+# that port (the container serves it on 9443, over HTTPS and behind a password).
 denwatcher_compose() {
   local addon with_addons=""
   [[ -z "${4:-}${5:-}" ]] || with_addons=1
@@ -38,6 +40,9 @@ services:
       rpi-setup.link.port: "$2"
     ports:
       - "0.0.0.0:$2:9393"
+EOF2
+  [[ -z "${7:-}" ]] || echo "      - \"0.0.0.0:$7:9443\""
+  cat <<EOF2
     environment:
       PUBLIC_PORT: "$2"
       HOST_PROC: /host/proc
@@ -46,6 +51,7 @@ services:
       ROUTER_PASSWORDS_FILE: /run/secrets/router-passwords
 EOF2
   [[ -z "${6:-}" ]] || echo "      RETENTION_DAYS: \"$6\""
+  [[ -z "${7:-}" ]] || printf '      STATUS_ADDR: ":9443"\n      STATUS_PUBLIC_PORT: "%s"\n' "$7"
   [[ -z "$with_addons" ]] || echo "      ADDONS_DIR: /addons"
   cat <<EOF2
     volumes:
@@ -203,8 +209,13 @@ denwatcher_move_old() {
 
 run_denwatcher() {
   : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/programmer-den/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
-    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}"
+    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}" "${DENWATCHER_STATUS_PORT:=}"
   require_port DENWATCHER_PORT
+  if [[ -n "$DENWATCHER_STATUS_PORT" ]]; then
+    require_port DENWATCHER_STATUS_PORT
+    [[ "$DENWATCHER_STATUS_PORT" != "$DENWATCHER_PORT" ]] ||
+      die "DENWATCHER_STATUS_PORT must differ from DENWATCHER_PORT (both are $DENWATCHER_PORT)"
+  fi
   require_image_ref DENWATCHER_IMAGE
   # Images under Den-Watcher's old name run the containers add-on under its old
   # name too, and that name is published only up to 3.0.0.
@@ -261,12 +272,15 @@ run_denwatcher() {
   [[ "$arch" == arm64 || "$arch" == amd64 ]] ||
     die "The Den-Watcher image needs a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit)."
 
-  # The port may already be ours (Docker's proxy); anything else holds it.
-  local owner
-  owner="$(port_owner "$DENWATCHER_PORT")" || owner=""
-  if [[ -n "$owner" && "$owner" != docker-proxy ]]; then
-    die "Port $DENWATCHER_PORT is used by $owner; set DENWATCHER_PORT to a free port"
-  fi
+  # The ports may already be ours (Docker's proxy); anything else holds them.
+  local owner setting
+  for setting in DENWATCHER_PORT DENWATCHER_STATUS_PORT; do
+    [[ -n "${!setting}" ]] || continue
+    owner="$(port_owner "${!setting}")" || owner=""
+    if [[ -n "$owner" && "$owner" != docker-proxy ]]; then
+      die "Port ${!setting} is used by $owner; set $setting to a free port"
+    fi
+  done
 
   container_require_docker
 
@@ -296,7 +310,7 @@ run_denwatcher() {
   local dir name=den-watcher changed=0
   dir="$(container_dir denwatcher)"
   install -m 0755 -d "$dir" "$dir/router-secrets"
-  if denwatcher_compose "$DENWATCHER_IMAGE" "$DENWATCHER_PORT" "${DENWATCHER_ROUTERS:-}" "$docker_dir" "$addons" "$DENWATCHER_RETENTION_DAYS" | write_if_changed "$dir/docker-compose.yml" 0644; then
+  if denwatcher_compose "$DENWATCHER_IMAGE" "$DENWATCHER_PORT" "${DENWATCHER_ROUTERS:-}" "$docker_dir" "$addons" "$DENWATCHER_RETENTION_DAYS" "$DENWATCHER_STATUS_PORT" | write_if_changed "$dir/docker-compose.yml" 0644; then
     changed=1
   fi
 
@@ -338,5 +352,8 @@ run_denwatcher() {
     say "Den-Watcher is running with the new settings: $(service_url "$DENWATCHER_PORT")"
   else
     say "Den-Watcher is running: $(service_url "$DENWATCHER_PORT")"
+  fi
+  if [[ -n "$DENWATCHER_STATUS_PORT" ]]; then
+    info "Status page for outside the local network: https://<public address>:$DENWATCHER_STATUS_PORT once the router forwards TCP $DENWATCHER_STATUS_PORT to this Pi; set its password in Den-Watcher under Devices > Remote status page"
   fi
 }
