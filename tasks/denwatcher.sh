@@ -11,6 +11,9 @@ TASKS+=("denwatcher|Den-Watcher: CPU, memory and temperature of the Pi in the br
 # container (they need the host's tools, filesystems or raw disks).
 denwatcher_all_addons='power pressure kernel wifi bluetooth memory ports processes'
 
+# Where systemd-rfkill keeps the radios' blocks for the next boot.
+denwatcher_rfkill_dir=/var/lib/systemd/rfkill
+
 # denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] [ADDONS] [RETENTION_DAYS] [STATUS_PORT]
 # - the compose file:
 # the host's /proc and /sys read-only (gopsutil reads them through
@@ -211,9 +214,41 @@ denwatcher_move_old() {
   fi
 }
 
+# denwatcher_wifi_radio COUNTRY - switches the Wi-Fi radio on where it is
+# off, so the wifi add-on hears the networks nearby on a Pi on cable too.
+# Raspberry Pi OS keeps the radio blocked (rfkill) until a Wi-Fi country is
+# set, so it sets COUNTRY first, with raspi-config where there is one. The
+# radio only listens: NetworkManager joins no network that is not saved.
+denwatcher_wifi_radio() {
+  local list="" off=0 f
+  command -v rfkill >/dev/null 2>&1 && list="$(rfkill list wlan 2>/dev/null)" || true
+  if grep -q 'Hard blocked: yes' <<<"$list"; then
+    warn "The Wi-Fi radio is switched off by a hardware switch, so the wifi add-on hears no networks nearby"
+    return 0
+  fi
+  grep -q 'Soft blocked: yes' <<<"$list" && off=1
+  if command -v nmcli >/dev/null 2>&1 && [[ "$(nmcli radio wifi 2>/dev/null)" == disabled ]]; then off=1; fi
+  [[ $off -eq 1 ]] || return 0
+  if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_wifi_country "$1" >/dev/null 2>&1 ||
+      warn "raspi-config could not set the Wi-Fi country $1"
+  elif command -v iw >/dev/null 2>&1; then
+    iw reg set "$1" 2>/dev/null || true
+  fi
+  rfkill unblock wifi 2>/dev/null || true
+  # systemd-rfkill restores the block at the next boot from these files.
+  for f in "$denwatcher_rfkill_dir"/*:wlan; do
+    [[ ! -e "$f" ]] || echo 0 >"$f"
+  done
+  if command -v nmcli >/dev/null 2>&1; then
+    nmcli radio wifi on 2>/dev/null || warn "NetworkManager did not switch the Wi-Fi radio on (nmcli radio wifi on)"
+  fi
+  say "Switched the Wi-Fi radio on (country $1), so the wifi add-on hears the networks nearby; it joins no network"
+}
+
 run_denwatcher() {
   : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/programmer-den/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
-    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}" "${DENWATCHER_STATUS_PORT:=}"
+    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}" "${DENWATCHER_STATUS_PORT:=}" "${DENWATCHER_WIFI_COUNTRY:=DE}"
   require_port DENWATCHER_PORT
   if [[ -n "$DENWATCHER_STATUS_PORT" ]]; then
     require_port DENWATCHER_STATUS_PORT
@@ -242,6 +277,9 @@ run_denwatcher() {
         [[ " $addons " == *" $addon "* ]] || addons+="${addons:+ }$addon"
       done ;;
   esac
+  [[ "${DENWATCHER_WIFI_COUNTRY,,}" == no ]] || DENWATCHER_WIFI_COUNTRY="${DENWATCHER_WIFI_COUNTRY^^}"
+  [[ "$DENWATCHER_WIFI_COUNTRY" =~ ^([A-Z]{2}|[Nn][Oo])$ ]] ||
+    die "DENWATCHER_WIFI_COUNTRY must be a 2-letter country code such as DE, AT, CH, GB or US, or no (got '$DENWATCHER_WIFI_COUNTRY')"
   if [[ -n "$DENWATCHER_RETENTION_DAYS" ]] &&
     { [[ ! "$DENWATCHER_RETENTION_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] || (( DENWATCHER_RETENTION_DAYS > 3650 )); }; then
     die "DENWATCHER_RETENTION_DAYS must be a number of days from 1 to 3650 (got '$DENWATCHER_RETENTION_DAYS')"
@@ -314,6 +352,10 @@ run_denwatcher() {
       addons="$(tr ' ' '\n' <<<"$addons" | grep -vx "$addon" | xargs)"
     fi
   done
+
+  if [[ " $addons " == *" wifi "* && "${DENWATCHER_WIFI_COUNTRY,,}" != no ]]; then
+    denwatcher_wifi_radio "$DENWATCHER_WIFI_COUNTRY"
+  fi
 
   local dir name=den-watcher changed=0
   dir="$(container_dir denwatcher)"

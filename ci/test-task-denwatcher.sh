@@ -108,6 +108,8 @@ assert_contains "bad status port stops the task" "DENWATCHER_STATUS_PORT" "$(cat
 assert_contains "status page on the website's port stops the task" "DENWATCHER_STATUS_PORT must differ from DENWATCHER_PORT" "$(cat "$TMP/err")"
 ( DENWATCHER_CONTAINERS=maybe; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "bad containers setting stops the task" "DENWATCHER_CONTAINERS must be yes or no" "$(cat "$TMP/err")"
+( DENWATCHER_WIFI_COUNTRY=DEU; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "bad Wi-Fi country stops the task" "DENWATCHER_WIFI_COUNTRY must be a 2-letter country code" "$(cat "$TMP/err")"
 assert_ok "bad settings: Docker was not touched" test ! -e "$TMP/reached"
 ( DENWATCHER_PORT=8080 DENWATCHER_IMAGE=ghcr.io/x/y:main
   port_owner() { echo nginx; }
@@ -130,6 +132,11 @@ assert_ok "port held by Docker's proxy goes on to Docker" test -e "$TMP/reached"
 unset -f container_require_docker port_owner dpkg
 
 # --- the containers add-on --------------------------------------------------------
+# The Pi's radios are faked too, as on: rfkill lists none, NetworkManager's is on.
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+rfkill() { :; }
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+nmcli() { echo enabled; }
 container_require_docker() { :; }
 port_owner() { return 1; }
 dpkg() { echo arm64; }
@@ -163,6 +170,24 @@ else
   assert_contains "addons: and says so for wifi" "wifi add-on is left out" "$(cat "$TMP/err")"
 fi
 # shellcheck disable=SC2329 # called by run_denwatcher
+( DENWATCHER_ADDONS=kernel,wifi DENWATCHER_WIFI_COUNTRY=at
+  denwatcher_wifi_radio() { echo "$1" >"$TMP/radio"; }
+  run_denwatcher ) >/dev/null 2>&1
+if grep -q den-watcher-wifi "$compose"; then
+  assert_eq "radio: switched on with the wifi add-on, in the country upper-cased" AT "$(cat "$TMP/radio")"
+fi
+rm -f "$TMP/radio"
+# shellcheck disable=SC2329 # called by run_denwatcher
+( DENWATCHER_ADDONS=kernel,wifi DENWATCHER_WIFI_COUNTRY=no
+  denwatcher_wifi_radio() { echo "$1" >"$TMP/radio"; }
+  run_denwatcher ) >/dev/null 2>&1
+assert_ok "radio: no leaves it as it is" test ! -e "$TMP/radio"
+# shellcheck disable=SC2329 # called by run_denwatcher
+( DENWATCHER_ADDONS=kernel
+  denwatcher_wifi_radio() { echo "$1" >"$TMP/radio"; }
+  run_denwatcher ) >/dev/null 2>&1
+assert_ok "radio: left as it is without the wifi add-on" test ! -e "$TMP/radio"
+# shellcheck disable=SC2329 # called by run_denwatcher
 docker() { [[ "$1" == info ]] && echo "$TMP/nodocker"; }
 ( run_denwatcher ) >/dev/null 2>"$TMP/err"
 assert_lacks "containers: no Docker folder leaves the add-on out" "den-watcher-containers" "$(cat "$compose")"
@@ -173,6 +198,42 @@ docker() { [[ "$1" == info ]] && echo "/var/lib/do\$cker"; }
 assert_contains "containers: odd Docker folder stops the task" "set DENWATCHER_CONTAINERS=no" "$(cat "$TMP/err")"
 # shellcheck disable=SC2329 # called by run_denwatcher
 docker() { [[ "$1" == info ]] && echo "$TMP/docker"; }
+
+# --- the Wi-Fi radio ---------------------------------------------------------------
+# A Pi on cable as Raspberry Pi OS leaves it: no country, the radio blocked.
+denwatcher_rfkill_dir="$TMP/rfkill"
+mkdir -p "$denwatcher_rfkill_dir"
+echo 1 >"$denwatcher_rfkill_dir/platform-fe300000.mmcnr:wlan"
+radio_state=$'1: phy0: Wireless LAN\n\tSoft blocked: yes\n\tHard blocked: no'
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+rfkill() { echo "rfkill $*" >>"$TMP/radio-calls"; [[ "$1" != list ]] || echo "$radio_state"; }
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+nmcli() { echo "nmcli $*" >>"$TMP/radio-calls"; [[ "$*" != "radio wifi" ]] || echo disabled; }
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+raspi-config() { echo "raspi-config $*" >>"$TMP/radio-calls"; }
+denwatcher_wifi_radio DE >"$TMP/out" 2>&1
+calls="$(cat "$TMP/radio-calls")"
+assert_contains "radio: sets the country" "raspi-config nonint do_wifi_country DE" "$calls"
+assert_contains "radio: unblocks it" "rfkill unblock wifi" "$calls"
+assert_contains "radio: switches it on in NetworkManager" "nmcli radio wifi on" "$calls"
+assert_eq "radio: unblocked for the next boots too" 0 "$(cat "$denwatcher_rfkill_dir/platform-fe300000.mmcnr:wlan")"
+assert_contains "radio: says so" "Switched the Wi-Fi radio on (country DE)" "$(cat "$TMP/out")"
+rm -f "$TMP/radio-calls"
+radio_state=$'1: phy0: Wireless LAN\n\tSoft blocked: no\n\tHard blocked: no'
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+nmcli() { echo "nmcli $*" >>"$TMP/radio-calls"; [[ "$*" != "radio wifi" ]] || echo enabled; }
+denwatcher_wifi_radio DE >/dev/null 2>&1
+assert_lacks "radio: on already, left as it is" "raspi-config" "$(cat "$TMP/radio-calls")"
+rm -f "$TMP/radio-calls"
+radio_state=$'1: phy0: Wireless LAN\n\tSoft blocked: yes\n\tHard blocked: yes'
+denwatcher_wifi_radio DE >/dev/null 2>"$TMP/err"
+assert_contains "radio: a hardware switch only warns" "hardware switch" "$(cat "$TMP/err")"
+assert_lacks "radio: and changes nothing" "unblock" "$(cat "$TMP/radio-calls")"
+unset -f raspi-config
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+rfkill() { :; }
+# shellcheck disable=SC2329 # called by denwatcher_wifi_radio
+nmcli() { echo enabled; }
 
 # --- the router passwords file ---------------------------------------------------
 chown() { echo "$1" >"$TMP/owner"; }
@@ -236,6 +297,6 @@ echo newer >"$TMP/vol/denwatcher_data/usage-control.db"
 ( run_denwatcher ) >/dev/null 2>&1
 assert_eq "move: a history in the new volume is kept" newer "$(cat "$TMP/vol/denwatcher_data/usage-control.db")"
 assert_ok "move: then removes the old folder" test ! -e "$TMP/opt/usagecontrol"
-unset -f container_require_docker port_owner dpkg container_dir container_pull container_up container_wait_stable docker chown save_secret load_secret
+unset -f container_require_docker port_owner dpkg container_dir container_pull container_up container_wait_stable docker chown save_secret load_secret rfkill nmcli
 
 finish_tests
