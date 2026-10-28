@@ -11,6 +11,7 @@ run_pihole() {
   setting_on PIHOLE_QUERY_LOGGING || true
   [[ -z "${PIHOLE_LISTEN_ALL:-}" ]] || setting_on PIHOLE_LISTEN_ALL || true
   [[ -z "${PIHOLE_WEB_PORT:-}" ]] || require_port PIHOLE_WEB_PORT
+  pihole_db_interval >/dev/null
   local -a dns=()
   pihole_dns_list dns
   local iface
@@ -25,6 +26,7 @@ run_pihole() {
     say "Pi-hole is already installed (run 'pihole -d' to debug)"
     pihole_apply_web_port
     pihole_apply_listening
+    pihole_apply_db_interval
     if [[ -n "${PIHOLE_PASSWORD:-}" ]]; then
       pihole setpassword "$PIHOLE_PASSWORD" >/dev/null
       say 'Set the web admin password from PIHOLE_PASSWORD'
@@ -51,6 +53,7 @@ run_pihole() {
   fi
   pihole_apply_web_port
   pihole_apply_listening
+  pihole_apply_db_interval
 
   local pw="${PIHOLE_PASSWORD:-}"
   if [[ -z "$pw" ]]; then new_secret pw pihole PIHOLE_PASSWORD 'web admin password' 16; fi
@@ -101,6 +104,8 @@ pihole_preseed() {
       echo '[webserver]'
       echo "  port = \"${port}o,[::]:${port}o\""
     fi
+    echo '[database]'
+    echo "  DBinterval = $(pihole_db_interval)"
   } >/etc/pihole/pihole.toml
   info "Pre-seeded /etc/pihole/pihole.toml (interface $iface, upstream DNS ${*})"
 }
@@ -125,6 +130,28 @@ pihole_apply_web_port() {
 pihole_listening_mode() {
   [[ -n "${PIHOLE_LISTEN_ALL:-}" ]] || return 0
   if setting_on PIHOLE_LISTEN_ALL; then echo ALL; else echo LOCAL; fi
+}
+
+# Seconds between Pi-hole's writes of new queries to its database on the SD
+# card, from PIHOLE_DB_INTERVAL (Pi-hole's own default is 60). The web UI
+# shows the newest queries from memory either way; a power cut loses at most
+# this many seconds of the query log.
+pihole_db_interval() {
+  local s="${PIHOLE_DB_INTERVAL:-300}"
+  if [[ ! "$s" =~ ^[1-9][0-9]{0,3}$ ]] || (( s < 60 || s > 3600 )); then
+    die "PIHOLE_DB_INTERVAL must be a number of seconds from 60 to 3600 (got '$s')"
+  fi
+  printf '%s\n' "$s"
+}
+
+pihole_apply_db_interval() {
+  local want cur
+  want="$(pihole_db_interval)"
+  cur="$(pihole-FTL --config database.DBinterval 2>/dev/null)" || cur=""
+  [[ "$cur" != "$want" ]] || return 0
+  pihole-FTL --config database.DBinterval "$want" >/dev/null
+  systemctl restart pihole-FTL || true
+  say "Pi-hole now writes new queries to its database every $want seconds"
 }
 
 pihole_apply_listening() {
@@ -203,8 +230,9 @@ run_pihole_container() {
 # as root and drops to its own user, so it keeps Docker's default
 # capabilities (plus SYS_NICE) instead of the minimal set the others get.
 pihole_container_compose() {
-  local dir="$1" name="$2" iface="$3" port="$4" ups="" log=false mode tz
+  local dir="$1" name="$2" iface="$3" port="$4" ups="" log=false mode tz interval
   shift 4
+  interval="$(pihole_db_interval)"
   ups="$(IFS=';'; printf '%s' "$*")"
   if setting_on PIHOLE_QUERY_LOGGING; then log=true; fi
   mode="$(pihole_listening_mode)"
@@ -227,6 +255,7 @@ services:
       FTLCONF_dns_interface: "$iface"
       FTLCONF_dns_queryLogging: "$log"
       FTLCONF_webserver_port: "${port}o,[::]:${port}o"
+      FTLCONF_database_DBinterval: "$interval"
 $([[ -z "$mode" ]] || printf '      FTLCONF_dns_listeningMode: "%s"\n' "$mode")
     volumes:
       - $dir/etc-pihole:/etc/pihole

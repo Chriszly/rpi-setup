@@ -22,6 +22,7 @@ run if you do not want the installer to run.
 | `PIHOLE_QUERY_LOGGING` | `yes` | Log DNS queries. Install only. |
 | `PIHOLE_WEB_PORT` | `80`, or `8080` if port 80 is taken | Port of the web admin. Re-runs move it when you change it. The `web` task moves the admin page from 80 to this port (`8080` when empty), so set `80` only to keep the start page off port 80. |
 | `PIHOLE_LISTEN_ALL` | empty: leave as it is | `yes`: answer DNS queries from any network, e.g. your tailnet (only safe behind a firewall). `no`: only from local subnets. Applied on every run. |
+| `PIHOLE_DB_INTERVAL` | `300` | Seconds between Pi-hole's writes of new queries to its database, from 60 to 3600 (Pi-hole's own default is 60). Fewer writes spare the SD card; the web UI still shows the newest queries from memory, and a power cut loses at most this much of the query log. Applied on every run. |
 | `PIHOLE_DOCKER` | `no` | `yes` runs Pi-hole in its own Docker container instead of the installer ([below](#run-it-in-docker)). |
 | `PIHOLE_IMAGE` | `pihole/pihole:latest` | Docker image for `PIHOLE_DOCKER=yes`. |
 
