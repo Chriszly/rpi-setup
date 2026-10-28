@@ -216,7 +216,9 @@ jobs:
   # emulation dominate the gate, and splitting them roughly halves wall time.
   provision-gate:
     name: Provision tasks in booted nspawn (PR gate, ${{ matrix.release }}, ${{ matrix.group }})
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04: newer runner images no longer have qemu-user-static, which
+    # pinspawn-action installs when it is missing.
+    runs-on: ubuntu-24.04
     needs: [syntax, unit, changes]
     if: needs.changes.outputs.provision == 'true'
     timeout-minutes: 120
