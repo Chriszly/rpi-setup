@@ -24,11 +24,16 @@ shown and it is taken down again.
 | `DENWATCHER_ADDONS` | `all` | Den-Watcher's other add-ons, each in a container of its own (see [Add-ons](#add-ons)): `all`, `none`, or a comma-separated list of `power`, `pressure`, `kernel`, `wifi`, `bluetooth`, `memory`, `ports` and `processes`. |
 | `DENWATCHER_RETENTION_DAYS` | empty: Den-Watcher's own, 30 | Days of history to keep, 1 to 3650; older values are deleted. A longer history takes more room on the SD card. |
 | `DENWATCHER_STATUS_PORT` | empty: no status page | Port of Den-Watcher's status page for outside the local network (TCP), such as `9443`; see [Status from anywhere](#status-from-anywhere). The task stops if it is `DENWATCHER_PORT` or another program already uses it. |
+| `DENWATCHER_WIFI_COUNTRY` | `DE` | With the `wifi` add-on, the Wi-Fi country code (regulatory domain) the task switches the Wi-Fi radio on with where it is off, so a Pi on cable hears the networks nearby too (see [Add-ons](#add-ons)). `no` leaves the radio as it is. |
 | `DENWATCHER_ROUTER_PASSWORD` | empty: the one kept from an earlier run | Passwords of the routers that log in, and an SNMP community other than `public`, as `name=password`, comma-separated for several; a password cannot hold a comma. Kept in `/var/lib/rpi-setup/secrets/denwatcher.env`, so it needs to be given only once (see below). |
 
 ## What it installs and changes
 
 - `/opt/denwatcher/docker-compose.yml`.
+- With the `wifi` add-on, where the Wi-Fi radio is off: the Wi-Fi country
+  (`DENWATCHER_WIFI_COUNTRY`, through `raspi-config`), the radio unblocked
+  in `rfkill` and in `/var/lib/systemd/rfkill`, and switched on in
+  NetworkManager. `DENWATCHER_WIFI_COUNTRY=no` leaves it off.
 - `/opt/denwatcher/router-secrets/router-passwords` with the router
   passwords, one `name=password` per line, readable only by root and the
   container's user (65532); removed when there are none. A changed file
@@ -58,7 +63,7 @@ container from the same image, writes what it reads to the in-memory
 | `power` | Power the CPU and the kernel's hwmon sensors report. Runs as root, as only root may read the CPU's energy counters, but without any capability. A Pi 5's total power needs `vcgencmd` on the host, which a container does not reach. |
 | `pressure` | How much of the time tasks waited for the CPU, memory and disks (`/proc/pressure`; Raspberry Pi OS's kernel has it switched off, so it may show nothing). |
 | `kernel` | Context switches, interrupts, new processes, open files, sockets, TCP connections and retransmissions. |
-| `wifi` | Link quality and signal of each connected Wi-Fi interface, and the Wi-Fi networks nearby from the scans NetworkManager makes on its own (it starts none), asked through the host's system D-Bus (`/run/dbus`, read-only); a hub compares them under *Compare devices*, *Wi-Fi nearby*. Left out with a warning where there is no system D-Bus; without NetworkManager (Raspberry Pi OS before bookworm) the networks nearby are left out. |
+| `wifi` | Link quality and signal of each connected Wi-Fi interface, and the Wi-Fi networks nearby from the scans NetworkManager makes on its own (it starts none), asked through the host's system D-Bus (`/run/dbus`, read-only); a hub compares them under *Compare devices*, *Wi-Fi nearby*. Left out with a warning where there is no system D-Bus; without NetworkManager (Raspberry Pi OS before bookworm) the networks nearby are left out. Raspberry Pi OS keeps the Wi-Fi radio switched off (`rfkill list` shows it *Soft blocked*) until a Wi-Fi country is set, which a Pi on cable usually never gets, so it would hear no networks: the task then sets `DENWATCHER_WIFI_COUNTRY` (with `raspi-config`), unblocks the radio, also for the next boots, and switches it on in NetworkManager. The radio only listens; the Pi joins no Wi-Fi network that is not saved on it. A radio switched off by a hardware switch only warns. |
 | `bluetooth` | Connected Bluetooth devices with their name, kind or battery, asked from BlueZ through the host's system D-Bus (`/run/dbus`, read-only); left out with a warning where there is none. It only lists devices. |
 | `memory` | Memory details such as dirty and slab memory, page faults and swapping. |
 | `ports` | The TCP and UDP ports the Pi listens on. |
