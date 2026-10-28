@@ -114,7 +114,8 @@ jobs:
       - name: Provision Docker tasks
         env:
           PROVISION_PROFILE: docker
-        run: sudo -E bash ci/provision.sh "$GITHUB_WORKSPACE"
+        # The runner's sudo no longer takes -E, so the profile is passed explicitly.
+        run: sudo env PROVISION_PROFILE="$PROVISION_PROFILE" bash ci/provision.sh "$GITHUB_WORKSPACE"
 
       - name: Upload logs on failure
         if: failure()
