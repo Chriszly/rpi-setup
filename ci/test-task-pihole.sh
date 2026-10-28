@@ -18,6 +18,16 @@ assert_contains "the curl|bash warning is printed" 'curl ... | bash' "$(declare 
 assert_contains "the installer always runs unattended" 'bash /dev/stdin --unattended' "$(declare -f run_pihole)"
 assert_eq "no question is asked" "" "$(grep -n 'read -r -p' "$ROOT/tasks/pihole.sh" || true)"
 
+# --- PIHOLE_DB_INTERVAL: seconds between database writes ---------------------
+assert_eq "the interval defaults to 300 seconds" "300" "$(unset PIHOLE_DB_INTERVAL; pihole_db_interval)"
+assert_eq "an empty interval is the default" "300" "$(PIHOLE_DB_INTERVAL='' pihole_db_interval)"
+assert_eq "a set interval is kept" "600" "$(PIHOLE_DB_INTERVAL=600 pihole_db_interval)"
+for bad in 59 3601 0 060 5m -1 'x'; do
+  assert_fails "PIHOLE_DB_INTERVAL=$bad is refused" bash -c ". '$ROOT/lib/common.sh'; TASKS=(); . '$ROOT/tasks/pihole.sh'; PIHOLE_DB_INTERVAL='$bad' pihole_db_interval"
+done
+compose="$(PIHOLE_DB_INTERVAL=900 PIHOLE_QUERY_LOGGING=yes PIHOLE_IMAGE=pihole/pihole:latest pihole_container_compose /opt/pihole pihole lo 8080 1.1.1.1)"
+assert_contains "the container gets the interval" 'FTLCONF_database_DBinterval: "900"' "$compose"
+
 # --- PIHOLE_DOCKER: generated password saved before the container starts -----
 export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
 stub_container_helpers
