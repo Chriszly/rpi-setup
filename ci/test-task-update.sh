@@ -89,6 +89,16 @@ assert_lacks "no reboot hint without reboot-required" "Reboot recommended" "$OUT
 
 assert_contains "no start page: web skipped" "skipped (start page not installed)" "$OUT"
 
+# PIHOLE_DOCKER=yes: the native pihole command is still there, but pihole -up
+# would start the native pihole-FTL again next to the container.
+mv "$OPT/pihole/docker-compose.yml.disabled" "$OPT/pihole/docker-compose.yml"
+upd all pi --dry-run
+assert_eq "Pi-hole in its container: exits 0" 0 "$RC"
+assert_lacks "Pi-hole in its container: no pihole -up" "[dry-run] pihole -up" "$OUT"
+assert_contains "Pi-hole in its container: says so" "skipped (Pi-hole runs in its container" "$OUT"
+assert_contains "Pi-hole in its container: its project is updated" "[dry-run] docker compose -f $OPT/pihole/docker-compose.yml pull" "$OUT"
+mv "$OPT/pihole/docker-compose.yml" "$OPT/pihole/docker-compose.yml.disabled"
+
 touch "$TMP/web-links"
 WEB_LINKS="$TMP/web-links" upd all pi --dry-run --containers-only
 assert_contains "start page: re-run the web task" "[dry-run] bash $ROOT/setup.sh web" "$OUT"

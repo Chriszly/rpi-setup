@@ -177,8 +177,12 @@ main() {
     skip_step web 'start page not installed'
   fi
 
+  # With PIHOLE_DOCKER=yes the native package stays installed: "pihole -up"
+  # would update it and start pihole-FTL again next to the container.
   if [[ $DO_PIHOLE -eq 0 ]]; then
     skip_step pihole "$SKIP_REASON"
+  elif task_in_container pihole; then
+    skip_step pihole 'Pi-hole runs in its container (updated with the containers)'
   elif have pihole; then
     do_step pihole run pihole -up
   else
