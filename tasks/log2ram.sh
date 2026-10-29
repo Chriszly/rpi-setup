@@ -104,21 +104,22 @@ log2ram_add_repo() {
 }
 
 # Set SIZE= in log2ram.conf $1 to $2 and turn off its error mails (a Pi has
-# no mail setup). The package's other defaults stay. Returns 0 if it changed.
+# no mail setup): NOTIFICATION= in current log2ram, MAIL= in versions before
+# 1.7. The package's other defaults stay. Returns 0 if it changed.
 log2ram_set_conf() {
-  local conf="$1" size="$2"
+  local conf="$1" size="${2^^}"
   {
-    sed -E -e "s/^SIZE=.*/SIZE=$size/" -e 's/^MAIL=.*/MAIL=false/' "$conf"
+    sed -E -e "s/^SIZE=.*/SIZE=$size/" -e 's/^NOTIFICATION=.*/NOTIFICATION=false/' -e 's/^MAIL=.*/MAIL=false/' "$conf"
     grep -q '^SIZE=' "$conf" || echo "SIZE=$size"
   } | write_if_changed "$conf" 0644
 }
 
 # journald drop-in that keeps the persistent journal (in /var/log/journal,
-# so in RAM) below $1. It sorts after base's 10-rpi-setup.conf and wins.
-# Returns 0 if it changed.
+# so in RAM) below $1 (its suffix upper-cased: journald takes 64M, not 64m).
+# It sorts after base's 10-rpi-setup.conf and wins. Returns 0 if it changed.
 log2ram_journald() {
   install -m 0755 -d "${L2R_JOURNALD_CONF%/*}"
-  printf '# Managed by rpi-setup (LOG2RAM_JOURNAL_MAX_SIZE); re-run "setup.sh log2ram" to change.\n[Journal]\nSystemMaxUse=%s\n' "$1" |
+  printf '# Managed by rpi-setup (LOG2RAM_JOURNAL_MAX_SIZE); re-run "setup.sh log2ram" to change.\n[Journal]\nSystemMaxUse=%s\n' "${1^^}" |
     write_if_changed "$L2R_JOURNALD_CONF" 0644
 }
 
