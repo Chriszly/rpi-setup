@@ -43,8 +43,11 @@ wait_healthy() {
 }
 
 # nginx from an earlier run would keep Pi-hole off port 80; the web task
-# starts it again below.
+# starts it again below. The hosted runner image ships Apache's default
+# index.html in /var/www/html, which the web task rightly leaves alone as a
+# page of the user's own; a Pi has nothing there, so it goes.
 systemctl stop nginx 2>/dev/null || true
+grep -q 'rpi-setup' /var/www/html/index.html 2>/dev/null || rm -f /var/www/html/index.html
 
 # Pi-hole on port 80, as on a Pi where it was set up before the web task
 # (PIHOLE_WEB_PORT=80 overrides the port an earlier run of this suite left).
