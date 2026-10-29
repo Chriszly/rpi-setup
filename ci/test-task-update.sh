@@ -140,6 +140,10 @@ assert_contains "and says so" "skipped (--skip)" "$OUT"
 rm -f "$TMP/web-links"
 upd all pi --dry-run --skip
 assert_eq "--skip without names exits non-zero" 1 "$RC"
+upd all pi --dry-run --skip pihol
+assert_eq "--skip with a name that is no task exits non-zero" 1 "$RC"
+assert_contains "--skip names the unknown task" "unknown task 'pihol'" "$OUT"
+assert_lacks "--skip with a typo updates nothing" "[dry-run]" "$OUT"
 
 upd nodocker pc --dry-run
 assert_eq "dry-run without docker exits 0" 0 "$RC"
@@ -191,6 +195,9 @@ rpi-eeprom-update -a"
     assert_lacks "no upgrade after a failed apt update" "apt-get upgrade" "$(cat "$LOG")"
     assert_contains "containers still update after apt failed" "docker image prune -f" "$(cat "$LOG")"
 else
+    upd all pi
+    assert_eq "update.sh refuses to run as non-root" 1 "$RC"
+    assert_contains "update.sh says how to run it as root" "sudo bash update.sh" "$OUT"
     skip "real runs against the shims need root"
 fi
 

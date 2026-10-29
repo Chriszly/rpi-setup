@@ -53,6 +53,9 @@ assert_eq "real_user falls back to root" "root" "$(SUDO_USER='' USER='' real_use
 # --- lib/common.sh: need_root / die -------------------------------------------
 if [[ $EUID -ne 0 ]]; then
     assert_fails "need_root fails for non-root" need_root
+    assert_contains "need_root says sudo bash setup.sh by default" "sudo bash setup.sh" "$( (need_root) 2>&1 || true)"
+    assert_contains "need_root names the given command" "sudo bash update.sh [options]" \
+        "$( (need_root 'update.sh [options]') 2>&1 || true)"
 else
     assert_ok "need_root passes for root" need_root
 fi

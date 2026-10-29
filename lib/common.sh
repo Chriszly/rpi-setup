@@ -62,7 +62,9 @@ boot_config_block() {
 # True inside a container (systemd-nspawn, Docker, ...) rather than on real hardware.
 in_container() { [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; }
 
-need_root() { [[ $EUID -eq 0 ]] || die 'Please run as root: sudo bash setup.sh [task ...]'; }
+# Dies unless run as root; $1 names the command to repeat with sudo (default:
+# setup.sh).
+need_root() { [[ $EUID -eq 0 ]] || die "Please run as root: sudo bash ${1:-setup.sh [task ...]}"; }
 
 # True if command $1 is available.
 have() { command -v "$1" >/dev/null 2>&1; }

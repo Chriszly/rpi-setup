@@ -129,6 +129,7 @@ skip_step() {
 }
 
 main() {
+  local name
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
@@ -137,13 +138,16 @@ main() {
       --containers-only) DO_APT=0 DO_PIHOLE=0 DO_EEPROM=0 SKIP_REASON=--containers-only ;;
       --skip)
         [[ $# -ge 2 ]] || die '--skip needs task names, e.g. --skip "pihole web"'
+        for name in ${2//,/ }; do
+          [[ -f "$SCRIPT_DIR/tasks/$name.sh" ]] || die "--skip: unknown task '$name' (no tasks/$name.sh)"
+        done
         SKIP_TASKS+="${2//,/ } "; shift ;;
       -h|--help) usage; return 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
     shift
   done
-  [[ $DRY_RUN -eq 1 ]] || need_root
+  [[ $DRY_RUN -eq 1 ]] || need_root 'update.sh [options]'
   export DEBIAN_FRONTEND=noninteractive
 
   if [[ $DO_APT -eq 0 ]]; then
