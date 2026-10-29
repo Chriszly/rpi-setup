@@ -22,8 +22,13 @@ sudo bash setup.sh web
 
 - The `nginx` package and service, enabled and started.
 - The listen port of the default site, `/etc/nginx/sites-available/default`.
-- The start page `/var/www/html/index.html`. A page you put there yourself is
-  never overwritten.
+- The start page `/var/www/html/index.html`. Its second line is a marker
+  comment, `<!-- Written by rpi-setup (tasks/web.sh). ... -->`: the page is
+  rewritten on every run while that line is there, and left alone once you
+  remove it, so your edits stay (the lists next to it are still written). A
+  page you put there yourself is never touched. A page from an rpi-setup
+  older than the marker is rewritten once more, with the old page kept as
+  `index.html.old`.
 - `/usr/local/sbin/rpi-setup-web-links` and the `rpi-setup-web-links.timer`
   that runs it every minute. It writes the list of web pages,
   `services.json`, of Docker containers, `containers.json`, and of the
@@ -63,8 +68,9 @@ service you set up later shows up without touching the page. It lists:
 - The containers of rpi-setup's tasks that have a web page: NetAlertX and
   Den-Watcher. TeamSpeak and Samba have none, and nginx is the page itself.
 - Any other running container that publishes a port on the LAN which answers
-  HTTP, under the container's name. Ports published on `127.0.0.1` only are
-  left out.
+  HTTP, under the container's name. A port published on one address only
+  (`192.168.1.10:8080:80`) is tried on that address; ports published on
+  `127.0.0.1` only are left out.
 
 A container can name its own card with Docker labels, which also lists a
 container on the host network (it publishes no ports):
@@ -181,7 +187,9 @@ Docker is installed first if it is missing.
 - Port 80 belongs to the start page. When Pi-hole's admin page holds it,
   the task moves Pi-hole to `PIHOLE_WEB_PORT` (default `8080`), so the admin
   page is then at `http://<pi>:8080/admin` and linked from the start page.
-  With the `firewall` task on, re-run it afterwards so it opens the new port.
+  The `firewall` task opened Pi-hole's old port, so with it on (or ufw) the
+  move ends with a warning to re-run it: `sudo bash setup.sh firewall` opens
+  the new port. If the move fails, nginx is started again on its old port.
 - nginx falls back to port 8080 only when `PIHOLE_WEB_PORT=80` keeps Pi-hole
   on port 80, or a web server that rpi-setup did not install holds it.
 - With the `firewall` task, the port is open only to `FIREWALL_ALLOW_FROM`
@@ -192,7 +200,11 @@ Docker is installed first if it is missing.
 - The update check reaches out to the image registries, the rpi-setup
   repository and the apt mirrors, and refreshes the apt package lists
   (`apt-get update`) every 6 hours. It installs nothing.
-- With your own `index.html` the lists are still written, so your page can
-  read `services.json`, `containers.json`, `tasks.json` and `updates.json` too.
+- With your own `index.html` (or ours without its marker line) the lists are
+  still written, so your page can read `services.json`, `containers.json`,
+  `tasks.json` and `updates.json` too.
+- If nginx's default site `/etc/nginx/sites-available/default` is missing
+  (removed for sites of your own), the task stops and says how to restore it;
+  the start page is served from that site.
 - Anyone who can open the page sees the container names, images and ports.
   The `firewall` task keeps the page to `FIREWALL_ALLOW_FROM`.

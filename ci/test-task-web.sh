@@ -52,6 +52,44 @@ out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
   web_move_pihole 8080 2>&1 )"
 assert_contains "move Pi-hole: stops nginx on the target port" "systemctl stop nginx" "$out"
 assert_contains "move Pi-hole: then moves it there" ":8080/admin" "$out"
+assert_contains "move Pi-hole: the rpi-setup firewall needs a re-run" "sudo bash setup.sh firewall" "$out"
+# Without the rpi-setup firewall (or ufw) there is nothing to re-run.
+out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
+  task_in_container() { [[ "$1" == pihole ]]; }; port_owner() { return 1; }
+  systemctl() { return 1; }; have() { [[ "$1" != nft && "$1" != ufw ]] && command -v "$1" >/dev/null 2>&1; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  web_move_pihole 8085 2>&1 )"
+assert_lacks "move Pi-hole: no firewall, no warning" "firewall" "$out"
+# A move that fails after nginx was stopped starts nginx again.
+out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
+  task_in_container() { [[ "$1" == pihole ]]; }
+  port_owner() { case "$1" in 8080) echo nginx ;; 80) echo pihole-FTL ;; esac; }
+  systemctl() { echo "systemctl $*"; }; sleep() { :; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  (web_move_pihole 8080 2>&1); echo "status=$?" )"
+assert_contains "move Pi-hole: a failed move dies" "still holds port 80" "$out"
+assert_contains "move Pi-hole: ... with status 1" "status=1" "$out"
+assert_contains "move Pi-hole: ... and starts nginx again" "systemctl start nginx" "$out"
+
+# nginx_site_port: the port of the first listen line; a missing file fails.
+printf 'server {\n\tlisten 8081 default_server;\n\tlisten [::]:8081 default_server;\n}\n' >"$TMP/site"
+assert_eq "site port: the first listen line" "8081" "$(nginx_site_port "$TMP/site")"
+assert_fails "site port: a missing file fails" nginx_site_port "$TMP/no-such-site"
+assert_eq "site port: ... quietly" "" "$(nginx_site_port "$TMP/no-such-site" 2>&1 || true)"
+# run_web says what a missing default site means instead of stopping quietly.
+if [[ ! -e /etc/nginx/sites-available/default ]]; then
+  out="$( WEB_TITLE=Pi
+    apt_installed() { true; }; container_leave() { :; }; port_owner() { return 1; }
+    (run_web 2>&1); echo "status=$?" )"
+  assert_contains "run_web: a missing default site dies with the way to restore it" \
+    "sites-available/default is missing" "$out"
+  assert_contains "run_web: ... with the command" "--force-confmiss nginx-common" "$out"
+  assert_contains "run_web: ... and status 1" "status=1" "$out"
+else
+  skip "run_web: a missing default site (nginx is installed here)"
+fi
 
 # --- the start page --------------------------------------------------------------
 WEB_TITLE='My "Pi" \1 home'
@@ -78,13 +116,30 @@ assert_contains "page: groups visitors from the same connection" "data.connectio
 assert_contains "page: TeamSpeak tab shows the server, channels and busy times" "renderServer(data.server" "$page"
 assert_contains "page: TeamSpeak tab shows the internet address" "'Internet address'" "$page"
 assert_contains "page: ... with the voice port on the Pi for the LAN address" "data.voice_port" "$page"
-assert_contains "page: marked as rpi-setup's own" "rpi-setup" "$page"
+assert_eq "page: marked as rpi-setup's own on its second line" "$RPI_WEB_PAGE_MARK" "$(sed -n 2p "$TMP/index.html")"
+assert_lacks "page: no marker placeholder left" "@MARK@" "$page"
 WEB_TITLE=Other
 web_index_page "$TMP/index.html" >/dev/null
 assert_contains "page: a new WEB_TITLE replaces rpi-setup's page" "<title>Other</title>" "$(cat "$TMP/index.html")"
 echo 'my own page' >"$TMP/index.html"
 web_index_page "$TMP/index.html" >/dev/null
 assert_eq "page: a page of your own is kept" "my own page" "$(cat "$TMP/index.html")"
+# Edits are kept once the marker line is gone, whatever else the page says.
+sed '2d' <<<"$page" | sed 's#<h1>#<h1>Edited #' >"$TMP/index.html"
+edited="$(cat "$TMP/index.html")"
+assert_contains "page: (the edited page still mentions rpi-setup)" "rpi-setup" "$edited"
+web_index_page "$TMP/index.html" >/dev/null
+assert_eq "page: rpi-setup's page without the marker line is kept" "$edited" "$(cat "$TMP/index.html")"
+assert_fails "page: ... and no copy is made" test -e "$TMP/index.html.old"
+# A page from before the marker (its old footer line) is marked once, with a copy kept.
+printf '<!DOCTYPE html>\n<html><body>\n  %s\n    New services and containers show up here on their own within a minute.</footer>\n</body></html>\n' \
+  "$RPI_WEB_PAGE_OLD_FOOTER" >"$TMP/index.html"
+old="$(cat "$TMP/index.html")"
+out="$(web_index_page "$TMP/index.html" 2>&1)"
+assert_eq "page: a page from an older rpi-setup is rewritten with the marker" "$RPI_WEB_PAGE_MARK" "$(sed -n 2p "$TMP/index.html")"
+assert_eq "page: ... and kept as index.html.old" "$old" "$(cat "$TMP/index.html.old")"
+assert_contains "page: ... which is said" "kept as $TMP/index.html.old" "$out"
+assert_lacks "page: the new page has no old footer line" "$RPI_WEB_PAGE_OLD_FOOTER" "$(cat "$TMP/index.html")"
 
 # --- the service list script -----------------------------------------------------
 TASKS=("base|OS update, EEPROM firmware" "web|nginx with a start page" "docker|Docker Engine")
@@ -101,12 +156,24 @@ printf 'services:\n  netalertx:\n    environment:\n      PORT: 20211\n' >"$opt/n
 
 cat >"$bin/docker" <<'EOF'
 #!/usr/bin/env bash
+echo "$*" >>"${0%/*}/docker.log"
 case "$1" in
   info) exit 0 ;;
-  ps) printf '%s\n' web den-watcher netalertx teamspeak myapp labelled hidden localonly evil ;;
+  ps) printf '%s\n' web den-watcher netalertx teamspeak myapp labelled hidden localonly evil lanonly ;;
   exec) printf '80o,443os,[::]:80o\n' ;;
   inspect)
     if [[ "$2" == --type ]]; then [[ "$4" == pihole ]]; exit; fi
+    if [[ "$3" == *rpi-setup.link* ]]; then
+      for name in "${@:4}"; do
+        case "$name" in
+          labelled) printf '/labelled\x1f\x1f9000\x1fMy App\x1f/ui/\x1fDoes things\n' ;;
+          hidden) printf '/hidden\x1fno\x1f9001\x1f\x1f\x1f\n' ;;
+          evil) printf '/evil\x1f\x1f9100\x1fa"b\\c\x1fjavascript:alert(1)\x1f\n' ;;
+          *) printf '/%s\x1f<no value>\x1f<no value>\x1f<no value>\x1f<no value>\x1f<no value>\n' "$name" ;;
+        esac
+      done
+      exit
+    fi
     if [[ "$3" == '{{.Name}}'* ]]; then
       printf '/web\x1fnginx:stable-alpine\x1frunning\x1f\x1f2026-10-03T09:55:01.123456789Z\x1f0001-01-01T00:00:00Z\x1f0\x1fhost\x1f\n'
       printf '/old\x1fbusybox\x1fexited\x1f\x1f2026-10-01T08:00:00.5Z\x1f2026-10-02T08:00:00.5Z\x1f3\x1fbridge\x1f\n'
@@ -114,17 +181,13 @@ case "$1" in
       printf '0.0.0.0:8090>9393/tcp :::8090>9393/tcp 127.0.0.1:9999>80/tcp \n'
       exit
     fi
-    case "${*: -1}" in
-      labelled) printf '\x1f9000\x1fMy App\x1f/ui/\x1fDoes things\n' ;;
-      hidden) printf 'no\x1f9001\x1f\x1f\x1f\n' ;;
-      evil) printf '\x1f9100\x1fa"b\\c\x1fjavascript:alert(1)\x1f\n' ;;
-      *) printf '<no value>\x1f<no value>\x1f<no value>\x1f<no value>\x1f<no value>\n' ;;
-    esac ;;
+    exit 1 ;;
   port)
     case "$2" in
       den-watcher) printf '8080/tcp -> 0.0.0.0:8081\n8080/tcp -> [::]:8081\n' ;;
       myapp) printf '5000/tcp -> 0.0.0.0:5000\n6000/tcp -> 0.0.0.0:6000\n' ;;
       localonly) printf '80/tcp -> 127.0.0.1:9999\n' ;;
+      lanonly) printf '80/tcp -> 192.168.60.9:7070\n' ;;
       teamspeak) printf '30033/tcp -> 0.0.0.0:30033\n' ;;
     esac ;;
 esac
@@ -164,6 +227,7 @@ Pi-hole|Blocks ads and trackers for every device on the network|80|/admin/|True
 Den-Watcher|CPU, memory, temperature and disks of this Pi, with their history|8081|/|False
 a"b\c||9100|/|True
 My App|Does things|9000|/ui/|True
+lanonly||7070|/|True
 myapp||6000|/|True
 NetAlertX|Which devices are on the network, and when|20211|/|True'
   assert_eq "list: Pi-hole first, then the running containers by name" "$expected" "$summary"
@@ -176,6 +240,9 @@ assert_lacks "list: TeamSpeak is not a web page" '30033' "$json"
 assert_lacks "list: a port that does not answer HTTP is left out" '5000' "$json"
 assert_lacks "list: nginx itself is not listed" '"web"' "$json"
 assert_lacks "list: a label cannot set a javascript: link" 'javascript' "$json"
+assert_contains "list: a port published on the LAN address only is probed there" "http://192.168.60.9:7070/" "$(cat "$bin/curl.log")"
+assert_eq "list: Docker is asked once whether it runs" 1 "$(grep -c '^info$' "$bin/docker.log")"
+assert_eq "list: one inspect for the labels of every running container" 1 "$(grep -c 'rpi-setup.link' "$bin/docker.log")"
 
 containers="$(cat "$TMP/html/containers.json" 2>/dev/null || true)"
 assert_eq "containers: every container by name, ports once each, times in seconds" \
@@ -334,6 +401,12 @@ assert_eq "updates: each image is asked once" 1 "$(grep -c 'nginx/manifests/stab
 assert_eq "updates: the package lists are refreshed first" update "$(cat "$ubin/apt.log" 2>/dev/null)"
 assert_lacks "updates: an image built on the Pi is left out" '"built"' "$updates"
 assert_lacks "updates: an image pinned by digest is left out" '"pinned"' "$updates"
+# With Pi-hole in its container (the native install stays, stopped) the
+# container row is the only Pi-hole row.
+install -d "$opt/pihole"; touch "$opt/pihole/docker-compose.yml"
+PATH="$ubin:$PATH" WU_PIHOLE_VERSIONS="$TMP/pihole-versions" RPI_SETUP_CONTAINER_ROOT="$opt" bash "$TMP/updates"
+assert_lacks "updates: no native Pi-hole row while Pi-hole runs in its container" '"kind":"pihole"' "$(cat "$TMP/html/updates.json")"
+rm -f "$opt/pihole/docker-compose.yml"
 
 gitq clone -q "$TMP/upstream.git" "$TMP/other"
 gitq -C "$TMP/other" commit -q --allow-empty -m two
