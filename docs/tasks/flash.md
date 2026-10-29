@@ -27,15 +27,26 @@ card is written with user and SSH only.
 | `FLASH_WIFI_SSID` | `-s` | `-WifiSsid` | no Wi-Fi | Wi-Fi network to join on first boot. |
 | `FLASH_WIFI_PASSWORD` | `-w` | `-WifiPassword` | asked, hidden | Its password, 8-63 characters. |
 | `FLASH_WIFI_COUNTRY` | `-c` | `-WifiCountry` | `DE` | Wi-Fi country code (regulatory domain). |
-| `FLASH_SSH_PUBKEY_FILE` | `-a` | `-SshPublicKeyFile` | password login only | Your SSH **public** key, e.g. `~/.ssh/id_ed25519.pub`. |
+| `FLASH_SSH_PUBKEY_FILE` | `-a` | `-SshPublicKeyFile` | password login only | Your SSH **public** key, e.g. `~/.ssh/id_ed25519.pub` (a leading `~/` is your home on both systems, also in the settings file). |
 | `FLASH_GITHUB_KEY` | `-g` | `-GitHubKey` | `yes` (without asking); `no` without a terminal | `yes` creates a new SSH key for the Pi to use with GitHub and prints its public key at the end, to add at github.com/settings/keys. |
 
 The other options (disk, image, user, password, skipping the user setup) are
-flags only; see the guides.
+flags only; see the guides. The password for the login user may hold any
+characters but `:` and control characters (tab, newline); umlauts are fine on
+both systems.
 
 ## Good to know
 
 - `sudo` drops environment variables: use `sudo FLASH_HOSTNAME=homepi ./host/flash.sh`.
+- A setting that is set but empty (`FLASH_HOSTNAME=` in the environment, or
+  `-n ''`) means "default" and lets the settings file fill it in, as on the
+  Pi. Of a setting repeated in the file the first line counts; the scripts
+  warn about the others.
+- The disk is checked again right before it is written, after the download:
+  if its size, model or serial changed since you confirmed it, the script
+  stops. On Linux a disk that is in use (something mounted on it, also
+  through LVM or LUKS, or an active swap) is listed last and refused; on
+  Windows `-Disk` with `-Force` only ever writes a removable USB/SD/MMC disk.
 - Prefer the hidden prompt or the settings file over `-w`, which ends up in
   your shell history.
 - On Trixie images the settings are written as cloud-init files, on Bookworm

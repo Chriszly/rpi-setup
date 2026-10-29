@@ -69,10 +69,20 @@ default shown in brackets):
    it also asks for the Wi-Fi password (hidden) and country (default `DE`).
 3. Your PC's SSH public key, so you can log in to the Pi without a password
    (default: the key found in your `~/.ssh`, `none` to skip).
-4. A username and password (same rules as on Windows).
-5. The target disk, from the listed candidates with size, model and bus (a
-   number, or a full `/dev/node` such as `/dev/sda`).
-6. `yes` to confirm it will DESTROY all data on that disk.
+4. A username (1-32 lowercase letters, digits, `_` or `-`).
+5. A password, asked twice (hidden). Any characters but `:` and control
+   characters such as a tab; shorter than 8 characters only gets a warning.
+   Same rules as on Windows.
+6. The target disk, from the listed candidates with size, model and bus (a
+   number, or a full `/dev/node` such as `/dev/sda`). A disk that is in use
+   (something mounted on it, also through LVM or LUKS, an active swap) is
+   listed last, marked `IN USE`, and refused, so the disk holding your own
+   system cannot be picked by mistake.
+7. `yes` to confirm it will DESTROY all data on that disk.
+
+Right before the card is written, after the download, the script checks that
+the chosen disk still has the size, model and serial it had when you
+confirmed it, and stops if a different card or reader is there now.
 
 Then it downloads and checks the image and writes the card without asking
 anything else. It also creates a new SSH key for the Pi to use with GitHub,
@@ -127,8 +137,9 @@ history.
 
 Everything is checked before the card is written: the host name (letters,
 digits and `-`), the country (two letters), the Wi-Fi password (8-63
-characters) and the key file (must be an OpenSSH public key, not the private
-key). How it reaches the Pi depends on the image:
+characters, typed or set) and the key file (must be an OpenSSH public key, not
+the private key; a leading `~/` is your home, also in the settings file). How
+it reaches the Pi depends on the image:
 
 - **Trixie** (the current release): `user-data` and `network-config` for
   cloud-init on the boot partition.
