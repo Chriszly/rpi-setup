@@ -194,8 +194,9 @@ password or key is printed.
 
 Re-running a container task pulls its image and recreates the container when
 the image changed. To bring the whole Pi up to date, run `sudo bash update.sh`: it upgrades the
-OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`) and
-recreates the ones that changed, re-runs the `web` task so its start page is
+OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`),
+rebuilds the images built on the Pi (the TeamSpeak usage logger) and
+recreates the containers that changed, re-runs the `web` task so its start page is
 the current version, runs `pihole -up` if Pi-hole is installed natively (in
 its container it is updated with the containers) and
 `rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
