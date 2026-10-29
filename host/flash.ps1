@@ -469,7 +469,7 @@ function Get-Credentials {
 }
 
 # The first drive letter D-Z not in $Used, or '' when all are taken. Written
-# with character codes: Windows PowerShell 5.1 has no 'D'..'Z' range.
+# with character codes: Windows PowerShell 5.1 has no range of letters.
 function Get-FreeDriveLetter {
     param([string[]]$Used)
     foreach ($code in 68..90) {

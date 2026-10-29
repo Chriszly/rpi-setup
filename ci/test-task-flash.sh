@@ -316,6 +316,7 @@ can_prompt() { return 0; }
 reset_flash_vars
 invoking_home() { echo "$TMP/home"; }
 mkdir -p "$TMP/home/keys"; cp "$TMP/id_ed25519.pub" "$TMP/home/keys/pi.pub"
+# shellcheck disable=SC2088  # the literal ~/ is what this case is about
 FLASH_SSH_PUBKEY_FILE='~/keys/pi.pub'
 validate_flash_options
 assert_eq "validate_flash_options expands ~/ in FLASH_SSH_PUBKEY_FILE" "$TMP/home/keys/pi.pub" "$FLASH_SSH_PUBKEY_FILE"

@@ -80,6 +80,7 @@ docker() { :; }
 smbpasswd() { [[ "$1" == -s ]] && head -n1 >"$TMP/smbpasswd-got"; return 0; }
 printf '[global]\n' >"$TMP/native.conf"
 SMB_CONF="$TMP/native.conf"
+# shellcheck disable=SC2163  # the NAME=value arguments are exported on purpose
 native() { ( SAMBA_DOCKER=no SAMBA_USER="$u" SAMBA_SHARE_PATH="$TMP/share"; [[ $# -eq 0 ]] || export "$@"; run_samba ) 2>&1; }
 rm -f "$TMP/saved" "$TMP/smbpasswd-got"
 load_secret() { echo saved-pw; }

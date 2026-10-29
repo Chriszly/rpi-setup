@@ -46,6 +46,7 @@ base_remote_session() { return 1; }
 WHO_M='' LOGIND_REMOTE=''
 who() { printf '%s\n' "$WHO_M"; }
 loginctl() { [[ -n "$LOGIND_REMOTE" ]] || return 1; printf '%s\n' "$LOGIND_REMOTE"; }
+# shellcheck disable=SC2163  # the NAME=value arguments are exported on purpose
 remote() { ( unset SSH_CONNECTION SSH_CLIENT SSH_TTY; export "$@"; unset -f base_remote_session; . "$ROOT/tasks/base.sh"; base_remote_session ); }
 assert_fails "remote session: nothing says so" remote X=1
 assert_ok "remote session: SSH_CONNECTION" remote SSH_CONNECTION='192.168.1.5 5000 192.168.1.10 22'

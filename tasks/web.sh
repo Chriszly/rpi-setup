@@ -39,6 +39,7 @@ run_web() {
       apt_install nginx || rc=$?
       if [[ $own_policy -eq 1 ]]; then
         rm -f /usr/sbin/policy-rc.d
+        # shellcheck disable=SC2064  # the saved trap string is put back as it was
         if [[ -n "$prev_trap" ]]; then trap "$prev_trap" EXIT; else trap - EXIT; fi
       fi
       [[ $rc -eq 0 ]] || die 'nginx install failed'

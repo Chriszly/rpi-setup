@@ -297,7 +297,7 @@ if [[ $EUID -eq 0 ]]; then
     chmod 0755 "$TMP"
     chown -R "$DEPLOY_OWNER" "$tmp/pi" "$tmp/origin.git"
 fi
-out="$(DP_FRESH= "$tmp/self" --tasks base 2>&1)" || fail "the self-updating deploy failed: $out"
+out="$(DP_FRESH='' "$tmp/self" --tasks base 2>&1)" || fail "the self-updating deploy failed: $out"
 assert_eq "the outdated command replaces itself once" "1" "$(grep -c "updated $tmp/self from the checkout; running the new one" <<<"$out")"
 assert_eq "the new command runs the deploy once" "1" "$(grep -c 'running setup.sh base' <<<"$out")"
 assert_eq "with the given task" "base cfg=$tmp/etc" "$(cat "$tmp/ran")"
