@@ -58,6 +58,17 @@ fi
 assert_eq "hash is SHA-256 hex" "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92" "$(netalertx_hash 123456)"
 assert_eq "hash of odd password" "$(printf '%s' 'p"a\ss $x' | sha256sum | cut -d' ' -f1)" "$(netalertx_hash 'p"a\ss $x')"
 
+# --- settings are checked before anything changes ----------------------------------
+container_require_docker() { echo "docker needed" >"$TMP/reached"; exit 1; }
+( NETALERTX_PORT=20212; run_netalertx ) >/dev/null 2>"$TMP/err" || true
+assert_contains "the API's port stops the task" "NETALERTX_PORT must not be 20212" "$(cat "$TMP/err")"
+assert_ok "the API's port: Docker was not touched" test ! -e "$TMP/reached"
+( NETALERTX_PORT=70000; run_netalertx ) >/dev/null 2>"$TMP/err" || true
+assert_contains "bad port stops the task" "NETALERTX_PORT must be a port number" "$(cat "$TMP/err")"
+( NETALERTX_PORT=20211; run_netalertx ) >/dev/null 2>&1 || true
+assert_ok "the default port goes on to Docker" test -e "$TMP/reached"
+unset -f container_require_docker
+
 # --- netalertx_override_json ------------------------------------------------------
 subnets="['192.168.1.0/24 --interface=eth0','10.0.0.0/8 --interface=wlan0']"
 hash="$(netalertx_hash secret)"
