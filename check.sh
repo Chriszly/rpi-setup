@@ -277,6 +277,9 @@ check_tasks() {
     else check_service nginx "web"
     fi
     check_http "web: page" "http://$host:$wport/"
+    # The timers behind the page's service list and its update check, where set up.
+    if unit_exists rpi-setup-web-links.timer; then check_service rpi-setup-web-links.timer "web: links timer"; fi
+    if unit_exists rpi-setup-updates.timer; then check_service rpi-setup-updates.timer "web: updates timer"; fi
   fi
 
   if task_in_container pihole || have pihole-FTL || unit_exists pihole-FTL; then
@@ -319,21 +322,23 @@ check_tasks() {
     fi
   fi
 
-  if [[ -f /opt/netalertx/docker-compose.yml ]]; then
+  if [[ -f "$(container_dir netalertx)/docker-compose.yml" ]]; then
     found=1; check_config netalertx
     if have docker; then check_container netalertx; fi
     check_http "netalertx: web" "http://$host:$(port_setting NETALERTX_PORT 20211)/"
   fi
 
-  if [[ -f /opt/teamspeak/docker-compose.yml ]]; then
+  if [[ -f "$(container_dir teamspeak)/docker-compose.yml" ]]; then
     found=1; check_config teamspeak
     if have docker; then check_container teamspeak; fi
     check_listen "teamspeak: voice" "$(port_setting TEAMSPEAK_VOICE_PORT 9987)" udp
     check_listen "teamspeak: files" "$(port_setting TEAMSPEAK_FILE_PORT 30033)" tcp
     local qhttp="${TEAMSPEAK_QUERY_HTTP:-yes}"
-    if [[ "${qhttp,,}" =~ ^(yes|true|on|1)$ ]]; then
-      check_http "teamspeak: query" "http://$host:$(port_setting TEAMSPEAK_QUERY_PORT 10080)/" any
-    fi
+    case "${qhttp,,}" in
+      yes|true|on|1) check_http "teamspeak: query" "http://$host:$(port_setting TEAMSPEAK_QUERY_PORT 10080)/" any ;;
+      no|false|off|0) ;;
+      *) report WARN "teamspeak: query" "TEAMSPEAK_QUERY_HTTP must be yes or no (got '$qhttp'); the task stops on it" ;;
+    esac
   fi
 
   if [[ -f "$(container_dir denwatcher)/docker-compose.yml" ]]; then
@@ -349,6 +354,35 @@ check_tasks() {
       if have docker; then check_container "$app"; fi
       check_http "apps: $app" "http://$host:$port/"
     done < <(sed -n 's/^    container_name: \(.*\)$/\1/p; s/^ *- "0\.0\.0\.0:\([0-9]*\):[0-9]*"$/\1/p' "$(container_dir apps)/docker-compose.yml" | paste -d' ' - -)
+  fi
+
+  if unit_exists rpi-setup-backup.timer; then
+    found=1; check_service rpi-setup-backup.timer "backup: timer"
+    if [[ "$(systemctl is-failed rpi-setup-backup.service 2>/dev/null)" == failed ]]; then
+      report WARN "backup: last run" "failed (see: journalctl -u rpi-setup-backup -b)"
+    fi
+  fi
+
+  # actions/runner's svc.sh records the unit it installed in .service in the
+  # runner's folder (tasks/runner.sh); RPI_SETUP_RUNNER_DIR only exists for tests.
+  local runner_unit runner_dir="${RPI_SETUP_RUNNER_DIR:-/opt/rpi-runner}"
+  if runner_unit="$(cat "$runner_dir/.service" 2>/dev/null)" && [[ -n "$runner_unit" ]]; then
+    found=1; check_service "$runner_unit" "runner"
+  fi
+
+  # The firewall unit is oneshot with RemainAfterExit, so it stays active
+  # after anything flushes the ruleset: the table itself is checked too.
+  if unit_exists rpi-setup-firewall; then
+    found=1; check_service rpi-setup-firewall "firewall"
+    if ! have nft; then
+      report WARN "firewall: rules" "nft not found"
+    elif [[ $EUID -ne 0 ]]; then
+      report WARN "firewall: rules" "not run as root; cannot read the rules"
+    elif nft list table inet rpi_setup >/dev/null 2>&1; then
+      report OK "firewall: rules" "table inet rpi_setup is loaded"
+    else
+      report FAIL "firewall: rules" "table inet rpi_setup is missing, every port is open (run: sudo systemctl restart rpi-setup-firewall)"
+    fi
   fi
 
   if have docker && docker info >/dev/null 2>&1; then

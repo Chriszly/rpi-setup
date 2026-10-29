@@ -184,6 +184,19 @@ assert_contains "load_task_config warns about a readable password file" "chmod 6
 chmod 0600 "$cfg/loose.env"
 assert_eq "load_task_config is quiet about a private password file" "" \
     "$( (load_task_config samba "$cfg/loose.env") 2>&1 >/dev/null)"
+printf 'RUNNER_TOKEN=abc\n' >"$cfg/token.env"
+chmod 0644 "$cfg/token.env"
+assert_contains "config_warn_perms warns about a readable token" "chmod 600" "$( (config_warn_perms "$cfg/token.env") 2>&1)"
+printf 'RUNNER_TOKEN=\nRUNNER_REPO=alex/pis\n' >"$cfg/token.env"
+assert_eq "config_warn_perms is quiet about an empty token" "" "$( (config_warn_perms "$cfg/token.env") 2>&1)"
+
+# unit_exists: a bare name is a service, a timer keeps its suffix.
+systemctl() { printf '%s\n' "$3" >>"$cfg/units.log"; [[ "$3" == ssh.service || "$3" == rpi-setup-backup.timer ]] && echo "$3 enabled"; return 0; }
+assert_ok    "unit_exists finds a service by its bare name" unit_exists ssh
+assert_ok    "unit_exists finds a timer by its full name" unit_exists rpi-setup-backup.timer
+assert_fails "unit_exists is false for a missing unit" unit_exists nope
+assert_eq "unit_exists asks systemctl for the right units" $'ssh.service\nrpi-setup-backup.timer\nnope.service' "$(cat "$cfg/units.log")"
+unset -f systemctl
 
 # split_config: the central example splits into one file per task template.
 printf 'SAMBA_PASSWORD="p #1"\nWEB_PORT=8081\n' >"$cfg/rpi-setup.env"

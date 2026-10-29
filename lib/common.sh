@@ -69,9 +69,12 @@ need_root() { [[ $EUID -eq 0 ]] || die "Please run as root: sudo bash ${1:-setup
 # True if command $1 is available.
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# True if systemd unit $1 exists on this system (installed, whatever its state).
+# True if systemd unit $1 exists on this system (installed, whatever its
+# state). A bare name is a service; give "name.timer" for a timer.
 unit_exists() {
-  [[ -n "$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null)" ]]
+  local unit="$1"
+  [[ "$unit" == *.* ]] || unit+=.service
+  [[ -n "$(systemctl list-unit-files --no-legend "$unit" 2>/dev/null)" ]]
 }
 
 # Refresh apt lists at most once an hour per run. The stamp file records the
@@ -337,12 +340,13 @@ config_each() {
   done <"$file"
 }
 
-# Warn if file $1 holds a non-empty password/key and other users can read it.
+# Warn if file $1 holds a non-empty password or token and other users can
+# read it.
 config_warn_perms() {
   local file="$1" mode
   mode="$(stat -c %a "$file" 2>/dev/null)" || return 0
   [[ "$mode" =~ ^[0-7]+$ ]] && (( 8#$mode & 077 )) || return 0
-  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(PASSWORD|AUTHKEY)=[[:space:]]*[^[:space:]#]' "$file"; then
+  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(PASSWORD|TOKEN)=[[:space:]]*[^[:space:]#]' "$file"; then
     warn "$file holds a password but other users can read it; run: chmod 600 $file"
   fi
 }

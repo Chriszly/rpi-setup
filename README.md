@@ -192,7 +192,9 @@ apply after a reboot; switching them back to `no` removes the block again.
 `sudo bash check.sh` checks the Pi without changing anything: board, OS
 and firmware, power and temperature (under-voltage, throttling), disk space,
 LAN address and SSH, and for every task that looks installed whether its
-service or container runs and its port answers. It prints one
+service or container runs and its port answers (for `firewall` also that
+its rules are loaded, for `backup`, `runner` and `web` that their timers
+and the runner service run). It prints one
 `OK`, `WARN` or `FAIL` line per check and exits 1 if anything failed. No
 password or key is printed.
 
