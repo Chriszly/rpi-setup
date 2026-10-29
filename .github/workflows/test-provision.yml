@@ -141,6 +141,10 @@ jobs:
 
   # One ci/smoke-container-<task>.sh per task: runs "setup.sh <task>" with
   # <TASK>_DOCKER=yes, checks the service answers, re-runs it and switches back.
+  # ci/smoke-container-web-pihole.sh runs between them (glob order) and checks
+  # that the web task takes port 80 from a Pi-hole container, moving the
+  # admin page to 8080; it needs the Pi-hole image the pihole script pulled
+  # and nginx not yet installed, which the web script does last.
   container-smoke:
     name: Container tasks on plain runner
     runs-on: ubuntu-latest
