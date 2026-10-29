@@ -14,7 +14,7 @@ task's ports are opened. It looks at what is installed when it runs.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `FIREWALL_SSH_PORT` | `22` | SSH port, always allowed. Every port sshd really listens on is allowed too, so a wrong value cannot lock you out. |
+| `FIREWALL_SSH_PORT` | `22` | SSH port, always allowed. Every port of sshd's configuration (`sshd -T`), every port sshd listens on and the port of `ssh.socket` (a socket-activated sshd) are allowed too, so a wrong value cannot lock you out. |
 | `FIREWALL_AUTO_PORTS` | `yes` | Open the ports of the installed rpi-setup services (table below). `no`: only SSH and `FIREWALL_EXTRA_PORTS`. |
 | `FIREWALL_EXTRA_PORTS` | none | More ports open to anyone, as `port/proto` or `from-to/proto`, e.g. `8123/tcp 1900/udp`. |
 | `FIREWALL_ALLOW_FROM` | empty: anyone | Subnets allowed to reach the web UIs, e.g. `192.168.1.0/24`; several separated by spaces. Tailscale is always allowed. |
@@ -97,6 +97,8 @@ To close or limit such a port:
   detected like native ones; they use the host network, so these rules apply
   to them.
 - Inside a container or CI the rules are generated and checked but not loaded.
+- `FIREWALL_ALLOW_FROM` entries need a prefix length after the `/`
+  (`192.168.1.0/24`), or none at all for a single address (`10.0.0.5`).
 - A re-run loads the rules again when the table is gone although the unit
   is still active, which happens after `nft flush ruleset` or a restart of
   `nftables.service` with Debian's stock `/etc/nftables.conf` (it flushes

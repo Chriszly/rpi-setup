@@ -34,6 +34,28 @@ assert_fails "cidrs: v4 prefix 33"      firewall_cidrs X '10.0.0.0/33'
 assert_fails "cidrs: v6 prefix 129"     firewall_cidrs X 'fd00::/129'
 assert_fails "cidrs: host name"         firewall_cidrs X 'mypc.local'
 assert_fails "cidrs: injection attempt" firewall_cidrs X '10.0.0.0/8}'
+assert_fails "cidrs: trailing slash"    firewall_cidrs X '192.168.1.0/'
+assert_fails "cidrs: v6 trailing slash" firewall_cidrs X 'fd00::/'
+assert_fails "cidrs: two slashes"       firewall_cidrs X '10.0.0.0/8/'
+assert_contains "cidrs: trailing slash names the setting" "FIREWALL_ALLOW_FROM: '192.168.1.0/' needs a prefix length" \
+  "$( (firewall_cidrs FIREWALL_ALLOW_FROM '192.168.1.0/') 2>&1 || true)"
+
+# --- firewall_sshd_ports (sshd, ss and systemctl stubbed) --------------------------
+SSHD_T='' SS_OUT='' SOCKET_OUT=''
+sshd() { [[ -n "$SSHD_T" ]] || return 1; printf '%s\n' "$SSHD_T"; }
+ss() { printf '%s\n' "$SS_OUT"; }
+systemctl() { printf '%s\n' "$SOCKET_OUT"; }
+assert_eq "sshd ports: nothing known" "" "$(firewall_sshd_ports)"
+SSHD_T=$'port 2222\nport 22\naddressfamily any'
+assert_eq "sshd ports: from sshd -T, sorted" "22 2222 " "$(firewall_sshd_ports)"
+SSHD_T='' SS_OUT='LISTEN 0 128 0.0.0.0:2200 0.0.0.0:* users:(("sshd",pid=1,fd=3))'
+assert_eq "sshd ports: from a listening sshd" "2200 " "$(firewall_sshd_ports)"
+SS_OUT='LISTEN 0 4096 [::]:2222 [::]:* users:(("systemd",pid=1,fd=50))'
+SOCKET_OUT=$'Listen=[::]:2222 (Stream)\nListen=/run/other.sock (Stream)\n\nListen='
+assert_eq "sshd ports: from ssh.socket when systemd holds the listener" "2222 " "$(firewall_sshd_ports)"
+SSHD_T='port 22'
+assert_eq "sshd ports: all sources, deduplicated" "22 2222 " "$(firewall_sshd_ports)"
+unset -f sshd ss systemctl
 
 # --- firewall_ports_of ------------------------------------------------------------
 assert_eq "ports_of: tcp, deduplicated" "22, 80, 1000-2000" \

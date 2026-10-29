@@ -136,7 +136,10 @@ firewall_cidrs() {
   local name="$1" v="${2//,/ }" c ip prefix out=""
   for c in $v; do
     ip="${c%/*}" prefix=""
-    [[ "$c" != */* ]] || prefix="${c##*/}"
+    if [[ "$c" == */* ]]; then
+      prefix="${c##*/}"
+      [[ "$prefix" =~ ^[0-9]{1,3}$ ]] || die "$name: '$c' needs a prefix length after the /, such as 192.168.1.0/24"
+    fi
     if [[ "$ip" =~ ^[0-9.]+$ ]]; then
       valid_ipv4 "$ip" || die "$name: '$c' is not an IPv4 address or subnet"
       [[ -z "$prefix" ]] || { [[ "$prefix" =~ ^[0-9]{1,2}$ ]] && (( 10#$prefix <= 32 )); } ||
@@ -252,9 +255,17 @@ firewall_table_loaded() {
   nft list table inet rpi_setup >/dev/null 2>&1
 }
 
-# TCP ports sshd listens on (empty if none or ss is missing).
+# TCP ports sshd is reachable on, space separated (empty if none can be
+# found): the Port lines of its configuration ("sshd -T"), what really
+# listens as sshd (ss), and the ListenStream of ssh.socket, since with a
+# socket-activated sshd the listener belongs to systemd, not sshd.
 firewall_sshd_ports() {
-  ss -H -ltnp 2>/dev/null | awk '/"sshd/ { n = split($4, a, ":"); print a[n] }' | sort -un | tr '\n' ' '
+  {
+    sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' || true
+    ss -H -ltnp 2>/dev/null | awk '/"sshd/ { n = split($4, a, ":"); print a[n] }' || true
+    systemctl show ssh.socket sshd.socket -p Listen 2>/dev/null |
+      awk -F'[= ]' '$1 == "Listen" && $3 == "(Stream)" { n = split($2, a, ":"); print a[n] }' || true
+  } | grep -Ex '[0-9]+' | sort -un | tr '\n' ' ' || true
 }
 
 # Every web server port nginx listens on (from its enabled sites, or the
