@@ -122,19 +122,19 @@ else
   assert_contains "containers: nginx port from the container's site" "8090/tcp web nginx" "$out"
   assert_contains "containers: samba" "445/tcp open samba" "$out"
   install -d "$ctr/denwatcher"; touch "$ctr/denwatcher/docker-compose.yml"
-  assert_contains "containers: Den-Watcher on its default port" "9393/tcp web denwatcher" \
+  assert_contains "containers: Den-Watcher is open, published by Docker" "9393/tcp open denwatcher docker" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: Den-Watcher port from its settings" "8095/tcp web denwatcher" \
+  assert_contains "containers: Den-Watcher port from its settings" "8095/tcp open denwatcher docker" \
     "$(DENWATCHER_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   assert_lacks "containers: no Den-Watcher status page by default" "denwatcher-status" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: Den-Watcher status page open to anyone" "9443/tcp open denwatcher-status" \
+  assert_contains "containers: Den-Watcher status page open to anyone" "9443/tcp open denwatcher-status docker" \
     "$(DENWATCHER_STATUS_PORT=9443 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   install -d "$ctr/apps"
   printf '    ports:\n      - "0.0.0.0:8096:8080"\n    ports:\n      - "0.0.0.0:8097:80"\n' >"$ctr/apps/docker-compose.yml"
   out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: each app's port" "8096/tcp web apps" "$out"
-  assert_contains "containers: each app's port, not the one inside" "8097/tcp web apps" "$out"
+  assert_contains "containers: each app's port is open, published by Docker" "8096/tcp open apps docker" "$out"
+  assert_contains "containers: each app's port, not the one inside" "8097/tcp open apps docker" "$out"
   unset -f docker
 fi
 
@@ -155,15 +155,18 @@ if [[ $EUID -eq 0 ]] && command -v nft >/dev/null 2>&1 &&
   in_container() { return 0; }
   systemctl() { :; }
   firewall_sshd_ports() { printf '2222 '; }
-  firewall_service_ports() { printf '53/udp open pihole-dns\n80/tcp web pihole-web\n'; }
+  firewall_service_ports() { printf '53/udp open pihole-dns\n80/tcp web pihole-web\n9393/tcp open denwatcher docker\n'; }
   FW_NFT_FILE="$TMP/etc/firewall.nft"
   FW_UNIT_DIR="$TMP"
   run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
   assert_contains "run_firewall: container mode does not load" "did not load" "$run_out"
+  assert_contains "run_firewall: a Docker-published port says it is not limited" \
+    "Allowing 9393/tcp for denwatcher (published by Docker, not limited by FIREWALL_ALLOW_FROM)" "$run_out"
   gen="$(cat "$FW_NFT_FILE")"
   assert_contains "run_firewall: sshd's real port kept" 'tcp dport { 22, 2222 }' "$gen"
   assert_contains "run_firewall: extra port" "8123" "$gen"
   assert_contains "run_firewall: web port limited" 'ip saddr { 192.168.1.0/24 } tcp dport { 80 }' "$gen"
+  assert_contains "run_firewall: a Docker-published port is open, not limited" 'tcp dport { 9393, 8123 } accept' "$gen"
   assert_eq "run_firewall: creates its folder root-only" "700" "$(stat -c %a "$TMP/etc")"
   assert_contains "run_firewall: unit loads the file" "ExecStart=/usr/sbin/nft -f $FW_NFT_FILE" \
     "$(cat "$TMP/rpi-setup-firewall.service")"
