@@ -13,6 +13,10 @@ denwatcher_all_addons='power pressure kernel wifi bluetooth memory ports process
 
 # Where systemd-rfkill keeps the radios' blocks for the next boot.
 denwatcher_rfkill_dir=/var/lib/systemd/rfkill
+# Raspberry Pi OS makes this file at boot while no Wi-Fi country is set.
+denwatcher_country_unset=/run/wifi-country-unset
+# The country codes raspi-config offers (from tzdata).
+denwatcher_iso3166=/usr/share/zoneinfo/iso3166.tab
 
 # denwatcher_compose IMAGE PORT [ROUTERS] [DOCKER_DIR] [ADDONS] [RETENTION_DAYS] [STATUS_PORT]
 # - the compose file:
@@ -228,6 +232,10 @@ denwatcher_move_old() {
   fi
 }
 
+# denwatcher_system_dbus - true if the host runs a system D-Bus (the
+# bluetooth and wifi add-ons ask BlueZ and NetworkManager through it).
+denwatcher_system_dbus() { [[ -S /run/dbus/system_bus_socket ]]; }
+
 # denwatcher_port_container PORT - prints the name of the container that
 # publishes PORT (its docker-proxy holds the port); false if Docker knows
 # none.
@@ -237,41 +245,96 @@ denwatcher_port_container() {
     awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
 }
 
-# denwatcher_wifi_radio COUNTRY - switches the Wi-Fi radio on where it is
-# off, so the wifi add-on hears the networks nearby on a Pi on cable too.
-# Raspberry Pi OS keeps the radio blocked (rfkill) until a Wi-Fi country is
-# set, so it sets COUNTRY first, with raspi-config where there is one. The
-# radio only listens: NetworkManager joins no network that is not saved.
+# denwatcher_wifi_country - prints the Wi-Fi country (regulatory domain) in
+# force: a code such as DE, 00 when none is set, or nothing when it cannot
+# be told (no iw and no marker file).
+denwatcher_wifi_country() {
+  local c=""
+  if have iw; then
+    c="$(LC_ALL=C iw reg get 2>/dev/null | sed -nE 's/^country ([A-Z0-9]{2}):.*/\1/p' | head -n1)" || c=""
+  fi
+  if [[ -z "$c" && -e "$denwatcher_country_unset" ]]; then c=00; fi
+  printf '%s\n' "$c"
+}
+
+# denwatcher_wifi_devices - one "ID SOFT HARD NAME" line per Wi-Fi radio
+# rfkill knows, SOFT and HARD being yes or no.
+denwatcher_wifi_devices() {
+  have rfkill || return 0
+  LC_ALL=C rfkill list wlan 2>/dev/null | awk -F': ' '
+    /^[0-9]+: / { if (id != "") print id, soft, hard, name; id = $1; name = $2; soft = "no"; hard = "no" }
+    /Soft blocked: yes/ { soft = "yes" }
+    /Hard blocked: yes/ { hard = "yes" }
+    END { if (id != "") print id, soft, hard, name }' || true
+}
+
+# denwatcher_wifi_radio COUNTRY - switches the Wi-Fi radio on where
+# Raspberry Pi OS keeps it off only because no Wi-Fi country is set (a Pi on
+# cable usually never gets one), so the wifi add-on hears the networks
+# nearby: it sets COUNTRY, with raspi-config where there is one, unblocks
+# each radio in rfkill (also for the next boots) and switches Wi-Fi on in
+# NetworkManager. A country already set is never changed, and a radio
+# switched off while a country is set stays off: that was someone's choice.
+# The radio only listens: NetworkManager joins no network that is not saved.
+# A step that fails warns, and the end says what was reached.
 denwatcher_wifi_radio() {
-  local list="" off=0 f
-  command -v rfkill >/dev/null 2>&1 && list="$(rfkill list wlan 2>/dev/null)" || true
-  if grep -q 'Hard blocked: yes' <<<"$list"; then
-    warn "The Wi-Fi radio is switched off by a hardware switch, so the wifi add-on hears no networks nearby"
+  local country="$1" set id soft hard name nm_off=0 ok=1 f
+  local -a unblock=() hard_blocked=()
+  while read -r id soft hard name; do
+    [[ -n "$id" ]] || continue
+    if [[ "$hard" == yes ]]; then hard_blocked+=("$name")
+    elif [[ "$soft" == yes ]]; then unblock+=("$id")
+    fi
+  done <<<"$(denwatcher_wifi_devices)"
+  if have nmcli && [[ "$(LC_ALL=C nmcli radio wifi 2>/dev/null)" == disabled ]]; then nm_off=1; fi
+  if (( ${#hard_blocked[@]} > 0 )); then
+    warn "The Wi-Fi radio ${hard_blocked[*]} is switched off by a hardware switch, so the wifi add-on hears no networks nearby on it"
+  fi
+  (( ${#unblock[@]} > 0 || nm_off == 1 )) || return 0
+  set="$(denwatcher_wifi_country)"
+  if [[ -z "$set" ]]; then
+    info "The Wi-Fi radio is switched off and whether a Wi-Fi country is set cannot be told (no iw), so it stays off and the wifi add-on hears no networks nearby; switch it on with: sudo rfkill unblock wifi && sudo nmcli radio wifi on"
     return 0
   fi
-  grep -q 'Soft blocked: yes' <<<"$list" && off=1
-  if command -v nmcli >/dev/null 2>&1 && [[ "$(nmcli radio wifi 2>/dev/null)" == disabled ]]; then off=1; fi
-  [[ $off -eq 1 ]] || return 0
-  if command -v raspi-config >/dev/null 2>&1; then
-    raspi-config nonint do_wifi_country "$1" >/dev/null 2>&1 ||
-      warn "raspi-config could not set the Wi-Fi country $1"
-  elif command -v iw >/dev/null 2>&1; then
-    iw reg set "$1" 2>/dev/null || true
+  if [[ "$set" != 00 ]]; then
+    info "The Wi-Fi radio is switched off although the Wi-Fi country $set is set, so it stays off and the wifi add-on hears no networks nearby; switch it on with: sudo rfkill unblock wifi && sudo nmcli radio wifi on"
+    return 0
   fi
-  rfkill unblock wifi 2>/dev/null || true
+  # No country: the OS blocked the radio, not someone. Set the country, for
+  # good with raspi-config, else for this boot with iw.
+  if have raspi-config && raspi-config nonint do_wifi_country "$country" >/dev/null 2>&1; then
+    :
+  else
+    ! have raspi-config || warn "raspi-config could not set the Wi-Fi country $country (raspi-config nonint do_wifi_country $country)"
+    if have iw && iw reg set "$country" 2>/dev/null; then
+      warn "The Wi-Fi country $country is set for this boot only (iw reg set); set it for good, or the radio is blocked again at the next boot"
+    else
+      warn "Could not set the Wi-Fi country $country, so the Wi-Fi radio stays off and the wifi add-on hears no networks nearby"
+      return 0
+    fi
+  fi
+  for id in "${unblock[@]}"; do
+    rfkill unblock "$id" 2>/dev/null || { warn "rfkill could not unblock Wi-Fi radio $id"; ok=0; }
+  done
   # systemd-rfkill restores the block at the next boot from these files.
   for f in "$denwatcher_rfkill_dir"/*:wlan; do
     [[ ! -e "$f" ]] || echo 0 >"$f"
   done
-  if command -v nmcli >/dev/null 2>&1; then
-    nmcli radio wifi on 2>/dev/null || warn "NetworkManager did not switch the Wi-Fi radio on (nmcli radio wifi on)"
+  if [[ $nm_off -eq 1 ]] && ! LC_ALL=C nmcli radio wifi on >/dev/null 2>&1; then
+    warn "NetworkManager did not switch the Wi-Fi radio on (nmcli radio wifi on)"
+    ok=0
   fi
-  say "Switched the Wi-Fi radio on (country $1), so the wifi add-on hears the networks nearby; it joins no network"
+  if [[ $ok -eq 1 ]]; then
+    say "Switched the Wi-Fi radio on (country $country), so the wifi add-on hears the networks nearby; it joins no network"
+  else
+    warn "The Wi-Fi radio is not on, so the wifi add-on hears no networks nearby; see the warnings above"
+  fi
 }
 
 run_denwatcher() {
   : "${DENWATCHER_PORT:=9393}" "${DENWATCHER_IMAGE:=ghcr.io/programmer-den/den-watcher:main}" "${DENWATCHER_ROUTER_PASSWORD:=}" "${DENWATCHER_CONTAINERS:=yes}" \
-    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}" "${DENWATCHER_STATUS_PORT:=}" "${DENWATCHER_WIFI_COUNTRY:=DE}"
+    "${DENWATCHER_ADDONS:=all}" "${DENWATCHER_RETENTION_DAYS:=}" "${DENWATCHER_STATUS_PORT:=}" \
+    "${DENWATCHER_WIFI_RADIO:=yes}" "${DENWATCHER_WIFI_COUNTRY:=DE}"
   require_port DENWATCHER_PORT
   if [[ -n "$DENWATCHER_STATUS_PORT" ]]; then
     require_port DENWATCHER_STATUS_PORT
@@ -300,9 +363,17 @@ run_denwatcher() {
         [[ " $addons " == *" $addon "* ]] || addons+="${addons:+ }$addon"
       done ;;
   esac
-  [[ "${DENWATCHER_WIFI_COUNTRY,,}" == no ]] || DENWATCHER_WIFI_COUNTRY="${DENWATCHER_WIFI_COUNTRY^^}"
-  [[ "$DENWATCHER_WIFI_COUNTRY" =~ ^([A-Z]{2}|[Nn][Oo])$ ]] ||
-    die "DENWATCHER_WIFI_COUNTRY must be a 2-letter country code such as DE, AT, CH, GB or US, or no (got '$DENWATCHER_WIFI_COUNTRY')"
+  local wifi_radio=0
+  if setting_on DENWATCHER_WIFI_RADIO; then wifi_radio=1; fi
+  # Lower-case no was the opt-out before DENWATCHER_WIFI_RADIO; Norway is NO.
+  [[ "$DENWATCHER_WIFI_COUNTRY" != [Nn][Oo] || "$DENWATCHER_WIFI_COUNTRY" == NO ]] ||
+    die "DENWATCHER_WIFI_COUNTRY=no no longer leaves the Wi-Fi radio as it is: set DENWATCHER_WIFI_RADIO=no for that, or NO (upper case) for Norway"
+  DENWATCHER_WIFI_COUNTRY="${DENWATCHER_WIFI_COUNTRY^^}"
+  [[ "$DENWATCHER_WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] ||
+    die "DENWATCHER_WIFI_COUNTRY must be a 2-letter country code such as DE, AT, CH, GB or US (got '$DENWATCHER_WIFI_COUNTRY')"
+  if [[ -f "$denwatcher_iso3166" ]] && ! grep -q "^$DENWATCHER_WIFI_COUNTRY"$'\t' "$denwatcher_iso3166"; then
+    die "DENWATCHER_WIFI_COUNTRY must be a country code from $denwatcher_iso3166, as raspi-config offers them (got '$DENWATCHER_WIFI_COUNTRY')"
+  fi
   if [[ -n "$DENWATCHER_RETENTION_DAYS" ]] &&
     { [[ ! "$DENWATCHER_RETENTION_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] || (( DENWATCHER_RETENTION_DAYS > 3650 )); }; then
     die "DENWATCHER_RETENTION_DAYS must be a number of days from 1 to 3650 (got '$DENWATCHER_RETENTION_DAYS')"
@@ -374,15 +445,12 @@ run_denwatcher() {
   # /run/dbus, so they are left out.
   local addon
   for addon in bluetooth wifi; do
-    if [[ " $addons " == *" $addon "* && ! -S /run/dbus/system_bus_socket ]]; then
+    if [[ " $addons " == *" $addon "* ]] && ! denwatcher_system_dbus; then
       warn "No system D-Bus (/run/dbus/system_bus_socket), so the $addon add-on is left out"
-      addons="$(tr ' ' '\n' <<<"$addons" | grep -vx "$addon" | xargs)"
+      # grep finds nothing when it was the last add-on; that is no error.
+      addons="$(tr ' ' '\n' <<<"$addons" | grep -vx "$addon" | xargs || true)"
     fi
   done
-
-  if [[ " $addons " == *" wifi "* && "${DENWATCHER_WIFI_COUNTRY,,}" != no ]]; then
-    denwatcher_wifi_radio "$DENWATCHER_WIFI_COUNTRY"
-  fi
 
   local dir name=den-watcher changed=0
   dir="$(container_dir denwatcher)"
@@ -391,9 +459,19 @@ run_denwatcher() {
     changed=1
   fi
 
+  # The pull comes before the Pi is changed (the radio, the passwords
+  # file), so a wrong image or no network stops the run with nothing done.
+  container_pull "$dir"
+
+  if [[ " $addons " == *" wifi "* && $wifi_radio -eq 1 ]]; then
+    denwatcher_wifi_radio "$DENWATCHER_WIFI_COUNTRY"
+  fi
+
   # The passwords file, one name=password per line, readable only by root
   # and the container's user. Den-Watcher reads it at start, so a changed
-  # file restarts the container.
+  # file restarts the container. It is written after the pull: a run that
+  # stops before "up" would otherwise leave a new file the next run sees as
+  # unchanged, and the container would keep the old passwords.
   # 65532 is the image's non-root user (distroless nonroot).
   local secrets="$dir/router-secrets/router-passwords" restart=0
   if [[ -n "$DENWATCHER_ROUTER_PASSWORD" ]]; then
@@ -410,7 +488,6 @@ run_denwatcher() {
   fi
   [[ $restart -eq 0 ]] || changed=1
 
-  container_pull "$dir"
   denwatcher_move_old "$dir" "$passwords"
   container_up "$dir" "$name" "$restart"
   # The website runs without the add-on, so one that does not stay up only
