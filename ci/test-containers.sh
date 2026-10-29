@@ -82,15 +82,35 @@ else
     skip "native unit cases need root and systemd"
 fi
 
+# --- container_wait_stable (container_state mocked, no waiting) --------------------
+sleep() { :; }
+container_state() { echo "running 0 ${MOCK_HEALTH:-none}"; }
+assert_ok "wait_stable: a running container without a health check" container_wait_stable x 2 3
+assert_ok "wait_stable: a healthy container" eval 'MOCK_HEALTH=healthy container_wait_stable x 2 3'
+out="$( (MOCK_HEALTH=unhealthy container_wait_stable x 2 3) 2>&1)" && rc=0 || rc=$?
+assert_eq "wait_stable fails for an unhealthy container" 1 "$rc"
+assert_contains "wait_stable says the health check fails" "health check fails" "$out"
+out="$( (MOCK_HEALTH=starting container_wait_stable x 2 3) 2>&1)" && rc=0 || rc=$?
+assert_eq "wait_stable only warns while the health check is still starting" 0 "$rc"
+assert_contains "wait_stable names the starting state" "still says 'starting'" "$out"
+container_state() { echo "exited 0 none"; }
+assert_fails "wait_stable fails for an exited container" container_wait_stable x 2 3
+# The restart count goes up on every look.
+: >"$TMP/restarts"
+container_state() { echo x >>"$TMP/restarts"; echo "running $(wc -l <"$TMP/restarts") none"; }
+assert_fails "wait_stable fails for a restarting container" container_wait_stable x 5 3
+unset -f sleep container_state
+
 # --- container_leave (docker mocked) ----------------------------------------------
-# The mock logs its calls; MOCK_PS is what "compose ps -aq" prints and
-# MOCK_DOWN_RC what "compose down" returns.
+# The mock logs its calls; MOCK_PS is what "compose ps -aq" prints (MOCK_PS_RC
+# its status: 1 when the daemon is down) and MOCK_DOWN_RC what "compose down"
+# returns.
 leave_dir="$(container_dir leave)"
 # shellcheck disable=SC2032 # a mock for this file; web.sh's xargs runs the real docker
 docker() {
     printf '%s\n' "$*" >>"$TMP/docker.log"
     case "$1 ${4:-}" in
-        "compose ps") printf '%s' "${MOCK_PS:-}" ;;
+        "compose ps") printf '%s' "${MOCK_PS:-}"; return "${MOCK_PS_RC:-0}" ;;
         "compose down") return "${MOCK_DOWN_RC:-0}" ;;
     esac
 }
@@ -110,10 +130,29 @@ echo new >"$leave_dir/docker-compose.yml"
 MOCK_PS=abc123 container_leave leave >/dev/null 2>&1
 assert_eq "leave after a re-enable replaces the old .disabled" "new" "$(cat "$leave_dir/docker-compose.yml.disabled")"
 echo kept >"$leave_dir/docker-compose.yml"
-MOCK_PS=abc123 MOCK_DOWN_RC=1 container_leave leave >/dev/null 2>&1
+printf 'no-such-unit-rpi-setup\n' >"$leave_dir/.native-units"
+assert_ok "leave goes on when down fails" eval 'MOCK_PS=abc123 MOCK_DOWN_RC=1 container_leave leave >/dev/null 2>&1'
 assert_eq "leave keeps the compose file when down fails" "kept" "$(cat "$leave_dir/docker-compose.yml")"
+assert_fails "leave starts the native units again when down fails" test -e "$leave_dir/.native-units"
+# Daemon down: "ps" fails, so nothing is known about the container; the run
+# ends and the next run (with Docker started) takes it down.
+printf 'no-such-unit-rpi-setup\n' >"$leave_dir/.native-units"
+: >"$TMP/docker.log"
+out="$( (MOCK_PS_RC=1 container_leave leave) 2>&1)" && rc=0 || rc=$?
+assert_eq "leave fails when the Docker daemon is down" 1 "$rc"
+assert_contains "leave says to start Docker" "Docker is not running" "$out"
+assert_eq "leave keeps the compose file when the daemon is down" "kept" "$(cat "$leave_dir/docker-compose.yml")"
+assert_ok "leave keeps the native units recorded when the daemon is down" test -e "$leave_dir/.native-units"
+assert_lacks "leave runs no down when the daemon is down" " down" "$(cat "$TMP/docker.log")"
+# No docker command at all: the native units come back, the file stays.
+out="$( (have() { [[ "$1" != docker ]] && command -v "$1" >/dev/null 2>&1; }; container_leave leave) 2>&1)" && rc=0 || rc=$?
+assert_eq "leave goes on without the docker command" 0 "$rc"
+assert_contains "leave says Docker is missing" "Docker is not installed" "$out"
+assert_eq "leave keeps the compose file without the docker command" "kept" "$(cat "$leave_dir/docker-compose.yml")"
+assert_fails "leave starts the native units again without the docker command" test -e "$leave_dir/.native-units"
+# Daemon up, no container: the project is gone, so the file is disabled.
 MOCK_PS='' container_leave leave >/dev/null 2>&1
-assert_fails "leave without a container still disables the compose file" test -e "$leave_dir/docker-compose.yml"
+assert_fails "leave disables the compose file when Docker confirms there is no container" test -e "$leave_dir/docker-compose.yml"
 unset -f docker
 rm -rf "$leave_dir" "$TMP/docker.log"
 
@@ -159,6 +198,20 @@ if docker info >/dev/null 2>&1; then
 EOF
     assert_ok "container_up waits for a passing health check" container_up "$health" rpi-setup-test-health
     assert_contains "the health check passed" "healthy" "$(container_state rpi-setup-test-health)"
+
+    sick="$(compose_project sick 'sleep 600')"
+    cat >>"$sick/docker-compose.yml" <<'EOF'
+    healthcheck:
+      test: ["CMD", "false"]
+      interval: 1s
+      retries: 1
+EOF
+    printf 'no-such-unit-rpi-setup\n' >"$sick/.native-units"
+    out="$( (container_up "$sick" rpi-setup-test-sick) 2>&1)" && rc=0 || rc=$?
+    assert_eq "container_up fails for a container whose health check fails" "1" "$rc"
+    assert_contains "the failure says the health check fails" "health check fails" "$out"
+    assert_eq "the unhealthy container is taken down" "" "$(container_state rpi-setup-test-sick)"
+    assert_eq "the unhealthy container rolls back to the native units" "no" "$([[ -e "$sick/.native-units" ]] && echo yes || echo no)"
 
     container_leave up >/dev/null 2>&1
     assert_eq "container_leave takes the container down" "" "$(container_state rpi-setup-test-up)"

@@ -155,7 +155,8 @@ instead of installing it with apt. Set it to `yes` and run the task again:
   you back up. `<TASK>_IMAGE` picks the image; pin a tag to control updates.
 - On a Pi that already runs the native service, its data is copied over once
   and the native service is stopped (its packages stay). If the container
-  does not stay up, the native service is started again.
+  does not stay up, or its health check fails, the native service is
+  started again.
 - Setting it back to `no` stops the container and starts the native service.
 
 Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
