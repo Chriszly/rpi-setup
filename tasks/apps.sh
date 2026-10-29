@@ -85,11 +85,7 @@ EOF2
 
 # apps_port_container PORT - prints the name of the container that publishes
 # PORT (its docker-proxy holds the port); false if Docker knows none.
-apps_port_container() {
-  have docker || return 1
-  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
-    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
-}
+apps_port_container() { container_port_holder "$1"; }
 
 run_apps() {
   local apps dir

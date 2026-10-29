@@ -66,6 +66,16 @@ in_container() { [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/
 # setup.sh).
 need_root() { [[ $EUID -eq 0 ]] || die "Please run as root: sudo bash ${1:-setup.sh [task ...]}"; }
 
+# True when this run came in over the network (SSH), so a change to the
+# address or to sshd can end it. sudo's env_reset strips SSH_CONNECTION, so
+# logind and "who -m" (which shows the remote host in parentheses) are asked
+# as well.
+remote_session() {
+  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
+  [[ "$(loginctl show-session self -p Remote --value 2>/dev/null)" == yes ]] && return 0
+  [[ "$(who -m 2>/dev/null)" == *'('*')'* ]]
+}
+
 # True if command $1 is available.
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -216,6 +226,27 @@ pihole_web_ports() {
     e="${e%%[!0-9]*}"
     [[ -z "$e" ]] || printf '%s\n' "$e"
   done | awk '!seen[$0]++'
+}
+
+# Pi-hole's own webserver.port: HTTP on 80 and HTTPS on 443, IPv4 and IPv6
+# ("o" = optional, so a taken port does not stop FTL; "s" = TLS).
+PH_DEFAULT_PORTS='80o,443os,[::]:80o,[::]:443os'
+
+# Pi-hole's webserver.port list $1 with every plain HTTP entry moved to
+# port $2; the TLS entries ("s" flag, the admin UI's HTTPS listener on 443)
+# keep their port. A list without an HTTP entry gets $2 for IPv4 and IPv6
+# in front. Entries look like [address:]port[flags].
+pihole_port_setting() {
+  local cfg="$1" want="$2" e out="" http=0
+  for e in ${cfg//,/ }; do
+    if [[ "$e" =~ ^(.*:)?([0-9]+)([A-Za-z]*)$ && "${BASH_REMATCH[3]}" != *s* ]]; then
+      e="${BASH_REMATCH[1]}${want}${BASH_REMATCH[3]}"
+      http=1
+    fi
+    out+="${out:+,}$e"
+  done
+  (( http )) || out="${want}o,[::]:${want}o${out:+,$out}"
+  printf '%s\n' "$out"
 }
 
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).

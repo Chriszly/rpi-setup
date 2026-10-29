@@ -1405,7 +1405,7 @@ web_port() {
 # two can swap; the caller starts it again on port 80. web_port runs it in
 # $( ), where errexit is off, so every step checks its own result.
 web_move_pihole() {
-  local to="$1" dir owner stopped=0
+  local to="$1" dir owner stopped=0 cur new
   owner="$(port_owner "$to")" || owner=""
   if [[ "$owner" == nginx ]]; then
     info "Stopping nginx on port $to so Pi-hole can move there"
@@ -1418,11 +1418,15 @@ web_move_pihole() {
   info "Moving Pi-hole's web admin from port 80 to $to so the start page gets port 80"
   if task_in_container pihole; then
     dir="$(container_dir pihole)"
-    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${to}o,[::]:${to}o\"/" "$dir/docker-compose.yml" ||
+    cur="$(sed -nE 's/^[[:space:]]*FTLCONF_webserver_port:[[:space:]]*"?([^"]*)"?.*/\1/p' "$dir/docker-compose.yml" | head -n1)" || cur=""
+    new="$(pihole_port_setting "${cur:-$PH_DEFAULT_PORTS}" "$to")"
+    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${new}\"/" "$dir/docker-compose.yml" ||
       web_move_fail "Could not change the port in $dir/docker-compose.yml"
     docker compose -f "$dir/docker-compose.yml" up -d >/dev/null || web_move_fail 'Could not restart the Pi-hole container'
   else
-    pihole-FTL --config webserver.port "${to}o,[::]:${to}o" >/dev/null ||
+    cur="$(pihole-FTL --config webserver.port 2>/dev/null)" || cur=""
+    new="$(pihole_port_setting "${cur:-$PH_DEFAULT_PORTS}" "$to")"
+    pihole-FTL --config webserver.port "$new" >/dev/null ||
       web_move_fail "Could not set Pi-hole's web admin port to $to"
     systemctl restart pihole-FTL || web_move_fail 'Could not restart pihole-FTL'
   fi

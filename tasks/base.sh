@@ -193,14 +193,9 @@ base_root_login_guard() {
   die "You are logged in as root over the network, and base switches root SSH login off (PermitRootLogin no), which would lock you out next time. Log in as a normal user with sudo (create one: adduser alex && usermod -aG sudo alex) and re-run: sudo bash setup.sh base"
 }
 
-# True when this run came in over the network. sudo's env_reset strips
-# SSH_CONNECTION, so logind and "who -m" (which shows the remote host in
-# parentheses) are asked as well. Same as network_remote_session.
-base_remote_session() {
-  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
-  [[ "$(loginctl show-session self -p Remote --value 2>/dev/null)" == yes ]] && return 0
-  [[ "$(who -m 2>/dev/null)" == *'('*')'* ]]
-}
+# True when this run came in over the network (see remote_session in
+# lib/common.sh); a separate name so the tests can stub it.
+base_remote_session() { remote_session; }
 
 # A journald size (bytes, or with a K/M/G/T suffix) or "no".
 base_valid_journal_size() { [[ "${1,,}" == no || "$1" =~ ^[1-9][0-9]*[KMGT]?$ ]]; }

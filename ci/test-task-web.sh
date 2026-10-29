@@ -43,6 +43,15 @@ out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
 assert_contains "move Pi-hole: says where the admin went" ":8085/admin" "$out"
 assert_contains "move Pi-hole: rewrites the compose port" 'FTLCONF_webserver_port: "8085o,[::]:8085o"' \
     "$(cat "$TMP/opt/pihole/docker-compose.yml")"
+# The HTTPS listener (443, "s" flag) stays where it is.
+printf 'services:\n  pihole:\n    environment:\n      FTLCONF_webserver_port: "80o,443os,[::]:80o,[::]:443os"\n' >"$TMP/opt/pihole/docker-compose.yml"
+( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
+  task_in_container() { true; }; port_owner() { return 1; }
+  # shellcheck disable=SC2032  # a stub; web.sh's xargs calls run the real docker
+  docker() { :; }
+  web_move_pihole 8085 >/dev/null 2>&1 )
+assert_contains "move Pi-hole: keeps the HTTPS listener" 'FTLCONF_webserver_port: "8085o,443os,[::]:8085o,[::]:443os"' \
+    "$(cat "$TMP/opt/pihole/docker-compose.yml")"
 # nginx on 8080 (the old fallback) is stopped so Pi-hole can take that port.
 out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
   task_in_container() { [[ "$1" == pihole ]]; }; port_owner() { [[ "$1" == 8080 ]] && echo nginx; }

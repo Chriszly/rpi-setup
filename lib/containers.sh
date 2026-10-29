@@ -209,3 +209,12 @@ container_leave() {
   container_restore_native "$dir"
   mv -f "$file" "$file.disabled"
 }
+
+# container_port_holder PORT - prints the name of the container that publishes
+# PORT (its docker-proxy holds the port on the host); false if Docker knows
+# none, or Docker is missing.
+container_port_holder() {
+  have docker || return 1
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
+    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
+}

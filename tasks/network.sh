@@ -193,14 +193,9 @@ network_connection() {
 # True if Pi-hole is installed, natively or in its container.
 network_has_pihole() { task_in_container pihole || have pihole; }
 
-# True when this run came in over the network, so a changed address ends
-# it. sudo's env_reset strips SSH_CONNECTION, so logind and "who -m" (which
-# shows the remote host in parentheses) are asked as well.
-network_remote_session() {
-  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
-  [[ "$(loginctl show-session self -p Remote --value 2>/dev/null)" == yes ]] && return 0
-  [[ "$(who -m 2>/dev/null)" == *'('*')'* ]]
-}
+# True when this run came in over the network (see remote_session in
+# lib/common.sh); a separate name so the tests can stub it.
+network_remote_session() { remote_session; }
 
 # Die unless NetworkManager is installed and running.
 network_require_nm() {

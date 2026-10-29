@@ -141,27 +141,6 @@ pihole_preseed() {
   info "Pre-seeded $PH_TOML (interface $iface, upstream DNS ${*})"
 }
 
-# Pi-hole's own webserver.port: HTTP on 80 and HTTPS on 443, IPv4 and IPv6
-# ("o" = optional, so a taken port does not stop FTL; "s" = TLS).
-PH_DEFAULT_PORTS='80o,443os,[::]:80o,[::]:443os'
-
-# Pi-hole's webserver.port list $1 with every plain HTTP entry moved to
-# port $2; the TLS entries ("s" flag, the admin UI's HTTPS listener on 443)
-# keep their port. A list without an HTTP entry gets $2 for IPv4 and IPv6
-# in front. Entries look like [address:]port[flags].
-pihole_port_setting() {
-  local cfg="$1" want="$2" e out="" http=0
-  for e in ${cfg//,/ }; do
-    if [[ "$e" =~ ^(.*:)?([0-9]+)([A-Za-z]*)$ && "${BASH_REMATCH[3]}" != *s* ]]; then
-      e="${BASH_REMATCH[1]}${want}${BASH_REMATCH[3]}"
-      http=1
-    fi
-    out+="${out:+,}$e"
-  done
-  (( http )) || out="${want}o,[::]:${want}o${out:+,$out}"
-  printf '%s\n' "$out"
-}
-
 # Move the admin UI to PIHOLE_WEB_PORT if it is set and differs; the HTTPS
 # listener (443) stays as it is.
 pihole_apply_web_port() {

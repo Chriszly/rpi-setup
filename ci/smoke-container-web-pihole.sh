@@ -58,7 +58,7 @@ out="$(setup_web WEB_PORT=80 2>&1)"
 echo "$out"
 assert_contains "the web task moves Pi-hole off port 80" "Moving Pi-hole's web admin from port 80 to 8080" "$out"
 assert_contains "and says where the admin page is now" "Pi-hole web admin moved to" "$out"
-assert_contains "the compose file now names port 8080" 'FTLCONF_webserver_port: "8080o,[::]:8080o"' "$(cat "$COMPOSE")"
+assert_contains "the compose file now names port 8080" 'FTLCONF_webserver_port: "8080o,443os,[::]:8080o,[::]:443os"' "$(cat "$COMPOSE")"
 assert_ok "Pi-hole's container is healthy on port 8080" wait_healthy
 assert_contains "the admin page answers on port 8080" '"valid":true' "$(auth 8080)"
 assert_contains "DNS still answers on port 53" "127.0.0.1" "$(dig +short +time=3 @127.0.0.1 pi.hole 2>/dev/null || true)"

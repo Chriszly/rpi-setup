@@ -242,11 +242,7 @@ denwatcher_system_dbus() { [[ -S /run/dbus/system_bus_socket ]]; }
 # denwatcher_port_container PORT - prints the name of the container that
 # publishes PORT (its docker-proxy holds the port); false if Docker knows
 # none.
-denwatcher_port_container() {
-  have docker || return 1
-  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
-    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
-}
+denwatcher_port_container() { container_port_holder "$1"; }
 
 # denwatcher_wifi_country - prints the Wi-Fi country (regulatory domain) in
 # force: a code such as DE, 00 when none is set, or nothing when it cannot
