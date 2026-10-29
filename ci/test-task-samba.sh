@@ -74,6 +74,9 @@ fi
 apt_install() { :; }
 testparm() { :; }
 systemctl() { :; }
+# container_leave (SAMBA_DOCKER=no with the compose file from above) asks
+# Docker for the project's containers; here there are none.
+docker() { :; }
 smbpasswd() { [[ "$1" == -s ]] && head -n1 >"$TMP/smbpasswd-got"; return 0; }
 printf '[global]\n' >"$TMP/native.conf"
 SMB_CONF="$TMP/native.conf"
