@@ -53,8 +53,10 @@ jobs:
           BRANCH: ${{ inputs.branch }}
           SETTINGS: ${{ inputs.settings }}
         run: |
+          # Comments are dropped; CRLF line ends and tabs (invisible, and
+          # refused by the deploy command's name check) become spaces.
           if [ -z "$TASKS" ] && [ -f "pis/$PI/tasks" ]; then
-            TASKS="$(sed 's/#.*//' "pis/$PI/tasks" | tr -s ' \n' '  ')"
+            TASKS="$(sed 's/#.*//' "pis/$PI/tasks" | tr -d '\r' | tr -s '[:space:]' ' ')"
           fi
           args=(--update --branch "$BRANCH" --tasks "$TASKS")
           # Passed only when set, so a Pi whose deploy command predates
