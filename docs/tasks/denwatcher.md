@@ -155,9 +155,11 @@ Before Den-Watcher's rename the task was called `usagecontrol`, with
 `USAGECONTROL_*` settings, the folder `/opt/usagecontrol` and the volume
 `usagecontrol_data`. On a Pi set up that way, the first run of `denwatcher`
 (from *Update Pi* once the settings repository lists `denwatcher`) moves it
-over once: it stops the old containers, copies the history into
-`denwatcher_data`, keeps the router passwords and removes `/opt/usagecontrol`.
-The port stays. The old volume is kept as a backup; once the page shows the
+over once: it creates the new volume, stops the old containers, copies the
+history into `denwatcher_data`, keeps the router passwords and only then
+removes the old containers and `/opt/usagecontrol`, so a failure on the way
+leaves the old install running (a failed copy starts it again). The port
+stays. The old volume is kept as a backup; once the page shows the
 history, remove it with `sudo docker volume rm usagecontrol_data`.
 
 `USAGECONTROL_*` lines in the settings file still work, with a warning per

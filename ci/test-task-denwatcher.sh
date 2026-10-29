@@ -278,10 +278,29 @@ docker() {
     "volume rm") rm -rf "${TMP:?}/vol/$3" ;;
   esac
 }
+# A failure before the copy leaves the old install running.
+# shellcheck disable=SC2329 # called by run_denwatcher
+( docker() { [[ "$1 $2 ${4:-}" != "compose -f create" ]] || return 1; echo "$*" >>"$TMP/docker-calls"; case "$1 $2" in "info "*) echo "$TMP/docker" ;; "volume inspect") test -d "$TMP/vol/$3" ;; esac; }
+  run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "move: a failed create stops the task" "Could not create the den-watcher container" "$(cat "$TMP/err")"
+assert_lacks "move: and leaves the old install running" "usagecontrol/docker-compose.yml" "$(cat "$TMP/docker-calls")"
+assert_ok "move: and keeps the old folder" test -f "$TMP/opt/usagecontrol/docker-compose.yml"
+rm -f "$TMP/docker-calls"
+# A failed copy starts the old install again and leaves the new volume empty.
+# shellcheck disable=SC2329 # called by run_denwatcher
+( cp() { return 1; }; run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "move: a failed copy stops the task" "the old install is running again" "$(cat "$TMP/err")"
+assert_contains "move: and starts the old install again" "compose -f $TMP/opt/usagecontrol/docker-compose.yml start" "$(cat "$TMP/docker-calls")"
+assert_lacks "move: and does not remove it" "usagecontrol/docker-compose.yml down" "$(cat "$TMP/docker-calls")"
+assert_eq "move: and leaves the new volume empty for the next run" "" "$(ls -A "$TMP/vol/denwatcher_data")"
+rm -f "$TMP/docker-calls"
 ( run_denwatcher ) >"$TMP/err" 2>&1
 calls="$(cat "$TMP/docker-calls")"
-assert_contains "move: stops the old containers" "compose -f $TMP/opt/usagecontrol/docker-compose.yml down" "$calls"
 assert_contains "move: Compose creates the new volume" "compose -f $TMP/opt/denwatcher/docker-compose.yml create den-watcher" "$calls"
+assert_contains "move: stops the old containers" "compose -f $TMP/opt/usagecontrol/docker-compose.yml stop" "$calls"
+assert_contains "move: removes the old containers" "compose -f $TMP/opt/usagecontrol/docker-compose.yml down" "$calls"
+assert_eq "move: the new volume first, the old install stopped for the copy and removed last" \
+  $'create\nstop\ndown' "$(grep -oE ' (create|stop|down)' <<<"$calls" | tr -d ' ')"
 assert_eq "move: copies the history" history "$(cat "$TMP/vol/denwatcher_data/usage-control.db")"
 assert_ok "move: keeps the old volume as a backup" test -f "$TMP/vol/usagecontrol_data/usage-control.db"
 assert_contains "move: says how to remove the backup" "docker volume rm usagecontrol_data" "$(cat "$TMP/err")"

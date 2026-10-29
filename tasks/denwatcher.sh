@@ -176,33 +176,47 @@ EOF2
 }
 
 # denwatcher_move_old DIR PASSWORDS - moves an install of the usagecontrol
-# task, Den-Watcher's task before the rename, to this one, once: it stops the
-# old containers, copies the history from the volume usagecontrol_data into
-# this project's data volume (which Compose creates, so it stays Compose's),
-# keeps the router passwords under the new name and removes /opt/usagecontrol.
-# The old volume stays as a backup. A copy cut short is not repeated over:
-# the next run finds the new volume not empty and goes on with it.
+# task, Den-Watcher's task before the rename, to this one, once: it creates
+# this project's data volume (through Compose, so it stays Compose's), stops
+# the old containers, copies the history from the volume usagecontrol_data
+# into the new one, keeps the router passwords under the new name and only
+# then removes the old containers and /opt/usagecontrol, so the old install
+# keeps running until the new one has what it needs. The old volume stays as
+# a backup. A copy cut short (power lost) is not repeated over: the next run
+# finds the new volume not empty and goes on with it.
 denwatcher_move_old() {
-  local dir="$1" passwords="$2" old from to
+  local dir="$1" passwords="$2" old from="" to="" copy=0
   old="$(container_dir usagecontrol)"
   [[ -f "$old/docker-compose.yml" ]] || return 0
   info "Moving the usagecontrol task's install from before the rename in $old to $dir"
-  docker compose -f "$old/docker-compose.yml" down ||
-    die "Could not stop the old install in $old; stop it with: cd $old && sudo docker compose down"
   if docker volume inspect usagecontrol_data >/dev/null 2>&1; then
     docker compose -f "$dir/docker-compose.yml" create den-watcher ||
-      die "Could not create the den-watcher container and its volume in $dir"
+      die "Could not create the den-watcher container and its volume in $dir; the old install keeps running"
     from="$(docker volume inspect -f '{{.Mountpoint}}' usagecontrol_data)" || from=""
     to="$(docker volume inspect -f '{{.Mountpoint}}' denwatcher_data)" || to=""
     [[ -n "$from" && -d "$from" && -n "$to" && -d "$to" ]] ||
-      die "Could not find the folders of the volumes usagecontrol_data and denwatcher_data; is Docker's local volume driver in use?"
+      die "Could not find the folders of the volumes usagecontrol_data and denwatcher_data; is Docker's local volume driver in use? The old install keeps running"
     if [[ -n "$(ls -A "$to")" ]]; then
       info "denwatcher_data already holds a history; keeping it"
     else
-      cp -a "$from/." "$to/" || die "Could not copy the history from usagecontrol_data to denwatcher_data"
-      say "Copied the history from usagecontrol_data to denwatcher_data"
+      copy=1
     fi
   fi
+  # Stopped, not removed, while the history is copied: nothing writes to it
+  # meanwhile, and a failed copy starts the old install again.
+  docker compose -f "$old/docker-compose.yml" stop ||
+    die "Could not stop the old install in $old; stop it with: cd $old && sudo docker compose down"
+  if [[ $copy -eq 1 ]]; then
+    if cp -a "$from/." "$to/"; then
+      say "Copied the history from usagecontrol_data to denwatcher_data"
+    else
+      find "$to" -mindepth 1 -delete 2>/dev/null || true
+      docker compose -f "$old/docker-compose.yml" start >/dev/null 2>&1 || true
+      die "Could not copy the history from usagecontrol_data to denwatcher_data; the old install is running again"
+    fi
+  fi
+  docker compose -f "$old/docker-compose.yml" down ||
+    die "Could not remove the old install in $old; remove it with: cd $old && sudo docker compose down"
   if [[ -n "$passwords" ]] && ! load_secret denwatcher DENWATCHER_ROUTER_PASSWORD >/dev/null; then
     save_secret denwatcher DENWATCHER_ROUTER_PASSWORD "$passwords"
   fi
