@@ -871,7 +871,7 @@ main() {
 
   if [[ "$LIST_ONLY" -eq 1 ]]; then list_candidates; exit 0; fi
 
-  need_root
+  need_root 'host/flash.sh [options]'
   trap cleanup EXIT
 
   # Check the first-boot settings before the card is touched.
