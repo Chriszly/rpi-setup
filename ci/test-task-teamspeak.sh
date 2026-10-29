@@ -72,6 +72,38 @@ assert_contains "usage: forwarded port defaults to the voice port" 'TS_PUBLIC_PO
 assert_contains "usage: keeps its log next to the server" "source: $TMP/ts/usage/data" "$svc"
 assert_ok "usage: copies the Dockerfile" cmp "$ROOT/templates/teamspeak-usage/Dockerfile" "$TMP/ts/usage/Dockerfile"
 assert_ok "usage: copies the logger, runnable" test -x "$TMP/ts/usage/tsusage.py"
+assert_eq "usage: its data folder (visitors' IPs) is private" 700 "$(stat -c %a "$TMP/ts/usage/data")"
+
+# --- the whole task, with Docker and the secrets stubbed ------------------------
+arch="$(dpkg --print-architecture 2>/dev/null || true)"
+if [[ "$arch" == amd64 || "$arch" == arm64 ]]; then
+  out="$( RPI_SETUP_CONTAINER_ROOT="$TMP/opt" RPI_SETUP_ROOT="$ROOT"
+    stub_container_helpers
+    container_up() { :; }; container_wait_stable() { :; }
+    assign_uid() { echo 12345; }; chown() { :; }; sleep() { :; }
+    load_secret() { echo pw-from-store; }; pi_ip() { echo 192.168.60.9; }
+    docker() { echo "docker $*" >>"$TMP/docker.log"; echo 'Connected; 1 online'; }
+    run_teamspeak 2>&1 )"
+  compose="$(cat "$TMP/opt/teamspeak/docker-compose.yml" 2>/dev/null)"
+  server="${compose%%  usage:*}"
+  assert_contains "run: the server drops every capability" $'    cap_drop:\n      - ALL' "$server"
+  assert_contains "run: ... and cannot gain privileges" "no-new-privileges:true" "$server"
+  assert_contains "run: the logger runs next to it" "container_name: teamspeak-usage" "$compose"
+  assert_contains "run: the logger's login is looked for in this run's log only" \
+    "docker logs --since $(date -u +%Y-%m-%dT)" "$(cat "$TMP/docker.log")"
+  assert_contains "run: the server is up" "TeamSpeak 6 server ready at 192.168.60.9:9987" "$out"
+else
+  skip "run: the whole task (needs an amd64 or arm64 dpkg)"
+fi
+
+# --- the logger looks for its login since this run, not in the whole log ---------
+docker() { echo "docker $*"; }
+assert_contains "wait_log: asks for the log since the run started" "logs --since 2026-10-29T10:00:00Z teamspeak-usage" \
+  "$(teamspeak_wait_log teamspeak-usage 'logs --since' 1 2026-10-29T10:00:00Z)"
+docker() { echo 'Connected; 2 online'; }
+sleep() { :; }
+assert_eq "wait_log: nothing matching gives an empty line" "" "$(teamspeak_wait_log teamspeak-usage 'token=' 2 2026-10-29T10:00:00Z)"
+unset -f docker sleep
 
 # --- internet address setting -------------------------------------------------
 assert_eq "public address: empty looks it up" "" "$(teamspeak_public_address '')"
@@ -165,6 +197,8 @@ busy [] 168
 people [('Bob', 1, 'Windows', '1970'), ('Anna B|1', 1, '', '$(date -u +%Y)')]
 connections [('Bob', ['Anna B|1'], 2, 2, True)]
 ip shown False" "$first"
+  assert_eq "bot: the data folder and the files with IP addresses are private" "700 600 600 644" \
+    "$(stat -c %a "$data" "$data/online.json" "$data/sessions.jsonl" "$data/usage.json" | xargs)"
 
   # Second connect: Bob left while the bot was away, Carl is on.
   cat >"$TMP/fake2" <<'EOF'
@@ -219,6 +253,61 @@ u.public_next = 0; u.set_public(6000); p = u.public; print("unknown name", p["ad
 t.PUBLIC_ADDRESS = "No"
 u.public = {}; u.public_next = 0; u.set_public(7000); print("off", u.public)
 ' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
+  assert_eq "bot: a fixed IPv4 or IPv6 address is shown as it is, without a lookup" \
+    "203.0.113.7 203.0.113.7|2001:db8::7 2001:db8::7" "$(python3 -I -B -c '
+import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+t.log = lambda msg: None
+t.PUBLIC_PORT = "9987"
+out = []
+for t.PUBLIC_ADDRESS in ("203.0.113.7", "2001:db8::7"):
+    u = t.Usage.__new__(t.Usage); u.public = {}; u.public_next = 0
+    u.set_public(1000); out.append(u.public["address"] + " " + u.public["ip"])
+print("|".join(out))
+' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
+  # Numbers from the server: a name like "Infinity" or "nan" must stay text
+  # (int() refuses them; the bot used to crash on it).
+  assert_eq "bot: numbers are numbers, inf and nan stay text" "7 12.5 Infinity nan 1e999 abc" \
+    "$(python3 -I -B -c '
+import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+print(*[t.number(v) for v in ("7", "12.5", "Infinity", "nan", "1e999", "abc")])
+' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
+  # Same-connection groups: only addresses with two or more identities,
+  # visits more than 30 days apart are not linked, and identities that
+  # share a nickname are counted.
+  assert_eq "bot: same-connection groups need two identities within 30 days" \
+"Kim ['Kim (2 identities)', 'Sam'] 3 3 False
+Alex ['Robin'] 2 4 True
+Pat ['Jo'] 2 2 False" "$(python3 -I -B -c '
+import sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+d = 86400
+s = [{"uid": "a", "nick": "Alex", "start": 10, "end": 20, "ip": "10.0.0.1"},
+     {"uid": "a", "nick": "Alex", "start": 30, "end": 40, "ip": "10.0.0.1"},
+     {"uid": "r", "nick": "Robin", "start": 50, "end": 60, "ip": "10.0.0.1"},
+     {"uid": "k1", "nick": "Kim", "start": 100, "end": 110, "ip": "10.0.0.2"},
+     {"uid": "k2", "nick": "Kim", "start": 120, "end": 130, "ip": "10.0.0.2"},
+     {"uid": "s", "nick": "Sam", "start": 90, "end": 95, "ip": "10.0.0.2"},
+     {"uid": "x", "nick": "Lonely", "start": 100, "end": 110, "ip": "10.0.0.3"},
+     {"uid": "j", "nick": "Jo", "start": 200, "end": 210, "ip": "10.0.0.4"},
+     {"uid": "p", "nick": "Pat", "start": 220, "end": 230, "ip": "10.0.0.4"},
+     {"uid": "o", "nick": "Other", "start": 230 + 31 * d, "end": 240 + 31 * d, "ip": "10.0.0.4"}]
+for g in t.ip_groups({"1": {"uid": "a", "nick": "Alex", "since": 70, "ip": "10.0.0.1"}}, s, 300 + 31 * d):
+    print(g["nick"], g["others"], g["identities"], g["visits"], g["online"])
+' "$ROOT/templates/teamspeak-usage" 2>&1)"
+
+  # A join or leave only records who is online; the page summary is written
+  # on the minute tick.
+  assert_eq "bot: usage.json is written on the tick, not on every join" "no yes" "$(python3 -I -B -c '
+import os, sys; sys.path.insert(0, sys.argv[1]); import tsusage as t
+t.DATA = sys.argv[2]; os.makedirs(t.DATA, exist_ok=True)
+u = t.Usage(); u.connected = True
+u.event("notifycliententerview", [{"clid": "9", "client_unique_identifier": "Z", "client_nickname": "Zed"}], 1000)
+print("yes" if os.path.exists(t.path("usage.json")) else "no", end=" ")
+u.save(1060)
+print("yes" if os.path.exists(t.path("usage.json")) else "no")
+' "$ROOT/templates/teamspeak-usage" "$TMP/usage-tick" 2>&1)"
 
   cat >"$TMP/fake3" <<'EOF'
 #!/usr/bin/env bash

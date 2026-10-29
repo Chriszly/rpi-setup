@@ -6,21 +6,27 @@ server's SSH query as serveradmin (query clients are hidden from users),
 reads who is online, registers for join and leave events and writes, in
 $USAGE_DATA (default /data):
 
-  sessions.jsonl  one line per finished visit: uid, nick, start, end (epoch)
-                  and the names of the client's server groups
-  online.json     who is online now, and when that was last confirmed
+  sessions.jsonl  one line per finished visit: uid, nick, start, end (epoch),
+                  the names of the client's server groups, its platform,
+                  when it first connected and the IP address it came from
+  online.json     who is online now (with their IP addresses), and when that
+                  was last confirmed
   stats.json      minutes spent per channel per day (last 7 days)
   usage.json      the summary the start page shows (copied there by the web
-                  task's rpi-setup-web-links timer)
+                  task's rpi-setup-web-links timer); it never holds an IP
+
+The data folder is 0700 and the two files with addresses 0600: the bot's
+user and root read them, nobody else on the Pi.
 
 Once a minute it also reads the server info, the channels and the details of
 each client online (channel, client version and platform, country, away and
 muted state, idle time) for the page's TeamSpeak tab, and every 30 minutes
 the address people on the internet connect to: $TS_PUBLIC_ADDRESS (a DynDNS
-name or a fixed address) and the IPv4 address it resolves to, or, when that is
-empty, the public IPv4 address a "what is my IP" service ($TS_PUBLIC_IP_URLS)
-sees the Pi connect from. TS_PUBLIC_ADDRESS=no shows none and looks up
-nothing.
+name, or a fixed IPv4 or IPv6 address shown as it is) and the IPv4 address
+the name resolves to (its IPv6 address when it has no IPv4 one), or, when
+that is empty, the public IPv4 address a "what is my IP" service
+($TS_PUBLIC_IP_URLS) sees the Pi connect from. TS_PUBLIC_ADDRESS=no shows
+none and looks up nothing.
 
 Visits older than $USAGE_DAYS days are dropped. When the connection or the
 bot stops, the people online stay recorded; on the next connect the ones still
@@ -58,6 +64,7 @@ TICK = 60          # keepalive and usage.json refresh, seconds
 SILENT = 3 * TICK  # reconnect when the server said nothing for this long
 WEEK = 7 * 86400
 RECENT = 50
+GROUP_GAP = 30 * 86400  # visits from one IP this far apart are not the same connection
 
 # serverinfo fields the page shows, with the names usage.json gives them.
 # Numbers are turned into numbers; the rest stay text.
@@ -111,13 +118,21 @@ def path(name):
     return os.path.join(DATA, name)
 
 
-def write_json(name, obj):
+def write_json(name, obj, mode=0o644):
     tmp = path(name + ".new")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
         f.write("\n")
-    os.chmod(tmp, 0o644)
+    os.chmod(tmp, mode)
     os.replace(tmp, path(name))
+
+
+def open_private(name, flags):
+    """Open DATA/name for writing with the given flags, created 0600 (made
+    0600 if it exists)."""
+    fd = os.open(path(name), os.O_WRONLY | os.O_CREAT | flags, 0o600)
+    os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "w", encoding="utf-8")
 
 
 def read_json(name, default):
@@ -129,12 +144,13 @@ def read_json(name, default):
 
 
 def number(v):
-    """v as an int or float if it is one, else unchanged."""
+    """v as an int or float if it is one, else unchanged ("inf" and "nan"
+    stay text: int() refuses them, and a server name may well be one)."""
     try:
         f = float(v)
-    except (TypeError, ValueError):
+        return int(f) if f == int(f) else round(f, 4)
+    except (TypeError, ValueError, OverflowError):
         return v
-    return int(f) if f == int(f) else round(f, 4)
 
 
 def flag(rec, key):
@@ -204,12 +220,18 @@ def public_ip(urls):
 
 
 def resolve(name):
-    """The IPv4 address host name name resolves to (an address stays as it
-    is), or ""."""
+    """The IPv4 address host name name resolves to, else its IPv6 address,
+    or ""; an IPv4 or IPv6 address is returned as it is, without a lookup."""
     try:
-        return socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
-    except (OSError, UnicodeError, IndexError):
-        return ""
+        return str(ipaddress.ip_address(name))
+    except ValueError:
+        pass
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            return socket.getaddrinfo(name, None, family)[0][4][0]
+        except (OSError, UnicodeError, IndexError):
+            continue
+    return ""
 
 
 def client_ip(rec):
@@ -244,9 +266,11 @@ def read_sessions():
 
 
 class Usage:
-    """Who is online (by query client id) and the finished visits."""
+    """Who is online (by query client id) and the finished visits (kept in
+    memory, appended to sessions.jsonl as they end)."""
 
     def __init__(self):
+        self.sessions = read_sessions()
         state = read_json("online.json", {})
         self.checked = int(state.get("checked") or 0)
         self.online = {}
@@ -276,25 +300,26 @@ class Usage:
         return [self.group_names[g] for g in ids if g in self.group_names]
 
     def end_visit(self, c, end):
-        line = json.dumps({"uid": c["uid"], "nick": c["nick"], "start": c["since"],
-                           "end": max(int(end), c["since"]), "groups": self.names(c["groups"]),
-                           "platform": c.get("platform", ""), "created": c.get("created", 0),
-                           "ip": c.get("ip", "")},
-                          ensure_ascii=False)
-        with open(path("sessions.jsonl"), "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        s = {"uid": c["uid"], "nick": c["nick"], "start": c["since"],
+             "end": max(int(end), c["since"]), "groups": self.names(c["groups"]),
+             "platform": c.get("platform", ""), "created": c.get("created", 0),
+             "ip": c.get("ip", "")}
+        self.sessions.append(s)
+        with open_private("sessions.jsonl", os.O_APPEND) as f:
+            f.write(json.dumps(s, ensure_ascii=False) + "\n")
 
-    def save(self, now):
-        """Record who is online. usage.json is only rewritten while connected:
-        without a connection the list is unconfirmed, so the file goes stale
-        and the start page hides it after 10 minutes."""
+    def save(self, now, page=True):
+        """Record who is online, and with page (the once-a-minute tick) the
+        summary for the start page. usage.json is only rewritten while
+        connected: without a connection the list is unconfirmed, so the file
+        goes stale and the start page hides it after 10 minutes."""
         if self.connected:
             self.checked = int(now)
         write_json("online.json", {"checked": self.checked, "clients": self.online,
-                                   "group_names": self.group_names})
-        if self.connected:
+                                   "group_names": self.group_names}, 0o600)
+        if self.connected and page:
             write_json("stats.json", {"channel_minutes": self.channel_minutes})
-            write_json("usage.json", summary(self.online, read_sessions(), now, self.names,
+            write_json("usage.json", summary(self.online, self.sessions, now, self.names,
                                              self.live()))
 
     def live(self):
@@ -405,7 +430,7 @@ class Usage:
                     self.end_visit(c, now)
                     changed = True
         if changed:
-            self.save(now)
+            self.save(now, page=False)
 
     def prune(self, now):
         """Drop visits older than DAYS days, at most once a day."""
@@ -413,15 +438,14 @@ class Usage:
             return
         self.pruned = now
         cut = now - DAYS * 86400
-        sessions = read_sessions()
-        keep = [s for s in sessions if s["end"] >= cut]
-        if len(keep) == len(sessions):
+        keep = [s for s in self.sessions if s["end"] >= cut]
+        if len(keep) == len(self.sessions):
             return
-        tmp = path("sessions.jsonl.new")
-        with open(tmp, "w", encoding="utf-8") as f:
+        self.sessions = keep
+        with open_private("sessions.jsonl.new", os.O_TRUNC) as f:
             for s in keep:
                 f.write(json.dumps(s, ensure_ascii=False) + "\n")
-        os.replace(tmp, path("sessions.jsonl"))
+        os.replace(path("sessions.jsonl.new"), path("sessions.jsonl"))
 
 
 def concurrent(online, sessions, now):
@@ -468,13 +492,21 @@ def heatmap(online, sessions, now):
     return [round(c / 3600 / weeks, 3) for c in cells]
 
 
+def latest(p, nick, last, **fields):
+    """Give p (with "nick" and "last") the nickname and fields of its latest
+    visit, ending at last."""
+    if last >= p["last"]:
+        p["nick"], p["last"] = nick, last
+        p.update(fields)
+
+
 def people_rows(online, sessions, now, names):
     """Everyone in the log: first and last seen, total time, visits, longest
     visit, latest server groups and platform."""
     out = {}
 
     def entry(uid, nick):
-        return out.setdefault(uid or nick, {"nick": nick, "first_seen": None, "last_seen": 0,
+        return out.setdefault(uid or nick, {"nick": nick, "first_seen": None, "last": 0,
                                              "total_seconds": 0, "visits": 0,
                                              "longest_seconds": 0, "groups": [],
                                              "platform": "", "online": False})
@@ -482,9 +514,7 @@ def people_rows(online, sessions, now, names):
     def add(p, nick, start, end, groups, platform, created):
         first = min(x for x in (start, created or start) if x)
         p["first_seen"] = first if p["first_seen"] is None else min(p["first_seen"], first)
-        if end >= p["last_seen"]:
-            p["nick"], p["last_seen"], p["groups"] = nick, end, groups
-            p["platform"] = platform or p["platform"]
+        latest(p, nick, end, groups=groups, platform=platform or p["platform"])
         p["total_seconds"] += end - start
         p["visits"] += 1
         p["longest_seconds"] = max(p["longest_seconds"], end - start)
@@ -497,8 +527,9 @@ def people_rows(online, sessions, now, names):
         add(p, c["nick"], c["since"], int(now), names(c.get("groups") or []),
             c.get("platform", ""), c.get("created", 0))
         p["online"] = True
-    rows = [dict(p, first_seen=iso(p["first_seen"] or now), last_seen=iso(p["last_seen"]),
-                 total_seconds=int(p["total_seconds"]), longest_seconds=int(p["longest_seconds"]))
+    rows = [{k: v for k, v in dict(p, first_seen=iso(p["first_seen"] or now),
+                                   last_seen=iso(p["last"]), total_seconds=int(p["total_seconds"]),
+                                   longest_seconds=int(p["longest_seconds"])).items() if k != "last"}
             for p in out.values()]
     rows.sort(key=lambda p: (not p["online"], -p["total_seconds"], p["nick"].lower()))
     return rows
@@ -506,32 +537,47 @@ def people_rows(online, sessions, now, names):
 
 def ip_groups(online, sessions, now):
     """Visits grouped by the client's IP, to see which nicknames and
-    identities come from the same connection. A group is named after the
-    nickname used last from it; the IP itself is never shown. Groups with
-    several identities come first."""
-    out = {}
-    for uid, nick, end, ip, on in ([(s["uid"], s["nick"], s["end"], s.get("ip", ""), False)
-                                    for s in sessions] +
-                                   [(c["uid"], c["nick"], int(now), c.get("ip", ""), True)
-                                    for c in online.values()]):
-        if not ip:
-            continue
-        g = out.setdefault(ip, {"people": {}, "visits": 0, "last": 0, "online": False})
-        g["visits"] += 1
-        g["online"] = g["online"] or on
-        g["last"] = max(g["last"], end)
-        p = g["people"].setdefault(uid or nick, {"nick": nick, "last": 0, "online": False})
-        if end >= p["last"]:
-            p["nick"], p["last"] = nick, end
-        p["online"] = p["online"] or on
+    identities come from the same connection: only addresses two or more
+    identities used, and visits from one address more than GROUP_GAP apart
+    are separate groups (a home address handed to someone else, or a
+    carrier-grade NAT address, would link strangers for DAYS days). A group
+    is named after the nickname used last from it; the IP itself is never
+    shown. The other identities' nicknames follow, a nickname that several
+    identities used with their number. Groups with more identities first."""
+    visits = {}
+    for uid, nick, start, end, ip, on in (
+            [(s["uid"], s["nick"], s["start"], s["end"], s.get("ip", ""), False) for s in sessions] +
+            [(c["uid"], c["nick"], c["since"], int(now), c.get("ip", ""), True)
+             for c in online.values()]):
+        if ip:
+            visits.setdefault(ip, []).append((start, end, uid or nick, nick, on))
     rows = []
-    for g in out.values():
-        nicks = []
-        for p in sorted(g["people"].values(), key=lambda p: (not p["online"], -p["last"])):
-            if p["nick"] not in nicks:
-                nicks.append(p["nick"])
-        rows.append({"nick": nicks[0], "others": nicks[1:], "identities": len(g["people"]),
-                     "visits": g["visits"], "last": g["last"], "online": g["online"]})
+    for ip_visits in visits.values():
+        # Runs of visits: a visit starting more than GROUP_GAP after the end
+        # of every visit before it starts a new run.
+        runs, run_end = [[]], 0
+        for v in sorted(ip_visits):
+            if runs[-1] and v[0] - run_end > GROUP_GAP:
+                runs.append([])
+            runs[-1].append(v)
+            run_end = max(run_end, v[1])
+        for run in runs:
+            people = {}
+            for _, end, key, nick, on in run:
+                p = people.setdefault(key, {"nick": nick, "last": 0, "online": False})
+                latest(p, nick, end)
+                p["online"] = p["online"] or on
+            if len(people) < 2:
+                continue
+            counts = {}
+            for p in sorted(people.values(), key=lambda p: (not p["online"], -p["last"])):
+                counts[p["nick"]] = counts.get(p["nick"], 0) + 1
+            first = next(iter(counts))
+            others = ["%s (%d identities)" % (n, k) if k > 1 else n for n, k in counts.items()
+                      if n != first or k > 1]
+            rows.append({"nick": first, "others": others, "identities": len(people),
+                         "visits": len(run), "last": max(v[1] for v in run),
+                         "online": any(v[4] for v in run)})
     rows.sort(key=lambda r: (-r["identities"], not r["online"], -r["last"], r["nick"].lower()))
     return [{k: v for k, v in dict(r, last_seen=iso(r["last"])).items() if k != "last"} for r in rows]
 
@@ -576,8 +622,7 @@ def summary(online, sessions, now, names=lambda ids: [], live=None):
     def person(uid, nick, last, groups):
         p = people.setdefault(uid or nick, {"nick": nick, "last": 0, "week": 0, "visits": 0,
                                             "online": False, "groups": []})
-        if last >= p["last"]:
-            p["nick"], p["last"], p["groups"] = nick, last, groups
+        latest(p, nick, last, groups=groups)
         return p
 
     for s in sessions:
@@ -724,13 +769,17 @@ def main():
         return
     if sys.argv[1:] == ["--summary"]:
         usage = Usage()
-        json.dump(summary(usage.online, read_sessions(), time.time(), usage.names, usage.live()),
+        json.dump(summary(usage.online, usage.sessions, time.time(), usage.names, usage.live()),
                   sys.stdout,
                   ensure_ascii=False, separators=(",", ":"))
         print()
         return
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     os.makedirs(DATA, exist_ok=True)
+    try:
+        os.chmod(DATA, 0o700)  # the files hold visitors' IP addresses
+    except OSError as e:
+        log("Cannot make %s private: %s" % (DATA, e))
     usage = Usage()
     wait = 5
     while True:

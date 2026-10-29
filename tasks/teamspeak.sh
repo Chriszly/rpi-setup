@@ -107,6 +107,8 @@ run_teamspeak() {
   # match. The voice port inside stays the one the server was created with
   # and TEAMSPEAK_VOICE_PORT is published on the host. The compose file holds
   # the query password, hence root-only (0600).
+  # The image runs as 9987 from the start and its ports are unprivileged, so
+  # the server needs no capability and no privilege escalation.
   local changed=0
   if write_if_changed "$dir/docker-compose.yml" 0600 <<EOF
 services:
@@ -114,6 +116,10 @@ services:
     image: "$TEAMSPEAK_IMAGE"
     container_name: $name
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "${TEAMSPEAK_VOICE_PORT}:${inner}/udp"   # Voice
       - "${TEAMSPEAK_FILE_PORT}:${TEAMSPEAK_FILE_PORT}/tcp"     # File transfer
@@ -142,13 +148,17 @@ EOF
     docker compose -f "$dir/docker-compose.yml" build --pull --quiet usage ||
       die 'Could not build the TeamSpeak usage logger; check the network, or set TEAMSPEAK_USAGE=no'
   fi
+  local started
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   container_up "$dir" "$name"
   if [[ $usage -eq 1 ]]; then
     # The logger retries on its own when it cannot log in, so look for its
-    # "Connected" line rather than only whether the container stays up.
+    # "Connected" line rather than only whether the container stays up: one
+    # from this run, since a container that was not recreated keeps the
+    # lines of earlier logins in its log.
     if ! container_wait_stable teamspeak-usage; then
       warn 'The TeamSpeak usage logger does not stay up; see: sudo docker logs teamspeak-usage'
-    elif [[ -z "$(wait_for_log teamspeak-usage 'Connected;' 30)" ]]; then
+    elif [[ -z "$(teamspeak_wait_log teamspeak-usage 'Connected;' 30 "$started")" ]]; then
       warn 'The TeamSpeak usage logger could not log in to the server query yet; see: sudo docker logs teamspeak-usage'
     fi
   fi
@@ -199,7 +209,10 @@ teamspeak_usage_service() {
   local dir="$1" days="$2" pw="$3" voice="${4:-9987}" public="${5:-}" public_port="${6:-${4:-9987}}"
   local src="$RPI_SETUP_ROOT/templates/teamspeak-usage" uid
   uid="$(assign_uid teamspeak-usage)"
-  install -m 0755 -d "$dir/usage" "$dir/usage/data"
+  # The data folder holds visitors' IP addresses: the logger's user and root
+  # only (the web task's timer copies usage.json as root).
+  install -m 0755 -d "$dir/usage"
+  install -m 0700 -d "$dir/usage/data"
   chown "$uid:$uid" "$dir/usage/data"
   write_if_changed "$dir/usage/Dockerfile" 0644 <"$src/Dockerfile" || true
   write_if_changed "$dir/usage/tsusage.py" 0755 <"$src/tsusage.py" || true
@@ -230,6 +243,20 @@ teamspeak_usage_service() {
         source: $dir/usage/data
         target: /data
 EOF
+}
+
+# Like wait_for_log (lib/common.sh): the last line of container $1's log
+# matching $2, waiting up to $3 seconds (default 30) for it, but only among
+# the lines logged since $4 (a UTC time as date +%Y-%m-%dT%H:%M:%SZ prints
+# it), so a line from an earlier run does not count.
+teamspeak_wait_log() {
+  local name="$1" pattern="$2" tries="${3:-30}" since="$4" i line=""
+  for i in $(seq 1 "$tries"); do
+    line="$(docker logs --since "$since" "$name" 2>&1 | grep -i "$pattern" | tail -n1)" || true
+    [[ -n "$line" ]] && break
+    sleep 1
+  done
+  printf '%s\n' "$line"
 }
 
 # The ServerAdmin privilege key from container $1's log. The server prints it a
