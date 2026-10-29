@@ -22,10 +22,21 @@ assert_eq "list: image by digest" "game 8091 8080 $digest" "$(apps_parse "game:8
 # shellcheck disable=SC2016 # a literal $, as compose would expand it
 for bad in 'game=ghcr.io/you/game' 'Game:8091=you/game' 'game:8091=' 'game:70000=you/game' \
   'game:8091:0=you/game' 'game:8091=You/Game' 'game:8091=you/game"' 'game:8091=you/$HOME' \
-  'game:8091=a game:8091=b' 'a:8091=x b:8091=y'; do
+  'game:8091=a game:8091=b' 'ab:8091=x cd:8091=y'; do
   assert_fails "list: '$bad' refused" apps_parse "$bad"
   ( apps_parse "$bad" ) >/dev/null 2>"$TMP/err" || true
   assert_contains "list: '$bad' named in the error" "APPS_LIST" "$(cat "$TMP/err")"
+done
+# Names that are not a string to YAML, too short for Docker, or another
+# task's container.
+for bad in a 1 123 1e3 1e-3 0x1f 0o17 0b101 true false yes no on off null pihole samba teamspeak \
+  teamspeak-usage netalertx web den-watcher den-watcher-containers den-watcher-wifi; do
+  assert_fails "list: name '$bad' refused" apps_parse "$bad:8091=you/game"
+  ( apps_parse "$bad:8091=you/game" ) >/dev/null 2>"$TMP/err" || true
+  assert_contains "list: name '$bad' named in the error" "'$bad" "$(cat "$TMP/err")"
+done
+for good in ab x1 2048-game 1e3x 0x1g den-watch truely null-game; do
+  assert_eq "list: name '$good' accepted" "$good 8091 8080 you/game" "$(apps_parse "$good:8091=you/game")"
 done
 
 # --- the compose file -----------------------------------------------------------
@@ -56,12 +67,36 @@ port_owner() { return 1; }
 dpkg() { echo arm64; }
 ( APPS_LIST='game:8091'; run_apps ) >/dev/null 2>"$TMP/err" || true
 assert_contains "bad entry stops the task" "APPS_LIST entries must look like name:port=image" "$(cat "$TMP/err")"
-( APPS_LIST=''; run_apps ) >/dev/null 2>"$TMP/err" || true
-assert_contains "no apps and none running stops the task" "APPS_LIST is empty" "$(cat "$TMP/err")"
+if ( APPS_LIST=''; run_apps ) >"$TMP/out" 2>&1; then
+  pass "no apps and none running is nothing to do, not an error"
+else
+  fail "no apps and none running is nothing to do, not an error (stopped: $(cat "$TMP/out"))"
+fi
+assert_contains "no apps and none running says so" "APPS_LIST is empty and no apps are running" "$(cat "$TMP/out")"
 ( APPS_LIST='game:8091=you/game'
   port_owner() { echo nginx; }
   run_apps ) >/dev/null 2>"$TMP/err" || true
 assert_contains "port held by another program stops the task" "Port 8091 of 'game' is used by nginx" "$(cat "$TMP/err")"
+# Docker's proxy holds the port for some container: one of the apps, or another.
+# shellcheck disable=SC2329 # called by apps_port_container
+have() { [[ "$1" == docker ]] || command -v "$1" >/dev/null 2>&1; }
+# shellcheck disable=SC2329 # called by apps_port_container
+docker() {
+  [[ "$1" == ps ]] || return 1
+  printf '%s\n' 'teamspeak 0.0.0.0:9987->9987/udp, 0.0.0.0:10080->10080/tcp' 'game 0.0.0.0:8091->8080/tcp, [::]:8091->8080/tcp' 'kiosk 0.0.0.0:18091->8080/tcp'
+}
+( APPS_LIST='game:8091=you/game site:10080=you/site'
+  port_owner() { echo docker-proxy; }
+  run_apps ) >/dev/null 2>"$TMP/err" || true
+assert_contains "port published by another container stops the task" "Port 10080 of 'site' is published by the teamspeak container; pick a free port in APPS_LIST" "$(cat "$TMP/err")"
+assert_ok "port published by another container: Docker was not touched" test ! -e "$TMP/reached"
+( APPS_LIST='game:8091=you/game'
+  port_owner() { echo docker-proxy; }
+  run_apps ) >/dev/null 2>&1 || true
+assert_ok "port published by the app itself goes on to Docker" test -e "$TMP/reached"
+rm -f "$TMP/reached"
+unset -f docker
+have() { command -v "$1" >/dev/null 2>&1; }
 ( APPS_LIST='game:8091=you/game'
   dpkg() { echo armhf; }
   run_apps ) >/dev/null 2>"$TMP/err" || true

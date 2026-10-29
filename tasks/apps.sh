@@ -7,17 +7,35 @@ set -euo pipefail
 
 TASKS+=("apps|Your own web apps from container images, each with a card on the start page")
 
+# Containers the other rpi-setup tasks run; an app cannot take their names.
+apps_reserved_names='pihole samba teamspeak teamspeak-usage netalertx web den-watcher'
+
 # apps_parse LIST - check APPS_LIST and print one "name port container-port
 # image" line per app. LIST holds name:port=image entries, or
 # name:port:container-port=image when the app does not listen on 8080,
-# separated by spaces or commas. Dies naming the entry that is wrong.
+# separated by spaces or commas. Dies naming the entry that is wrong. A name
+# is the compose service, the container name and the card's name: lowercase
+# letters, digits and -, at least two characters with a letter, so that it
+# is a string to YAML (not 123, 1e3, 0x1f, true, null) and a container
+# name to Docker (two characters at least), and none of the names the
+# other tasks' containers have.
 apps_parse() {
   local entry name ports image port cport names=" " used=" "
-  local re='^([a-z0-9][a-z0-9-]{0,30}):([0-9]{1,5})(:([0-9]{1,5}))?=(.+)$'
+  local re='^([a-z0-9][a-z0-9-]{1,30}):([0-9]{1,5})(:([0-9]{1,5}))?=(.+)$'
   for entry in ${1//,/ }; do
     [[ "$entry" =~ $re ]] ||
-      die "APPS_LIST entries must look like name:port=image, such as game:8091=ghcr.io/you/game:latest (got '$entry')"
+      die "APPS_LIST entries must look like name:port=image, such as game:8091=ghcr.io/you/game:latest, with a name of at least two characters (got '$entry')"
     name="${BASH_REMATCH[1]}" port="${BASH_REMATCH[2]}" cport="${BASH_REMATCH[4]:-8080}" image="${BASH_REMATCH[5]}"
+    [[ "$name" == *[a-z]* ]] ||
+      die "APPS_LIST: the name '$name' needs a letter (digits alone are a number to the compose file)"
+    case "$name" in
+      true|false|yes|no|on|off|null)
+        die "APPS_LIST: '$name' means something else to the compose file; pick another name" ;;
+    esac
+    [[ ! "$name" =~ ^(0x[0-9a-f]+|0o[0-7]+|0b[01]+|[0-9]+e-?[0-9]+)$ ]] ||
+      die "APPS_LIST: '$name' means a number to the compose file; pick another name"
+    [[ " $apps_reserved_names " != *" $name "* && "$name" != den-watcher-* ]] ||
+      die "APPS_LIST: '$name' is the name of a container another rpi-setup task runs; pick another name"
     for ports in "$port" "$cport"; do
       (( 10#$ports >= 1 && 10#$ports <= 65535 )) ||
         die "APPS_LIST: the ports of '$name' must be between 1 and 65535 (got '$entry')"
@@ -65,13 +83,23 @@ EOF2
   done
 }
 
+# apps_port_container PORT - prints the name of the container that publishes
+# PORT (its docker-proxy holds the port); false if Docker knows none.
+apps_port_container() {
+  have docker || return 1
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
+    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
+}
+
 run_apps() {
   local apps dir
   dir="$(container_dir apps)"
   apps="$(apps_parse "${APPS_LIST:-}")"
   if [[ -z "$apps" ]]; then
     # An emptied list takes the apps down; the compose file is renamed so
-    # update.sh, the firewall and check.sh no longer see them.
+    # update.sh, the firewall and check.sh no longer see them. With none
+    # running there is nothing to do: a deploy that still lists the task
+    # must not fail.
     if [[ -f "$dir/docker-compose.yml" ]]; then
       docker compose -f "$dir/docker-compose.yml" down --remove-orphans ||
         die "Could not stop the apps in $dir; stop them with: cd $dir && sudo docker compose down"
@@ -79,14 +107,22 @@ run_apps() {
       say 'APPS_LIST is empty: stopped the apps'
       return 0
     fi
-    die 'APPS_LIST is empty; list your apps as name:port=image, such as game:8091=ghcr.io/you/game:latest'
+    info 'APPS_LIST is empty and no apps are running; to run some, list them as name:port=image, such as game:8091=ghcr.io/you/game:latest'
+    return 0
   fi
 
-  # The port may already be ours (Docker's proxy); anything else holds it.
-  local name port cport image owner
+  # The port may already be ours (Docker's proxy for one of the apps);
+  # another container's proxy or anything else holds it. Found here, not at
+  # "up", which would take every app down.
+  local name port cport image owner holder names=" "
+  while read -r name port cport image; do names+="$name "; done <<<"$apps"
   while read -r name port cport image; do
     owner="$(port_owner "$port")" || owner=""
-    if [[ -n "$owner" && "$owner" != docker-proxy ]]; then
+    if [[ "$owner" == docker-proxy ]]; then
+      holder="$(apps_port_container "$port")" || holder=""
+      [[ -z "$holder" || " $names " == *" $holder "* ]] ||
+        die "Port $port of '$name' is published by the $holder container; pick a free port in APPS_LIST"
+    elif [[ -n "$owner" ]]; then
       die "Port $port of '$name' is used by $owner; pick a free port in APPS_LIST"
     fi
   done <<<"$apps"

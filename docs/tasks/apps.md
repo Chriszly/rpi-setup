@@ -17,7 +17,7 @@ are taken down again.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `APPS_LIST` | empty (none) | Apps to run, as `name:port=image`, separated by spaces or commas, such as `game:8091=ghcr.io/you/game:latest`. The name (lowercase letters, digits and `-`) names the container and its card; the port is the app's port on the Pi (TCP). Add `:container-port` after the port when the app does not listen on 8080 inside its container: `game:8091:80=...`. An emptied list stops the apps. |
+| `APPS_LIST` | empty (none) | Apps to run, as `name:port=image`, separated by spaces or commas, such as `game:8091=ghcr.io/you/game:latest`. The name (lowercase letters, digits and `-`, at least two characters with a letter; not a word or number the compose file reads differently, such as `true`, `null` or `1e3`, and not the name of another task's container, such as `pihole`) names the container and its card; the port is the app's port on the Pi (TCP), which no other container may publish. Add `:container-port` after the port when the app does not listen on 8080 inside its container: `game:8091:80=...`. An emptied list stops the apps; empty with none running, the task does nothing. |
 
 ## What it installs and changes
 
