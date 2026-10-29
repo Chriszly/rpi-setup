@@ -212,6 +212,15 @@ assert_eq "a variable already set wins over the file" "CH" "$FLASH_WIFI_COUNTRY"
 assert_eq "non-FLASH lines are not read" "" "${BASE_HOSTNAME:-}"
 assert_contains "unknown FLASH_ names are reported" "FLASH_TYPO" "$out"
 assert_ok "a missing config file is fine" load_flash_config "$TMP/none.env"
+reset_flash_vars
+FLASH_HOSTNAME=""
+load_flash_config "$TMP/rpi-setup.env" >/dev/null 2>&1
+assert_eq "an empty variable takes the file's value (empty means default)" "fromfile" "$FLASH_HOSTNAME"
+reset_flash_vars
+printf 'FLASH_HOSTNAME=first\nFLASH_HOSTNAME=second\n' >"$TMP/dup.env"
+out="$(load_flash_config "$TMP/dup.env" 2>&1; printf '%s' "$FLASH_HOSTNAME")"
+assert_contains "of a repeated setting the first line wins, with a warning" "set more than once" "$out"
+assert_eq "the first value of a repeated setting is kept" "first" "${out##*$'\n'}"
 # The example's flash section, uncommented, reads back with its defaults.
 reset_flash_vars
 sed -n 's/^#\(FLASH_[A-Z_]*=\)/\1/p' "$ROOT/config/rpi-setup.env.example" >"$TMP/example.env"
@@ -264,6 +273,9 @@ assert_eq "the mismatching image and checksum are deleted" "" "$(ls -A "$dl")"
 rm "$MIRROR/$IMG"
 assert_fails "a failed download stops" fetch "$dl"
 assert_eq "a failed download leaves no partial file" "$IMG.sha256" "$(ls -A "$dl")"
+curl() { if [[ "${*: -1}" == */ ]]; then return 22; fi; command curl "$@"; }
+assert_fails "an unreachable release listing stops" fetch "$dl"
+assert_contains "an unreachable release listing is explained" "Could not fetch the release listing" "$(cat "$TMP/fetch.err")"
 unset -f curl fetch
 
 # --- ask_flash_settings: asks only for what was not given ---------------------------
@@ -290,6 +302,24 @@ assert_eq "ask_flash_settings keeps -g no" "no" "$FLASH_GITHUB_KEY"
 reset_flash_vars
 ask_flash_settings <<<$'\n\n~/keys/pi.pub\n' >/dev/null 2>&1
 assert_eq "ask_flash_settings expands a typed ~/ to the invoking user's home" "/home/alice/keys/pi.pub" "$FLASH_SSH_PUBKEY_FILE"
+# A typed Wi-Fi password is checked like a setting; without a terminal the
+# network is open.
+reset_flash_vars
+FLASH_WIFI_SSID=net
+assert_fails "ask_wifi_password refuses a typed password shorter than 8" eval 'ask_wifi_password <<<"short"'
+assert_ok "ask_wifi_password takes a typed 8-63 character password" eval 'ask_wifi_password <<<"long enough"'
+can_prompt() { return 1; }
+out="$(ask_wifi_password 2>&1)"
+assert_contains "ask_wifi_password without a terminal means an open network" "open network" "$out"
+can_prompt() { return 0; }
+# A ~/ from the settings file or the environment is expanded too, not only a typed one.
+reset_flash_vars
+invoking_home() { echo "$TMP/home"; }
+mkdir -p "$TMP/home/keys"; cp "$TMP/id_ed25519.pub" "$TMP/home/keys/pi.pub"
+FLASH_SSH_PUBKEY_FILE='~/keys/pi.pub'
+validate_flash_options
+assert_eq "validate_flash_options expands ~/ in FLASH_SSH_PUBKEY_FILE" "$TMP/home/keys/pi.pub" "$FLASH_SSH_PUBKEY_FILE"
+assert_eq "the key behind ~/ is read" "$KEY" "${FLASH_KEYS%$'\n'}"
 reset_flash_vars
 eval "$saved_helpers"   # restore the real helpers
 
@@ -301,6 +331,13 @@ assert_eq "a yes-like GitHub key setting becomes yes" "yes" "$FLASH_GITHUB_KEY"
 assert_ok "want_firstboot is true with only the GitHub key" want_firstboot
 FLASH_GITHUB_KEY=maybe
 assert_fails "an invalid GitHub key setting is refused" validate_flash_options
+FLASH_GITHUB_KEY=true
+normalize_github_key
+assert_eq "normalize_github_key turns true into yes before the -k check" "yes" "$FLASH_GITHUB_KEY"
+assert_ok "want_firstboot sees the normalised value" want_firstboot
+FLASH_GITHUB_KEY=""
+normalize_github_key
+assert_eq "normalize_github_key leaves an empty setting empty" "" "$FLASH_GITHUB_KEY"
 FLASH_GITHUB_KEY=yes
 if command -v ssh-keygen >/dev/null 2>&1; then
     new_github_key pi@homepi
@@ -334,6 +371,95 @@ else
 fi
 reset_flash_vars
 
+# --- disks: in-use detection, listing order, one list for the menu -------------------
+# A fake sysfs tree: sdx is a USB stick, sdy holds an LVM PV (a holder on its
+# partition), sdz is swap. Nothing is mounted (lsblk knows no such devices).
+fake_disk() { # fake_disk NAME MODEL BUS   (BUS is part of the resolved sysfs path)
+    local d="$TMP/sys/devices/$3/block/$1"
+    mkdir -p "$d/device" "$d/holders" "$d/${1}1/holders" "$TMP/sys/class/block"
+    printf '31116288\n' >"$d/size"
+    printf '0\n' >"$d/removable"
+    printf '%s\n' "$2" >"$d/device/model"
+    ln -s "$d" "$TMP/sys/class/block/$1"
+    ln -s "$d/${1}1" "$TMP/sys/class/block/${1}1"
+    printf '1\n' >"$d/${1}1/partition"
+}
+fake_disk sdx 'USB Stick' usb1
+fake_disk sdy 'Internal SSD' pci0
+fake_disk sdz 'Other Disk' pci0
+mkdir -p "$TMP/sys/class/block/sdy1/holders/dm-0"
+printf 'Filename Type Size Used Priority\n/dev/sdz1 partition 1 0 -2\n' >"$TMP/swaps"
+SYS_BLOCK="$TMP/sys/class/block" PROC_SWAPS="$TMP/swaps"
+assert_eq "a disk with no mount, holder or swap is free" "" "$(disk_in_use sdx)"
+assert_contains "a disk whose partition has a holder is in use" "used by dm-0" "$(disk_in_use sdy)"
+# /proc/swaps names /dev/sdz1; readlink -f keeps a missing path as it is.
+assert_contains "a disk with active swap is in use" "active swap on /dev/sdz1" "$(disk_in_use sdz)"
+list="$(list_candidates)"
+assert_eq "list_candidates puts the free disk first" "/dev/sdx" "$(head -n1 <<<"$list" | cut -f1)"
+assert_eq "list_candidates lists all three" "3" "$(wc -l <<<"$list")"
+assert_contains "list_candidates marks a disk in use" $'/dev/sdy\t' "$(grep 'IN USE: used by dm-0' <<<"$list")"
+assert_contains "list_candidates shows the bus" "(USB)" "$(head -n1 <<<"$list")"
+assert_eq "list_candidates does not mark the free disk" "" "$(head -n1 <<<"$list" | grep 'IN USE' || true)"
+SYS_BLOCK=/sys/class/block PROC_SWAPS=/proc/swaps
+# The disk holding / is in use, whatever it is called, and is refused.
+root_dev="$(awk '$2 == "/" {print $1; exit}' /proc/mounts)"
+root_disk=""
+if [[ -b "$root_dev" ]] && command -v lsblk >/dev/null 2>&1; then
+    root_disk="$(lsblk -no PKNAME "$root_dev" 2>/dev/null | head -n1)"
+    [[ -n "$root_disk" ]] || root_disk="${root_dev##*/}"
+fi
+if [[ -n "$root_disk" && -b "/dev/$root_disk" ]]; then
+    assert_contains "the disk holding / is in use" "mounted at /" "$(disk_in_use "$root_disk")"
+    assert_fails "confirm_device refuses the disk holding /" confirm_device "/dev/$root_disk"
+    assert_contains "confirm_device says why" "is in use (mounted at /" "$( (confirm_device "/dev/$root_disk") 2>&1 || true)"
+    id="$(disk_identity "/dev/$root_disk")"
+    assert_eq "disk_identity is stable" "$id" "$(disk_identity "/dev/$root_disk")"
+    if [[ -n "$id" ]]; then pass "disk_identity knows the root disk"; else fail "disk_identity is empty for /dev/$root_disk"; fi
+else
+    skip "root disk cases (/ is not on a plain block device here)"
+fi
+# The menu is numbered from one listing: a disk showing up in between must not
+# renumber the choice.
+printf '0' >"$TMP/list-calls"
+list_candidates() {
+    local n; n="$(cat "$TMP/list-calls")"; printf '%d' "$((n + 1))" >"$TMP/list-calls"
+    if [[ "$n" -eq 0 ]]; then printf '/dev/sdx\tfree\n/dev/sdy\tfree\n'; else printf '/dev/mmcblk0\tnew\n/dev/sdx\tfree\n/dev/sdy\tfree\n'; fi
+}
+assert_eq "pick_device resolves the number against the list it showed" "/dev/sdy" "$(pick_device <<<'2' 2>/dev/null)"
+assert_eq "pick_device lists only once" "1" "$(cat "$TMP/list-calls")"
+assert_eq "pick_device takes a /dev node as typed" "/dev/sdq" "$(pick_device <<<'/dev/sdq' 2>/dev/null)"
+assert_fails "pick_device refuses a number past the list" eval 'pick_device <<<"4"'
+assert_fails "pick_device refuses 0" eval 'pick_device <<<"0"'
+unset -f list_candidates
+# Before writing, the target must still be the confirmed disk (any block
+# device will do here: the identity and in-use lookups are stubbed).
+blk=/dev/loop0
+[[ -b "$blk" ]] || blk="/dev/$root_disk"
+if [[ -b "$blk" ]]; then
+    DEV_IDENTITY="14.9G Card 1234"
+    disk_identity() { echo "14.9G Card 1234"; }
+    disk_in_use() { :; }
+    assert_ok "check_device_unchanged passes for the same disk" check_device_unchanged "$blk"
+    disk_identity() { echo "931G Backup 9999"; }
+    assert_fails "check_device_unchanged stops when the disk changed" check_device_unchanged "$blk"
+    assert_contains "check_device_unchanged says what it found" "is not the disk that was confirmed" \
+        "$( (check_device_unchanged "$blk") 2>&1 || true)"
+    disk_identity() { echo "14.9G Card 1234"; }
+    disk_in_use() { echo "mounted at /mnt/x"; }
+    assert_fails "check_device_unchanged stops when the disk is in use now" check_device_unchanged "$blk"
+    unset -f disk_identity disk_in_use
+    DEV_IDENTITY=""
+else
+    skip "check_device_unchanged cases need a block device"
+fi
+assert_fails "check_device_unchanged stops when the disk is gone" check_device_unchanged "$TMP/gone"
+assert_contains "a vanished disk is explained" "is gone" "$( (check_device_unchanged "$TMP/gone") 2>&1 || true)"
+# flash.sh unmounts a stale boot partition first and on exit, and resolves the device once.
+src="$(cat "$ROOT/host/flash.sh")"
+assert_contains "a stale mount is unmounted before mounting the card" "still mounted from an earlier run" "$src"
+assert_contains "main sets the cleanup trap" "trap cleanup EXIT" "$src"
+assert_contains "the device is resolved once" 'DEV="$(readlink -f "$DEV")"' "$src"
+
 # --- CLI ---------------------------------------------------------------------------
 help="$(bash "$ROOT/host/flash.sh" -h 2>&1)"
 assert_contains "usage lists the hostname flag" "-n HOSTNAME" "$help"
@@ -342,6 +468,10 @@ assert_contains "usage lists the no-eject flag" "-E " "$help"
 if [[ $EUID -eq 0 ]]; then
     out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -k -n homepi -d /dev/null 2>&1 || true)"
     assert_contains "-k with a first-boot setting stops before any disk work" "cannot be combined" "$out"
+    out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -k -g true -d /dev/null 2>&1 || true)"
+    assert_contains "-k with -g true (not yet normalised) stops too" "cannot be combined" "$out"
+    out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -k -i "$TMP/none.img" -d /dev/null 2>&1 || true)"
+    assert_contains "a node that is no disk is refused (/dev/null)" "Not a block device" "$out"
     out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -n bad_name -d /dev/null 2>&1 || true)"
     assert_contains "an invalid hostname stops before any disk work" "Invalid hostname" "$out"
     out="$(RPI_SETUP_CONFIG_DIR="$TMP/nocfg" bash "$ROOT/host/flash.sh" -u Bad -p longpassword -i "$TMP/none.img" -d /dev/null 2>&1 </dev/null || true)"

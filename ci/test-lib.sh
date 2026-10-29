@@ -300,6 +300,7 @@ assert_eq "first_partition sda"     "/dev/sda1"       "$(first_partition /dev/sd
 assert_eq "first_partition vda"     "/dev/vda1"       "$(first_partition /dev/vda)"
 assert_eq "first_partition mmcblk0" "/dev/mmcblk0p1"  "$(first_partition /dev/mmcblk0)"
 assert_eq "first_partition nvme0n1" "/dev/nvme0n1p1"  "$(first_partition /dev/nvme0n1)"
+assert_eq "first_partition loop0"   "/dev/loop0p1"    "$(first_partition /dev/loop0)"
 
 # --- host/flash.sh: confirm_device --------------------------------------------
 assert_fails "confirm_device rejects a non-block path" confirm_device /nonexistent/device
@@ -307,13 +308,17 @@ assert_contains "confirm_device explains the rejection" "Not a block device" \
     "$( (confirm_device /nonexistent/device) 2>&1 || true)"
 
 # --- host/flash.sh: ask_credentials (non-interactive branches) ----------------
-# USER/PASS are pre-set so ask_credentials never reaches its read prompts.
-assert_ok    "ask_credentials accepts a valid user/password"   eval 'USER=pi PASS=longpassword; ask_credentials'
-assert_fails "ask_credentials rejects an uppercase username"   eval 'USER=Pi PASS=longpassword; ask_credentials'
-assert_fails "ask_credentials rejects a username with spaces"  eval 'USER="pi user" PASS=longpassword; ask_credentials'
-assert_fails "ask_credentials rejects a colon in the password" eval 'USER=pi PASS=a:b; ask_credentials'
+# PI_USER/PI_PASS are pre-set so ask_credentials never reaches its read prompts.
+assert_ok    "ask_credentials accepts a valid user/password"   eval 'PI_USER=pi PI_PASS=longpassword; ask_credentials'
+assert_ok    "ask_credentials accepts umlauts and spaces in the password" eval $'PI_USER=pi PI_PASS=\'gr\xc3\xbc\xc3\x9fe aus k\xc3\xb6ln\'; ask_credentials'
+assert_fails "ask_credentials rejects an uppercase username"   eval 'PI_USER=Pi PI_PASS=longpassword; ask_credentials'
+assert_fails "ask_credentials rejects a username with spaces"  eval 'PI_USER="pi user" PI_PASS=longpassword; ask_credentials'
+assert_fails "ask_credentials rejects a colon in the password" eval 'PI_USER=pi PI_PASS=a:b; ask_credentials'
+assert_fails "ask_credentials rejects a tab in the password"   eval $'PI_USER=pi PI_PASS=\'long\tpassword\'; ask_credentials'
 assert_contains "ask_credentials warns on short passwords" "shorter than 8" \
-    "$( (USER=pi PASS=short ask_credentials) 2>&1 || true)"
+    "$( (PI_USER=pi PI_PASS=short ask_credentials) 2>&1 || true)"
+assert_eq "flash.sh never sets USER, which real_user falls back to" "" \
+    "$(grep -nE '^[[:space:]]*(export[[:space:]]+)?USER=' "$ROOT/host/flash.sh" || true)"
 
 # --- host/flash.sh: generate_hash ---------------------------------------------
 if command -v openssl >/dev/null 2>&1; then

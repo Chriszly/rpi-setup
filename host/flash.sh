@@ -30,11 +30,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URI="https://downloads.raspberrypi.com/raspios_lite_arm64"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$SCRIPT_DIR/downloads}"
 MOUNT_DIR=/mnt/rpi-boot
+# Where the disks are looked up; the tests point these at a fake tree.
+SYS_BLOCK="${SYS_BLOCK:-/sys/class/block}"
+PROC_SWAPS="${PROC_SWAPS:-/proc/swaps}"
 
 DEV=""
+DEV_IDENTITY=""   # size, model and serial of the confirmed disk, see confirm_device
 IMAGE=""
-USER=""
-PASS=""
+PI_USER=""        # not USER: real_user() falls back to the shell's USER
+PI_PASS=""
 SKIP_CUSTOMIZE=0
 LIST_ONLY=0
 NO_EJECT=0
@@ -61,41 +65,102 @@ usage() {
   exit 0
 }
 
+# The first partition of whole disk $1 (a resolved /dev node). Asks lsblk,
+# which knows the real name; before the kernel has seen the new table it
+# falls back to the naming rule: a disk name ending in a digit (mmcblk0,
+# nvme0n1, loop0) gets "p1", any other (sda, vda) gets "1".
 first_partition() {
-  local dev="$1" name="${1##*/}"
-  case "$name" in
-    mmcblk* | nvme*) echo "${dev}p1" ;;                 # mmcblk0p1, nvme0n1p1
-    *) echo "${dev}1" ;;                                # sda1, vda1
-  esac
+  local dev="$1" part=""
+  if command -v lsblk >/dev/null 2>&1; then
+    part="$(lsblk -lnpo NAME,TYPE "$dev" 2>/dev/null | awk '$2 == "part" {print $1; exit}')"
+  fi
+  if [[ -z "$part" ]]; then
+    case "$dev" in
+      *[0-9]) part="${dev}p1" ;;
+      *) part="${dev}1" ;;
+    esac
+  fi
+  echo "$part"
 }
 
 disk_size_gb() {
   local sectors block="$1"
-  sectors="$(cat "/sys/class/block/$block/size")" 2>/dev/null || return
+  sectors="$(cat "$SYS_BLOCK/$block/size")" 2>/dev/null || return
   awk "BEGIN{printf \"%.1f\", $sectors*512/1024/1024/1024}"
 }
 
+# Why whole disk $1 (a block name such as sda) is in use, or nothing when it
+# is free: something mounted anywhere on it (lsblk follows the tree, so a
+# filesystem on LVM, LUKS or md above it counts), a holder (an LVM PV, an
+# open LUKS container, an md member) or active swap. "mount | grep" saw none
+# of these, and the disk holding / must never pass as free.
+disk_in_use() {
+  local b="$1" h n sw
+  if command -v lsblk >/dev/null 2>&1; then
+    # MOUNTPOINTS (util-linux 2.37) lists every mount of a device; older
+    # versions have MOUNTPOINT. Swap shows as [SWAP] in both.
+    n="$( (lsblk -nro MOUNTPOINTS "/dev/$b" 2>/dev/null || lsblk -nro MOUNTPOINT "/dev/$b" 2>/dev/null) |
+          awk 'NF {print $1; exit}')"
+    if [[ -n "$n" ]]; then echo "mounted at $n"; return 0; fi
+  fi
+  for h in "$SYS_BLOCK/$b"/holders/* "$SYS_BLOCK/$b"/*/holders/*; do
+    [[ -e "$h" ]] || continue
+    echo "used by ${h##*/} (LVM, LUKS or RAID)"
+    return 0
+  done
+  [[ -r "$PROC_SWAPS" ]] || return 0
+  while read -r sw _; do
+    [[ "$sw" == /dev/* ]] || continue
+    n="$(readlink -f "$sw")"; n="${n##*/}"
+    if [[ "$n" == "$b" || -e "$SYS_BLOCK/$b/$n" ]]; then echo "active swap on $sw"; return 0; fi
+  done <"$PROC_SWAPS"
+  return 0
+}
+
+# Size, model and serial of disk $1 (a /dev node) on one line: compared before
+# writing with what was confirmed, so a reader plugged in or a card swapped in
+# between can never receive the image. Empty when nothing is known.
+disk_identity() {
+  local dev="$1" id=""
+  if command -v lsblk >/dev/null 2>&1; then
+    id="$(lsblk -dnro SIZE,MODEL,SERIAL "$dev" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')"
+  fi
+  [[ -n "$id" ]] || id="$(cat "$SYS_BLOCK/${dev##*/}/size" 2>/dev/null || true)"
+  printf '%s' "$id"
+}
+
+# One line per candidate disk: node, size, model, bus, removable flag and,
+# for a disk in use, why. Free disks come first, disks in use last, so the
+# disk holding / is never the first choice.
 list_candidates() {
-  local b removable model bus
-  for sys in /sys/class/block/*; do
+  local sys b removable model bus reason free=() busy=()
+  for sys in "$SYS_BLOCK"/*; do
     b="${sys##*/}"
     case "$b" in
       loop* | ram* | sr*) continue ;;
     esac
-    [[ -e "/sys/class/block/$b/partition" ]] && continue   # partitions, not whole disks
-    removable="$(cat "/sys/class/block/$b/removable" 2>/dev/null || echo 0)"
-    model="$(tr -s ' ' 2>/dev/null <"/sys/class/block/$b/device/model" | sed 's/ *$//' || true)"
+    [[ -e "$SYS_BLOCK/$b/partition" ]] && continue   # partitions, not whole disks
+    case "$b" in
+      sd[a-z] | mmcblk* | nvme* | vd* | xvd*) ;;
+      *) continue ;;
+    esac
+    removable="$(cat "$SYS_BLOCK/$b/removable" 2>/dev/null || echo 0)"
+    model="$(tr -s ' ' 2>/dev/null <"$SYS_BLOCK/$b/device/model" | sed 's/ *$//' || true)"
     case "$(readlink -f "$sys")" in
       */usb*) bus=USB ;;
       */mmc*) bus=SD ;;
       */nvme*) bus=NVMe ;;
       *) bus=other ;;
     esac
-    case "$b" in
-      sd[a-z] | mmcblk* | nvme* | vd* | xvd*)
-        printf '/dev/%s\t%6s GB\t%s\t(%s)\tremovable=%s\n' "$b" "$(disk_size_gb "$b")" "${model:-unknown model}" "$bus" "$removable" ;;
-    esac
+    reason="$(disk_in_use "$b")"
+    if [[ -n "$reason" ]]; then
+      busy+=("$(printf '/dev/%s\t%6s GB\t%s\t(%s)\tremovable=%s\tIN USE: %s' "$b" "$(disk_size_gb "$b")" "${model:-unknown model}" "$bus" "$removable" "$reason")")
+    else
+      free+=("$(printf '/dev/%s\t%6s GB\t%s\t(%s)\tremovable=%s' "$b" "$(disk_size_gb "$b")" "${model:-unknown model}" "$bus" "$removable")")
+    fi
   done
+  [[ ${#free[@]} -eq 0 ]] || printf '%s\n' "${free[@]}"
+  [[ ${#busy[@]} -eq 0 ]] || printf '%s\n' "${busy[@]}"
 }
 
 latest_release() {
@@ -127,8 +192,11 @@ download() {
 # Print the path of the downloaded, verified image on stdout (progress goes
 # to stderr, since callers capture stdout).
 fetch_image() {
-  local release="$1" img sha
-  img="$(curl -fsSL "$BASE_URI/images/$release/" | grep -oE 'href="[^"]+\.img\.xz"' | head -n1 | sed 's/href="//; s/"$//')"
+  local release="$1" listing img sha
+  if ! listing="$(curl -fsSL "$BASE_URI/images/$release/")"; then
+    die "Could not fetch the release listing for $release. Check network connectivity or use -i to specify a local image."
+  fi
+  img="$(grep -oE 'href="[^"]+\.img\.xz"' <<<"$listing" | head -n1 | sed 's/href="//; s/"$//' || true)"
   if [[ -z "$img" ]]; then
     die "Could not parse release listing for $release. Use -i to specify a local image."
   fi
@@ -178,23 +246,24 @@ Run the script again to download it afresh."
 }
 
 pick_device() {
-  local line count=0 sel dev
-  # The menu goes to stderr: stdout is the chosen device.
+  local lines=() i sel dev
+  # The list is taken once: a disk that appears while the question is open
+  # (a built-in card slot) must not renumber the choice. The menu goes to
+  # stderr: stdout is the chosen device.
+  mapfile -t lines < <(list_candidates)
   info 'Detected candidate disks:' >&2
-  while read -r line; do
-    count=$((count + 1))
-    printf '  %d) %s\n' "$count" "$line" >&2
-  done < <(list_candidates)
-  if [[ "$count" -eq 0 ]]; then
+  for i in "${!lines[@]}"; do
+    printf '  %d) %s\n' "$((i + 1))" "${lines[$i]}" >&2
+  done
+  if [[ ${#lines[@]} -eq 0 ]]; then
     warn 'No removable SD/USB disks detected. Is your card reader plugged in?'
   fi
   read -rp 'Select the disk to overwrite (number or /dev/node): ' sel
   if [[ "$sel" =~ ^/dev/ ]]; then
     dev="$sel"
   else
-    [[ "$sel" =~ ^[0-9]+$ ]] || die 'Invalid selection.'
-    dev="$(list_candidates | sed -n "${sel}p" | cut -f1)"
-    [[ -n "$dev" ]] || die 'Invalid selection.'
+    [[ "$sel" =~ ^[1-9][0-9]*$ && "$sel" -le ${#lines[@]} ]] || die 'Invalid selection.'
+    dev="$(cut -f1 <<<"${lines[$((sel - 1))]}")"
   fi
   echo "$dev"
 }
@@ -210,21 +279,36 @@ eject_card() {
   return 1
 }
 
+# Check and confirm the target $1 (a resolved /dev node) and record its
+# identity in DEV_IDENTITY for check_device_unchanged.
 confirm_device() {
-  local dev="$1"
+  local dev="$1" reason
   [[ -b "$dev" ]] || die "Not a block device: $dev"
   # Whole disks such as mmcblk0 or nvme0n1 also end in a digit, so ask sysfs
   # instead of looking at the name: only partitions have a "partition" file.
-  local node
-  node="$(readlink -f "$dev")"
-  if [[ -e "/sys/class/block/${node##*/}/partition" ]]; then
+  if [[ -e "$SYS_BLOCK/${dev##*/}/partition" ]]; then
     die "$dev looks like a partition, not a whole disk."
   fi
-  if mount | grep -q "$dev"; then die "$dev has mounted partitions; unmount them first."; fi
-  info "Target: $dev ($(disk_size_gb "${dev##*/}") GB)"
+  reason="$(disk_in_use "${dev##*/}")"
+  [[ -z "$reason" ]] || die "$dev is in use ($reason). Pick the card, or unmount the disk first."
+  DEV_IDENTITY="$(disk_identity "$dev")"
+  info "Target: $dev ($(disk_size_gb "${dev##*/}") GB${DEV_IDENTITY:+, $DEV_IDENTITY})"
   local conf
   read -r -p "Type 'yes' to DESTROY all data on $dev: " conf
   [[ "$conf" == "yes" ]] || die 'Aborted.'
+}
+
+# Die unless $1 is still the disk confirm_device recorded: the download takes
+# minutes, in which a card can be swapped or another reader plugged in.
+check_device_unchanged() {
+  local dev="$1" now
+  [[ -b "$dev" ]] || die "$dev is gone. Plug the card in again and run the script again."
+  now="$(disk_identity "$dev")"
+  if [[ "$now" != "$DEV_IDENTITY" ]]; then
+    die "$dev is not the disk that was confirmed (was: ${DEV_IDENTITY:-unknown}; now: ${now:-unknown}). Nothing was written; run the script again."
+  fi
+  now="$(disk_in_use "${dev##*/}")"
+  [[ -z "$now" ]] || die "$dev is in use now ($now). Nothing was written; run the script again."
 }
 
 generate_hash() {
@@ -234,22 +318,27 @@ generate_hash() {
   printf '%s' "$pass" | openssl passwd -6 -stdin
 }
 
+# Ask for the login user and password where -u/-p did not give them, and
+# check both. The password rules are those of userconf.txt and crypt: no ":"
+# (the field separator) and no control characters; anything else, umlauts
+# included, is fine. Same on Windows.
 ask_credentials() {
-  if [[ -z "$USER" ]]; then
+  if [[ -z "$PI_USER" ]]; then
     # '|| true': without a terminal (EOF) say what is missing instead of exiting silently.
-    read -rp 'Username to create on the Pi: ' USER || true
-    [[ -n "$USER" ]] || die 'Username required (-u).'
+    read -rp 'Username to create on the Pi: ' PI_USER || true
+    [[ -n "$PI_USER" ]] || die 'Username required (-u).'
   fi
-  [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "Invalid username '$USER'. Use lowercase letters/digits/_/-."
-  if [[ -z "$PASS" ]]; then
-    read -r -s -p 'Password for the Pi user (hidden): ' PASS || true; echo
-    [[ -n "$PASS" ]] || die 'Password required (-p).'
+  [[ "$PI_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "Invalid username '$PI_USER'. Use lowercase letters/digits/_/-."
+  if [[ -z "$PI_PASS" ]]; then
+    read -r -s -p 'Password for the Pi user (hidden): ' PI_PASS || true; echo
+    [[ -n "$PI_PASS" ]] || die 'Password required (-p).'
     local pass2=""
     read -rs -p 'Repeat password: ' pass2 || true; echo
-    [[ "$PASS" == "$pass2" ]] || die 'Passwords do not match.'
+    [[ "$PI_PASS" == "$pass2" ]] || die 'Passwords do not match.'
   fi
-  [[ "$PASS" != *:* ]] || die 'Password must not contain a colon (":").'
-  if [[ ${#PASS} -lt 8 ]]; then warn 'Password is shorter than 8 characters - consider a stronger one.'; fi
+  [[ "$PI_PASS" != *:* ]] || die 'Password must not contain a colon (":").'
+  [[ "$PI_PASS" != *[[:cntrl:]]* ]] || die 'Password must not contain control characters (tab, newline, ...).'
+  if [[ ${#PI_PASS} -lt 8 ]]; then warn 'Password is shorter than 8 characters - consider a stronger one.'; fi
 }
 
 # --- first-boot settings: hostname, Wi-Fi, SSH key ------------------------
@@ -278,11 +367,12 @@ FLASH_GH_UNIT=rpi-setup-github-key.service
 FLASH_GH_DIR=""      # temp directory holding the new key, removed on exit
 FLASH_GH_PUB=""      # the new public key line
 
-# Set every FLASH_* variable that is still unset from file $1 (default:
-# config/rpi-setup.env). Only FLASH_* lines are read and nothing is expanded,
-# so the file can never run code or change anything else.
+# Set every FLASH_* variable that is still empty from file $1 (default:
+# config/rpi-setup.env); an empty variable means "default", as on the Pi.
+# Only FLASH_* lines are read and nothing is expanded, so the file can never
+# run code or change anything else. Of a repeated name the first line counts.
 load_flash_config() {
-  local file="${1:-$(central_config)}" line key value
+  local file="${1:-$(central_config)}" line key value seen=" "
   [[ -f "$file" ]] || return 0
   config_warn_perms "$file"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -293,9 +383,36 @@ load_flash_config() {
       *" $key "*) ;;
       *) warn "$file: ignoring unknown setting $key"; continue ;;
     esac
-    [[ -n "${!key+x}" ]] && continue          # flags and the environment win
+    if [[ "$seen" == *" $key "* ]]; then
+      warn "$file: $key is set more than once; keeping the first value"
+      continue
+    fi
+    seen+="$key "
+    [[ -n "${!key:-}" ]] && continue          # flags and the environment win
     printf -v "$key" '%s' "$(config_value "$value")"
   done <"$file"
+}
+
+# Normalise FLASH_GITHUB_KEY to yes or no; empty stays empty (it is decided
+# later: yes at a terminal, no without one). Dies on anything else.
+normalize_github_key() {
+  case "${FLASH_GITHUB_KEY:-}" in
+    '') ;;
+    [yY] | [yY][eE][sS] | true | 1) FLASH_GITHUB_KEY=yes ;;
+    [nN] | [nN][oO] | false | 0) FLASH_GITHUB_KEY=no ;;
+    *) die "Invalid GitHub key setting '$FLASH_GITHUB_KEY'. Use yes or no." ;;
+  esac
+}
+
+# Expand a leading ~/ in $1 to the invoking user's home (sudo keeps root's
+# HOME, and a settings file is not read by a shell).
+expand_home() {
+  # shellcheck disable=SC2088  # the literal "~/" is what is expanded here
+  if [[ "$1" == '~/'* ]]; then
+    printf '%s' "$(invoking_home)/${1#\~/}"
+  else
+    printf '%s' "$1"
+  fi
 }
 
 # True when any first-boot setting is requested (the country alone is not one).
@@ -397,6 +514,13 @@ read_pubkeys() {
   FLASH_KEYS="$keys"
 }
 
+# Die unless $1 is a WPA passphrase (8-63 printable ASCII characters) or a
+# 64-digit hex key; the same check for a setting and for a typed answer.
+check_wifi_password() {
+  [[ "$1" =~ ^[\ -~]{8,63}$ || "$1" =~ ^[0-9A-Fa-f]{64}$ ]] ||
+    die 'Wi-Fi password must be 8-63 printable ASCII characters (or a 64-digit hex key).'
+}
+
 # Check the FLASH_* settings before anything is written. Upper-cases the
 # country and reads the key file. Never prints the Wi-Fi password.
 validate_flash_options() {
@@ -413,22 +537,17 @@ validate_flash_options() {
     # Bytes, not characters: the SSID limit is 32 bytes.
     [[ "$(printf %s "$ssid" | wc -c)" -le 32 ]] || die 'Wi-Fi SSID is longer than 32 bytes.'
     [[ "$ssid" != *[[:cntrl:]]* ]] || die 'Wi-Fi SSID must not contain control characters.'
-    if [[ -n "$pass" ]]; then
-      [[ "$pass" =~ ^[\ -~]{8,63}$ || "$pass" =~ ^[0-9A-Fa-f]{64}$ ]] ||
-        die 'Wi-Fi password must be 8-63 printable ASCII characters (or a 64-digit hex key).'
-    fi
+    [[ -z "$pass" ]] || check_wifi_password "$pass"
   elif [[ -n "$pass" ]]; then
     die 'A Wi-Fi password was given without an SSID. Set the SSID too (-s or FLASH_WIFI_SSID).'
   fi
   FLASH_KEYS=""
   if [[ -n "${FLASH_SSH_PUBKEY_FILE:-}" ]]; then
+    FLASH_SSH_PUBKEY_FILE="$(expand_home "$FLASH_SSH_PUBKEY_FILE")"
     read_pubkeys "$FLASH_SSH_PUBKEY_FILE"
   fi
-  case "${FLASH_GITHUB_KEY:-}" in
-    [yY] | [yY][eE][sS] | true | 1) FLASH_GITHUB_KEY=yes ;;
-    '' | [nN] | [nN][oO] | false | 0) FLASH_GITHUB_KEY=no ;;
-    *) die "Invalid GitHub key setting '$FLASH_GITHUB_KEY'. Use yes or no." ;;
-  esac
+  normalize_github_key
+  FLASH_GITHUB_KEY="${FLASH_GITHUB_KEY:-no}"
 }
 
 # Home directory of the user who ran sudo (root's home is not where the keys are).
@@ -475,24 +594,24 @@ ask_flash_settings() {
     else
       read -rp "Your PC's SSH public key file, to log in to the Pi without a password (empty to skip): " FLASH_SSH_PUBKEY_FILE || true
     fi
-    # shellcheck disable=SC2088  # a typed "~/" is expanded here on purpose
-    if [[ "$FLASH_SSH_PUBKEY_FILE" == '~/'* ]]; then
-      FLASH_SSH_PUBKEY_FILE="$(invoking_home)/${FLASH_SSH_PUBKEY_FILE#\~/}"
-    fi
+    FLASH_SSH_PUBKEY_FILE="$(expand_home "$FLASH_SSH_PUBKEY_FILE")"
   fi
   # The Pi's own GitHub key is made without asking; -g no turns it off.
   FLASH_GITHUB_KEY="${FLASH_GITHUB_KEY:-yes}"
 }
 
-# Ask for the Wi-Fi password when an SSID is set without one. An empty answer
-# (or no terminal to ask on) means an open network.
+# Ask for the Wi-Fi password when an SSID is set without one, and check it
+# like a setting. An empty answer (or no terminal to ask on) means an open
+# network.
 ask_wifi_password() {
   [[ -n "${FLASH_WIFI_SSID:-}" && -z "${FLASH_WIFI_PASSWORD:-}" ]] || return 0
-  if [[ -t 0 ]]; then
-    read -r -s -p "Wi-Fi password for '$FLASH_WIFI_SSID' (hidden, empty for an open network): " FLASH_WIFI_PASSWORD; echo
+  if can_prompt; then
+    read -r -s -p "Wi-Fi password for '$FLASH_WIFI_SSID' (hidden, empty for an open network): " FLASH_WIFI_PASSWORD || true; echo
   fi
   if [[ -z "${FLASH_WIFI_PASSWORD:-}" ]]; then
     warn "No Wi-Fi password: '$FLASH_WIFI_SSID' is set up as an open network."
+  else
+    check_wifi_password "$FLASH_WIFI_PASSWORD"
   fi
 }
 
@@ -719,6 +838,15 @@ write_firstboot_config() {
   [[ "${FLASH_GITHUB_KEY:-}" != yes ]] || info "New GitHub SSH key: moves to ~/.ssh/id_ed25519_github of '$user' on first boot"
 }
 
+# Runs on exit: a boot partition still mounted from an interrupted run is
+# unmounted, and the Pi's GitHub key never stays on this PC.
+cleanup() {
+  if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+    umount "$MOUNT_DIR" 2>/dev/null || warn "Could not unmount $MOUNT_DIR; run: sudo umount $MOUNT_DIR"
+  fi
+  remove_github_key
+}
+
 # --- main ---------------------------------------------------------------
 main() {
   local opt
@@ -726,8 +854,8 @@ main() {
     case "$opt" in
       d) DEV="$OPTARG" ;;
       i) IMAGE="$OPTARG" ;;
-      u) USER="$OPTARG" ;;
-      p) PASS="$OPTARG" ;;
+      u) PI_USER="$OPTARG" ;;
+      p) PI_PASS="$OPTARG" ;;
       k) SKIP_CUSTOMIZE=1 ;;
       E) NO_EJECT=1 ;;
       l) LIST_ONLY=1 ;;
@@ -744,9 +872,11 @@ main() {
   if [[ "$LIST_ONLY" -eq 1 ]]; then list_candidates; exit 0; fi
 
   need_root
+  trap cleanup EXIT
 
   # Check the first-boot settings before the card is touched.
   load_flash_config "$(central_config)"
+  normalize_github_key   # so -k sees "true" or "1" as the yes it is
   if [[ "$SKIP_CUSTOMIZE" -eq 1 ]] && want_firstboot; then
     die '-k (skip customization) cannot be combined with a hostname, Wi-Fi or SSH key setting.'
   fi
@@ -758,11 +888,10 @@ main() {
   local pass_hash=""
   if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
     ask_credentials
-    pass_hash="$(generate_hash "$PASS")"
+    pass_hash="$(generate_hash "$PI_PASS")"
   fi
   if [[ "${FLASH_GITHUB_KEY:-}" == yes ]]; then
-    trap remove_github_key EXIT
-    new_github_key "$USER@${FLASH_HOSTNAME:-raspberrypi}"
+    new_github_key "$PI_USER@${FLASH_HOSTNAME:-raspberrypi}"
   fi
 
   # Pick the card last among the questions, so the slow part (download,
@@ -770,6 +899,9 @@ main() {
   if [[ -z "$DEV" ]]; then
     DEV="$(pick_device)"
   fi
+  # One resolved node (/dev/disk/by-id/... is a symlink) for the checks, dd
+  # and the partition lookup.
+  DEV="$(readlink -f "$DEV")"
   confirm_device "$DEV"
 
   if [[ -n "$IMAGE" ]]; then
@@ -780,6 +912,9 @@ main() {
     release="$(latest_release)"
     img_path="$(fetch_image "$release")"
   fi
+
+  # The download took a while: make sure $DEV is still the confirmed disk.
+  check_device_unchanged "$DEV"
 
   info 'Zeroing the start of the disk so partprobe reliably sees the new table'
   dd if=/dev/zero of="$DEV" bs=1M count=8 status=none || true
@@ -799,8 +934,10 @@ main() {
     warn 'partprobe not found. If the next step fails, unplug/replug the card and continue from mount below.'
   fi
 
-  PART="$(first_partition "$DEV")"
+  # The kernel may take a moment to show the new partitions.
+  PART=""
   for i in $(seq 1 10); do
+    PART="$(first_partition "$DEV")"
     [[ -b "$PART" ]] && break
     sleep 1
   done
@@ -809,15 +946,20 @@ main() {
     [[ -b "$PART" ]] || die "Could not detect boot partition $PART. Run: sudo partprobe $DEV"
     say 'Enabling SSH and creating the login user for headless first boot'
     mkdir -p "$MOUNT_DIR"
-    mountpoint -q "$MOUNT_DIR" || mount -o umask=022 "$PART" "$MOUNT_DIR" 2>/dev/null \
+    # A mount left by an interrupted run would be the old card, not this one.
+    if mountpoint -q "$MOUNT_DIR"; then
+      warn "$MOUNT_DIR is still mounted from an earlier run; unmounting it."
+      umount "$MOUNT_DIR" || die "Could not unmount $MOUNT_DIR. Run: sudo umount $MOUNT_DIR"
+    fi
+    mount -o umask=022 "$PART" "$MOUNT_DIR" 2>/dev/null \
         || mount "$PART" "$MOUNT_DIR" || die "Mounting $PART failed."
 
     : > "$MOUNT_DIR/ssh"
-    printf '%s:%s\n' "$USER" "$pass_hash" >"$MOUNT_DIR/userconf.txt"
-    write_firstboot_config "$MOUNT_DIR" "$USER"
+    printf '%s:%s\n' "$PI_USER" "$pass_hash" >"$MOUNT_DIR/userconf.txt"
+    write_firstboot_config "$MOUNT_DIR" "$PI_USER"
     sync
     umount "$MOUNT_DIR"
-    say "Wrote to bootfs: 'ssh' (empty) and 'userconf.txt' (user '$USER')"
+    say "Wrote to bootfs: 'ssh' (empty) and 'userconf.txt' (user '$PI_USER')"
     info 'On first boot the Pi creates the account and deletes both files.'
   fi
 
@@ -829,7 +971,7 @@ main() {
   fi
   if [[ "$SKIP_CUSTOMIZE" -eq 0 ]]; then
     say 'After the Pi boots (1-2 minutes), connect over SSH:'
-    echo "    ssh $USER@${FLASH_HOSTNAME:-raspberrypi}.local"
+    echo "    ssh $PI_USER@${FLASH_HOSTNAME:-raspberrypi}.local"
     echo 'Then on the Pi:'
     echo '    git clone https://github.com/Programmer-Den/rpi-setup.git'
     echo '    cd rpi-setup && sudo bash setup.sh'
