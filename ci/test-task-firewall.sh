@@ -178,6 +178,23 @@ if [[ $EUID -eq 0 ]] && command -v nft >/dev/null 2>&1 &&
   assert_fails "run_firewall: bad FIREWALL_EXTRA_PORTS" env_run FIREWALL_EXTRA_PORTS=http
   assert_fails "run_firewall: bad FIREWALL_ALLOW_FROM" env_run FIREWALL_ALLOW_FROM=lan
   assert_fails "run_firewall: bad FIREWALL_AUTO_PORTS" env_run FIREWALL_AUTO_PORTS=maybe
+
+  # On a Pi (no container) with the unit enabled and active: unchanged rules
+  # are left alone, unless the table is gone from the kernel.
+  in_container() { return 1; }
+  SYSCTL_LOG="$TMP/systemctl.log"
+  systemctl() { printf '%s\n' "$*" >>"$SYSCTL_LOG"; }
+  firewall_table_loaded() { return 0; }
+  : >"$SYSCTL_LOG"
+  run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
+  assert_contains "run_firewall: unchanged rules with the table loaded are left alone" "already on with these rules" "$run_out"
+  assert_lacks "run_firewall: and nothing is reloaded" "reload rpi-setup-firewall" "$(cat "$SYSCTL_LOG")"
+  firewall_table_loaded() { return 1; }
+  : >"$SYSCTL_LOG"
+  run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
+  assert_contains "run_firewall: a flushed table is noticed" "table inet rpi_setup is gone" "$run_out"
+  assert_contains "run_firewall: and loaded again" "reload rpi-setup-firewall.service" "$(cat "$SYSCTL_LOG")"
+  in_container() { return 0; }
 else
   skip "nft -c and run_firewall cases need root and a working nft"
 fi

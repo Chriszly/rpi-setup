@@ -97,3 +97,8 @@ To close or limit such a port:
   detected like native ones; they use the host network, so these rules apply
   to them.
 - Inside a container or CI the rules are generated and checked but not loaded.
+- A re-run loads the rules again when the table is gone although the unit
+  is still active, which happens after `nft flush ruleset` or a restart of
+  `nftables.service` with Debian's stock `/etc/nftables.conf` (it flushes
+  everything). Until then the Pi is open; `sudo systemctl reload
+  rpi-setup-firewall` also brings the table back.

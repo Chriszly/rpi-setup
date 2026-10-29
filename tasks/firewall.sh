@@ -96,6 +96,13 @@ run_firewall() {
   elif [[ $changed -eq 1 ]]; then
     systemctl reload "$FW_UNIT" || die "Could not reload $FW_UNIT; see: journalctl -u $FW_UNIT"
     say 'Firewall rules updated'
+  elif ! firewall_table_loaded; then
+    # The unit is oneshot with RemainAfterExit, so it stays "active" after
+    # something else flushed the ruleset (nft flush ruleset, a restart of
+    # nftables.service with Debian's stock /etc/nftables.conf).
+    warn "$FW_UNIT is active but the table inet rpi_setup is gone (something flushed the ruleset); loading it again"
+    systemctl reload "$FW_UNIT" || die "Could not reload $FW_UNIT; see: journalctl -u $FW_UNIT"
+    say 'Firewall rules loaded again'
   else
     say 'Firewall is already on with these rules'
   fi
@@ -238,6 +245,11 @@ ExecStop=/usr/sbin/nft delete table inet rpi_setup
 [Install]
 WantedBy=sysinit.target
 EOF
+}
+
+# True while the kernel holds the table the unit loads.
+firewall_table_loaded() {
+  nft list table inet rpi_setup >/dev/null 2>&1
 }
 
 # TCP ports sshd listens on (empty if none or ss is missing).
