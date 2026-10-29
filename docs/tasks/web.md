@@ -158,9 +158,10 @@ moment); a weekday-by-hour grid of the average
 number of people online (in your browser's time zone); the busiest channels
 over the last 7 days; the last 7 days per person; everyone in the log with
 first and last seen, total time, visits, longest visit and platform; the
-visitors who connected from the same IP address, grouped and named after the
-nickname used last from it (the address itself is never shown), with their
-other nicknames; and the last 50 visits. Server groups are a column of their own everywhere.
+visitors who connected from the same IP address (two or more identities
+within 30 days of each other), grouped and named after the nickname used
+last from it (the address itself is never shown), with the other nicknames;
+and the last 50 visits. Server groups are a column of their own everywhere.
 The timer copies the logger's summary to `teamspeak.json`; when the logger is
 off or has not written it for 10 minutes the file is removed and the tab is
 hidden. How the logging works:

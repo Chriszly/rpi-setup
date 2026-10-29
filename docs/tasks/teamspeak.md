@@ -76,9 +76,9 @@ registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
 
 - `sessions.jsonl`: one line per finished visit, with the client's unique ID,
   nickname, start, end, server groups, client platform and when the client
-  first connected to the server, and the IP address it connected from. Visits older than `TEAMSPEAK_USAGE_DAYS` are
-  dropped once a day.
-- `online.json`: who is online now.
+  first connected to the server, and the IP address it connected from. Visits
+  older than `TEAMSPEAK_USAGE_DAYS` are dropped once a day.
+- `online.json`: who is online now, with their IP addresses.
 - `stats.json`: minutes spent in each channel per UTC day (7 days kept), for
   the busiest channels.
 - `usage.json`: the summary the [web start page](web.md#teamspeak) shows,
@@ -88,7 +88,16 @@ registers for join and leave events and writes to `/opt/teamspeak/usage/data`:
   (channel, version, platform, country, away, muted, idle) from `serverinfo`,
   `channellist` and `clientlist`. IP addresses stay in `sessions.jsonl` and
   `online.json` on the Pi; `usage.json` only groups visits by them, named
-  after the nickname used last, and never contains an address.
+  after the nickname used last, and never contains an address. A group is
+  listed when two or more identities (unique IDs) used the address; visits
+  from one address more than 30 days apart are separate groups, so an address
+  handed to another household (or a carrier-grade NAT address) does not link
+  strangers for `TEAMSPEAK_USAGE_DAYS` days. A nickname that several
+  identities used is listed once, with their number.
+
+The data folder is readable by the bot's own user and root only (`0700`, the
+two files with addresses `0600`); the web task's timer copies `usage.json` as
+root.
 
 When the bot or the server restarts, the people still online keep their
 start time; the visits of those who left in between end at the last time the
@@ -118,24 +127,32 @@ usage bot works it out every 30 minutes (5 after a failure):
   they only learn that address. Most home connections get a new one now and
   then, so the tab shows when it was checked (hover the tile) and keeps the
   last address while the services cannot be reached.
-- A DynDNS name (e.g. `kims-den.dyndns.example`) or a fixed address: shown as
-  it is, with the IPv4 address the name resolves to (`does not resolve` when
-  it does not), so you can see whether your DynDNS name is up to date. Nothing
-  outside your DNS is asked. Give friends the name: it keeps working when the
-  address changes.
+- A DynDNS name (e.g. `kims-den.dyndns.example`): shown as it is, with the
+  IPv4 address the name resolves to (its IPv6 address when it has no IPv4
+  one; `does not resolve` when it has neither), so you can see whether your
+  DynDNS name is up to date. Nothing outside your DNS is asked. Give friends
+  the name: it keeps working when the address changes.
+- A fixed IPv4 or IPv6 address: shown as it is, with no lookup.
 - `no`: no internet address, and nothing is looked up.
 
 The address only reaches the server when the router forwards UDP
 `TEAMSPEAK_PUBLIC_PORT` (and TCP `TEAMSPEAK_FILE_PORT` for file transfers) to
 the Pi. Behind carrier-grade NAT (many mobile and some fibre or cable
 connections) the looked-up address is your provider's and cannot be
-forwarded; ask the provider for a public IPv4 address. Only IPv4 is looked
-up.
+forwarded; ask the provider for a public IPv4 address. The lookup of the
+Pi's own public address is IPv4 only.
 
 ## Good to know
 
 - Ports published by Docker bypass the `firewall` task's rules (it opens them
   anyway and says so). How to close or limit them:
   [Ports of Docker containers](firewall.md#ports-of-docker-containers).
+- The server container drops every Linux capability and cannot gain
+  privileges (`cap_drop: [ALL]`, `no-new-privileges`): the image runs as
+  user 9987 from the start and its ports are above 1024, so it needs none.
+  New with this version and not yet tried on a Pi: if the server does not
+  come up after an update (`sudo docker logs teamspeak`), say so in an issue
+  and take the two settings out of `/opt/teamspeak/docker-compose.yml` for
+  the time being.
 - A newer image comes with `sudo bash update.sh`.
 - Stop: `cd /opt/teamspeak && sudo docker compose down`.
