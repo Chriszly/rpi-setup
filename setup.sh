@@ -32,27 +32,34 @@ task_desc_of() {
   die "unknown task: $1"
 }
 
+# Tasks the menu's "all" leaves out: apps and runner stop without their
+# required settings, and network changes the Pi's address (and ends an SSH
+# session). Pick them by number.
+NOT_IN_ALL=' apps runner network '
+
 # Read the menu answer and print the names of the tasks picked by number.
 prompt_selection() {
-  local line p
+  local line p name all=0
   printf '> ' >&2
   IFS= read -r line
   line="${line//,/ }"
-  if [[ "$line" == "all" ]]; then line="$(seq 1 ${#TASKS[@]})"; fi
+  if [[ "$line" == "all" ]]; then all=1; line="$(seq 1 ${#TASKS[@]})"; fi
   # Use if/then rather than '[[ ]] && echo': a trailing non-numeric token would
   # otherwise make the function return 1, and 'picked=($(prompt_selection))' in
   # main() would then abort the script under 'set -e' instead of cancelling.
   for p in $line; do
     if [[ "$p" =~ ^[0-9]+$ ]] && (( 10#$p >= 1 && 10#$p <= ${#TASKS[@]} )); then
-      task_name "${TASKS[10#$p - 1]}"
-      echo
+      name="$(task_name "${TASKS[10#$p - 1]}")"
+      if [[ $all -eq 1 && "$NOT_IN_ALL" == *" $name "* ]]; then continue; fi
+      echo "$name"
     fi
   done
   return 0
 }
 
-# Set PLAN, the order tasks $@ run in: base first if picked, then the others
-# in the order given, repeats dropped.
+# Set PLAN, the order tasks $@ run in: base first if picked, firewall last
+# if picked (it opens the ports of what is installed when it runs), the
+# others in the order given, repeats dropped.
 declare -a PLAN=()
 plan_tasks() {
   local -A seen=()
@@ -60,10 +67,12 @@ plan_tasks() {
   PLAN=()
   if [[ " $* " == *" base "* ]]; then set -- base "$@"; fi
   for name in "$@"; do
+    [[ "$name" != firewall ]] || continue
     [[ -z "${seen[$name]+x}" ]] || continue
     seen[$name]=1
     PLAN+=("$name")
   done
+  if [[ " $* " == *" firewall "* ]]; then PLAN+=(firewall); fi
 }
 
 # Parse the settings file of every selected task before running any, so a typo
@@ -241,7 +250,8 @@ main() {
     echo 'Available tasks:'
     print_tasks
     echo
-    echo 'Enter task numbers (comma/space separated), "all", or nothing to quit:'
+    echo 'Enter task numbers (comma/space separated), or nothing to quit.'
+    echo '"all" picks every task except apps, runner and network; firewall runs last:'
     picked=($(prompt_selection))
     if [[ ${#picked[@]} -eq 0 ]]; then
       echo 'Cancelled.'
@@ -253,6 +263,8 @@ main() {
   warn_shadowed_config
   if [[ -f "$(central_config)" ]]; then
     split_config "$(central_config)"
+  else
+    ignore_stale_local_config
   fi
   check_task_configs "${PLAN[@]}"
   run_tasks "${PLAN[@]}"

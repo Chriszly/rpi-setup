@@ -53,6 +53,9 @@ assert_eq "real_user falls back to root" "root" "$(SUDO_USER='' USER='' real_use
 # --- lib/common.sh: need_root / die -------------------------------------------
 if [[ $EUID -ne 0 ]]; then
     assert_fails "need_root fails for non-root" need_root
+    assert_contains "need_root says sudo bash setup.sh by default" "sudo bash setup.sh" "$( (need_root) 2>&1 || true)"
+    assert_contains "need_root names the given command" "sudo bash update.sh [options]" \
+        "$( (need_root 'update.sh [options]') 2>&1 || true)"
 else
     assert_ok "need_root passes for root" need_root
 fi
@@ -120,25 +123,27 @@ unset RPI_SETUP_CONTAINER_ROOT
 unset -f docker
 rm -rf "$ctr"
 
-# --- lib/common.sh: apt_install / apt_update_now (apt-get mocked, root only) --
-if [[ $EUID -eq 0 ]]; then
-    apt_log="$(mktemp)"
-    stamp=/var/lib/rpi-setup/apt-updated
-    had_stamp=0; [[ -f "$stamp" ]] && had_stamp=1
-    apt-get() { printf '%s\n' "$*" >>"$apt_log"; }
-    install -m 0755 -d /var/lib/rpi-setup
-    touch "$stamp"
-    apt_install foo
-    assert_eq "apt_install skips 'apt-get update' within the hour" "0" "$(grep -c '^update' "$apt_log" || true)"
-    assert_contains "apt_install never stops at dpkg conffile prompts" "--force-confold" "$(cat "$apt_log")"
-    apt_update_now
-    assert_eq "apt_update_now refreshes even within the hour" "1" "$(grep -c '^update' "$apt_log" || true)"
-    unset -f apt-get
-    rm -f "$apt_log"
-    [[ $had_stamp -eq 1 ]] || rm -f "$stamp"
-else
-    skip "apt_install / apt_update_now tests need root"
-fi
+# --- lib/common.sh: apt_install / apt_update_now (apt-get mocked) -------------
+# The stamp lives in a temp folder, so the real /var/lib/rpi-setup/apt-updated
+# is never touched (a fresh one would make the next task skip apt-get update).
+apt_log="$(mktemp)"
+apt_tmp="$(mktemp -d)"
+export RPI_SETUP_APT_STAMP="$apt_tmp/state/apt-updated"
+apt-get() { printf '%s\n' "$*" >>"$apt_log"; }
+apt_install foo
+assert_eq "apt_install refreshes the lists on the first run" "1" "$(grep -c '^update' "$apt_log" || true)"
+assert_ok "apt_update writes the stamp (and its folder)" test -f "$RPI_SETUP_APT_STAMP"
+apt_install foo
+assert_eq "apt_install skips 'apt-get update' within the hour" "1" "$(grep -c '^update' "$apt_log" || true)"
+assert_contains "apt_install never stops at dpkg conffile prompts" "--force-confold" "$(cat "$apt_log")"
+apt_update_now
+assert_eq "apt_update_now refreshes even within the hour" "2" "$(grep -c '^update' "$apt_log" || true)"
+touch -d '2 hours ago' "$RPI_SETUP_APT_STAMP"
+apt_install foo
+assert_eq "apt_install refreshes after an hour" "3" "$(grep -c '^update' "$apt_log" || true)"
+unset -f apt-get
+unset RPI_SETUP_APT_STAMP
+rm -rf "$apt_log" "$apt_tmp"
 
 # --- lib/common.sh: task settings ---------------------------------------------
 assert_eq "config_value keeps a plain value"          "abc"          "$(config_value 'abc')"
@@ -149,7 +154,10 @@ assert_eq "config_value unquotes double quotes"       "a b #c"       "$(config_v
 assert_eq "config_value unquotes single quotes"       'x"y $HOME'    "$(config_value "'x\"y \$HOME'")"
 assert_eq "config_value reads an empty value"         ""             "$(config_value '')"
 assert_eq "config_value reads empty quotes"           ""             "$(config_value "''")"
-for v in 'plain' 'with space' 'a #b' 'dollar $x' "it's" 'say "hi"'; do
+assert_eq "config_value: an empty value before a comment is empty" "" "$(config_value '   # set on first run')"
+assert_eq "config_value: a bare comment is empty"     ""             "$(config_value '#c')"
+assert_eq "config_value keeps a quoted leading #"     "#1"           "$(config_value "'#1'")"
+for v in 'plain' 'with space' 'a #b' '#x' 'dollar $x' "it's" 'say "hi"'; do
     assert_eq "config_quote round-trips: $v" "$v" "$(config_value "$(config_quote "$v")")"
 done
 assert_fails "config_quote refuses a value with both quote kinds" config_quote "a'b\"c"
@@ -176,6 +184,19 @@ assert_contains "load_task_config warns about a readable password file" "chmod 6
 chmod 0600 "$cfg/loose.env"
 assert_eq "load_task_config is quiet about a private password file" "" \
     "$( (load_task_config samba "$cfg/loose.env") 2>&1 >/dev/null)"
+printf 'RUNNER_TOKEN=abc\n' >"$cfg/token.env"
+chmod 0644 "$cfg/token.env"
+assert_contains "config_warn_perms warns about a readable token" "chmod 600" "$( (config_warn_perms "$cfg/token.env") 2>&1)"
+printf 'RUNNER_TOKEN=\nRUNNER_REPO=alex/pis\n' >"$cfg/token.env"
+assert_eq "config_warn_perms is quiet about an empty token" "" "$( (config_warn_perms "$cfg/token.env") 2>&1)"
+
+# unit_exists: a bare name is a service, a timer keeps its suffix.
+systemctl() { printf '%s\n' "$3" >>"$cfg/units.log"; [[ "$3" == ssh.service || "$3" == rpi-setup-backup.timer ]] && echo "$3 enabled"; return 0; }
+assert_ok    "unit_exists finds a service by its bare name" unit_exists ssh
+assert_ok    "unit_exists finds a timer by its full name" unit_exists rpi-setup-backup.timer
+assert_fails "unit_exists is false for a missing unit" unit_exists nope
+assert_eq "unit_exists asks systemctl for the right units" $'ssh.service\nrpi-setup-backup.timer\nnope.service' "$(cat "$cfg/units.log")"
+unset -f systemctl
 
 # split_config: the central example splits into one file per task template.
 printf 'SAMBA_PASSWORD="p #1"\nWEB_PORT=8081\n' >"$cfg/rpi-setup.env"
@@ -200,6 +221,16 @@ assert_fails "split_config stops on an unknown name" eval 'RPI_SETUP_CONFIG_DIR=
 assert_ok "split_config accepts the committed example" eval \
     'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$ROOT/config/rpi-setup.env.example" >/dev/null'
 assert_fails "split_config explains a missing central file" eval 'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/nope.env"'
+
+# Split files left over from a deleted central file are ignored, with a warning.
+rm -f "$cfg/rpi-setup.env"
+printf "WEB_PORT='8081'\n" >"$cfg/local/web.env"
+out="$( (RPI_SETUP_CONFIG_DIR="$cfg"; ignore_stale_local_config; unset WEB_PORT; load_task_config web; printf 'WEB_PORT=%s\n' "${WEB_PORT:-unset}") 2>&1)"
+assert_contains "stale config/local is reported" "still holds settings split from it; they are ignored" "$out"
+assert_contains "stale config/local is not loaded" "WEB_PORT=unset" "$out"
+assert_eq "a file given by name is still read" "8081" \
+    "$(RPI_SETUP_CONFIG_DIR="$cfg"; ignore_stale_local_config >/dev/null 2>&1; unset WEB_PORT; load_task_config web "$cfg/local/web.env" >/dev/null; printf '%s' "$WEB_PORT")"
+assert_eq "without stale files nothing is reported" "" "$(RPI_SETUP_CONFIG_DIR="$cfg/none"; ignore_stale_local_config 2>&1)"
 rm -rf "$cfg"
 
 # config_dir: RPI_SETUP_CONFIG_DIR, else /etc/rpi-setup once it has the file, else config/.
