@@ -120,25 +120,27 @@ unset RPI_SETUP_CONTAINER_ROOT
 unset -f docker
 rm -rf "$ctr"
 
-# --- lib/common.sh: apt_install / apt_update_now (apt-get mocked, root only) --
-if [[ $EUID -eq 0 ]]; then
-    apt_log="$(mktemp)"
-    stamp=/var/lib/rpi-setup/apt-updated
-    had_stamp=0; [[ -f "$stamp" ]] && had_stamp=1
-    apt-get() { printf '%s\n' "$*" >>"$apt_log"; }
-    install -m 0755 -d /var/lib/rpi-setup
-    touch "$stamp"
-    apt_install foo
-    assert_eq "apt_install skips 'apt-get update' within the hour" "0" "$(grep -c '^update' "$apt_log" || true)"
-    assert_contains "apt_install never stops at dpkg conffile prompts" "--force-confold" "$(cat "$apt_log")"
-    apt_update_now
-    assert_eq "apt_update_now refreshes even within the hour" "1" "$(grep -c '^update' "$apt_log" || true)"
-    unset -f apt-get
-    rm -f "$apt_log"
-    [[ $had_stamp -eq 1 ]] || rm -f "$stamp"
-else
-    skip "apt_install / apt_update_now tests need root"
-fi
+# --- lib/common.sh: apt_install / apt_update_now (apt-get mocked) -------------
+# The stamp lives in a temp folder, so the real /var/lib/rpi-setup/apt-updated
+# is never touched (a fresh one would make the next task skip apt-get update).
+apt_log="$(mktemp)"
+apt_tmp="$(mktemp -d)"
+export RPI_SETUP_APT_STAMP="$apt_tmp/state/apt-updated"
+apt-get() { printf '%s\n' "$*" >>"$apt_log"; }
+apt_install foo
+assert_eq "apt_install refreshes the lists on the first run" "1" "$(grep -c '^update' "$apt_log" || true)"
+assert_ok "apt_update writes the stamp (and its folder)" test -f "$RPI_SETUP_APT_STAMP"
+apt_install foo
+assert_eq "apt_install skips 'apt-get update' within the hour" "1" "$(grep -c '^update' "$apt_log" || true)"
+assert_contains "apt_install never stops at dpkg conffile prompts" "--force-confold" "$(cat "$apt_log")"
+apt_update_now
+assert_eq "apt_update_now refreshes even within the hour" "2" "$(grep -c '^update' "$apt_log" || true)"
+touch -d '2 hours ago' "$RPI_SETUP_APT_STAMP"
+apt_install foo
+assert_eq "apt_install refreshes after an hour" "3" "$(grep -c '^update' "$apt_log" || true)"
+unset -f apt-get
+unset RPI_SETUP_APT_STAMP
+rm -rf "$apt_log" "$apt_tmp"
 
 # --- lib/common.sh: task settings ---------------------------------------------
 assert_eq "config_value keeps a plain value"          "abc"          "$(config_value 'abc')"

@@ -72,20 +72,22 @@ unit_exists() {
   [[ -n "$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null)" ]]
 }
 
-# Refresh apt lists at most once an hour per run.
+# Refresh apt lists at most once an hour per run. The stamp file records the
+# last refresh; RPI_SETUP_APT_STAMP moves it (the unit tests).
 apt_update() {
-  if [[ ! -f /var/lib/rpi-setup/apt-updated ]] ||
-     [[ $(( $(date +%s) - $(stat -c %Y /var/lib/rpi-setup/apt-updated) )) -gt 3600 ]]; then
+  local stamp="${RPI_SETUP_APT_STAMP:-/var/lib/rpi-setup/apt-updated}"
+  if [[ ! -f "$stamp" ]] ||
+     [[ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -gt 3600 ]]; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y
-    install -m 0755 -d /var/lib/rpi-setup
-    touch /var/lib/rpi-setup/apt-updated
+    install -m 0755 -d "$(dirname "$stamp")"
+    touch "$stamp"
   fi
 }
 
 # Refresh apt lists now, ignoring the hourly cache. Needed right after adding
 # an apt source: lists fetched a minute ago (e.g. by "base") don't know it yet.
 apt_update_now() {
-  rm -f /var/lib/rpi-setup/apt-updated
+  rm -f "${RPI_SETUP_APT_STAMP:-/var/lib/rpi-setup/apt-updated}"
   apt_update
 }
 
