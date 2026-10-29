@@ -72,6 +72,7 @@ assert_eq "nmcli arguments" \
 # NMCLI_SHOW is what "nmcli -g ... connection show" prints; NMCLI_LOG records
 # every other nmcli call.
 NMCLI_LOG="$TMP/nmcli.log"
+: >"$NMCLI_LOG"
 NMCLI_SHOW=''
 NMCLI_RUNNING=running
 IP_ADDR='2: lo    inet 192.168.1.10/24 brd 192.168.1.255 scope global lo'
@@ -121,7 +122,12 @@ assert_fails "lacks other address" network_has_addr lo 192.168.1.20/24
 # are the stubs above, so nothing is changed for real.
 # Arguments are NAME=value pairs to export for that one run.
 # shellcheck disable=SC2163
-env_run() { ( unset SSH_CONNECTION; export NETWORK_INTERFACE=lo "$@"; run_network ) 2>&1; }
+env_run() { ( unset SSH_CONNECTION SSH_CLIENT SSH_TTY; export NETWORK_INTERFACE=lo "$@"; run_network ) 2>&1; }
+# Not a remote session unless a case says so (who -m and logind are stubbed).
+WHO_M='' LOGIND_REMOTE=''
+who() { printf '%s\n' "$WHO_M"; }
+loginctl() { [[ -n "$LOGIND_REMOTE" ]] || return 1; printf '%s\n' "$LOGIND_REMOTE"; }
+export RPI_SETUP_CONTAINER_ROOT="$TMP/opt"
 
 assert_fails "bad NETWORK_STATIC_IP stops the run" env_run NETWORK_STATIC_IP=192.168.1.10
 assert_fails "bad NETWORK_GATEWAY stops the run"   env_run NETWORK_STATIC_IP=192.168.1.10/24 NETWORK_GATEWAY=192.168.1
@@ -160,12 +166,47 @@ assert_eq "new address modifies then activates the connection" \
     "connection modify lo-uuid ipv4.method manual ipv4.addresses 192.168.1.20/24 ipv4.gateway 192.168.1.1 ipv4.dns 1.1.1.1,9.9.9.9
 connection up lo-uuid" "$(cat "$NMCLI_LOG")"
 assert_contains "new address is printed" "reachable at 192.168.1.20" "$out"
+assert_contains "a local run still gets the reconnect line" "If you are connected over SSH to 192.168.1.10" "$out"
+assert_contains "with the new address" "ssh $(real_user)@192.168.1.20" "$out"
+assert_lacks "but no session warning" "You are connected over the network" "$out"
 : >"$NMCLI_LOG"
 
 # Over SSH to another address: a clear warning with the address to reconnect to.
+# sudo strips SSH_CONNECTION, so the session is recognised by who -m or logind.
 out="$(env_run SSH_CONNECTION='192.168.1.5 5000 192.168.1.10 22' NETWORK_STATIC_IP=192.168.1.20/24)"
 assert_contains "SSH users are warned" "Applying the new address ends this session" "$out"
 assert_contains "SSH users get the new address" "@192.168.1.20" "$out"
+WHO_M='alex     pts/0        2026-10-29 10:00 (192.168.1.5)'
+out="$(env_run NETWORK_STATIC_IP=192.168.1.20/24)"
+assert_contains "a session who -m shows as remote is warned (sudo strips SSH_CONNECTION)" \
+    "Applying the new address ends this session" "$out"
+assert_contains "and told that later tasks do not run" "Tasks listed after network in this run will not run" "$out"
+WHO_M='alex     tty1         2026-10-29 10:00'
+out="$(env_run NETWORK_STATIC_IP=192.168.1.20/24)"
+assert_lacks "a console session is not warned" "You are connected over the network" "$out"
+LOGIND_REMOTE=yes
+assert_contains "a session logind calls remote is warned" "Applying the new address ends this session" \
+    "$(env_run NETWORK_STATIC_IP=192.168.1.20/24)"
+LOGIND_REMOTE=no WHO_M=''
+assert_ok "remote session: not without any sign" eval '! ( unset SSH_CONNECTION SSH_CLIENT SSH_TTY; network_remote_session )'
+LOGIND_REMOTE=''
+# Same address as now: nothing to reconnect to, no warning.
+WHO_M='alex     pts/0        2026-10-29 10:00 (192.168.1.5)'
+NMCLI_SHOW=$'auto\n\n\n'
+out="$(env_run NETWORK_STATIC_IP=192.168.1.10/24)"
+assert_lacks "keeping the current address warns nobody" "ends this session" "$out"
+WHO_M=''
+: >"$NMCLI_LOG"
+
+# --- network_has_pihole: native or in its container --------------------------------
+assert_fails "no Pi-hole at all" network_has_pihole
+install -d "$TMP/opt/pihole"; touch "$TMP/opt/pihole/docker-compose.yml"
+docker() { [[ "$1 $2 $4" == "inspect --type pihole" ]]; }
+assert_ok "Pi-hole in its container counts" network_has_pihole
+assert_contains "the router hint names the container's Pi-hole" "point your router's DNS setting at 192.168.1.20" \
+    "$(env_run NETWORK_STATIC_IP=192.168.1.20/24)"
+unset -f docker
+rm -rf "$TMP/opt"
 : >"$NMCLI_LOG"
 
 finish_tests

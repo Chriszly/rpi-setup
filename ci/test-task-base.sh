@@ -28,7 +28,33 @@ for s in 0 0M 100MB -1 1.5G 100m yes ''; do assert_fails "journal size rejects '
 
 # --- base_validate_hardening --------------------------------------------------
 set_defaults
+# Not a remote session unless a case says so (the machine running the tests
+# may well be reached over SSH as root).
+base_remote_session() { return 1; }
 assert_ok "defaults validate" base_validate_hardening
+
+# --- base_root_login_guard: root over SSH must not lose its only login --------
+assert_ok "root on the console passes" eval 'SUDO_USER=root; base_root_login_guard'
+base_remote_session() { return 0; }
+assert_fails "root over the network is refused (PermitRootLogin no would lock it out)" eval 'SUDO_USER=root; base_root_login_guard'
+assert_contains "and told to use a sudo user" "Log in as a normal user with sudo" \
+  "$( (SUDO_USER=root; base_root_login_guard) 2>&1 || true)"
+assert_ok "a sudo user over the network passes" eval 'SUDO_USER=alex; base_root_login_guard'
+assert_fails "the guard runs before anything changes" eval 'SUDO_USER=root; base_validate_hardening'
+base_remote_session() { return 1; }
+# The remote session is recognised by the SSH variables, logind or who -m.
+WHO_M='' LOGIND_REMOTE=''
+who() { printf '%s\n' "$WHO_M"; }
+loginctl() { [[ -n "$LOGIND_REMOTE" ]] || return 1; printf '%s\n' "$LOGIND_REMOTE"; }
+remote() { ( unset SSH_CONNECTION SSH_CLIENT SSH_TTY; export "$@"; unset -f base_remote_session; . "$ROOT/tasks/base.sh"; base_remote_session ); }
+assert_fails "remote session: nothing says so" remote X=1
+assert_ok "remote session: SSH_CONNECTION" remote SSH_CONNECTION='192.168.1.5 5000 192.168.1.10 22'
+assert_ok "remote session: SSH_TTY (sudo keeps none of these)" remote SSH_TTY=/dev/pts/0
+assert_ok "remote session: who -m shows a host" eval 'WHO_M="root     pts/0        2026-10-29 10:00 (192.168.1.5)" remote X=1'
+assert_fails "remote session: who -m on the console" eval 'WHO_M="root     tty1         2026-10-29 10:00" remote X=1'
+assert_ok "remote session: logind says Remote=yes" eval 'LOGIND_REMOTE=yes remote X=1'
+assert_fails "remote session: logind says Remote=no" eval 'LOGIND_REMOTE=no remote X=1'
+unset -f who loginctl
 assert_fails "BASE_AUTO_UPDATES=maybe dies" eval 'BASE_AUTO_UPDATES=maybe; base_validate_hardening'
 assert_fails "BASE_AUTO_REBOOT=sometimes dies" eval 'BASE_AUTO_REBOOT=sometimes; base_validate_hardening'
 assert_fails "BASE_SSH_PASSWORD_AUTH=perhaps dies" eval 'BASE_SSH_PASSWORD_AUTH=perhaps; base_validate_hardening'

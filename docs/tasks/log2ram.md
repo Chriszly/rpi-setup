@@ -18,7 +18,7 @@ or `sudo bash check.sh`.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `LOG2RAM_SIZE` | `128M` | Size of the RAM disk for `/var/log` (`128M`, `256M`, `1G`, ...), at least `16M`. It only uses RAM for what is really in it. |
+| `LOG2RAM_SIZE` | `128M` | Size of the RAM disk for `/var/log` (`128M`, `256M`, `1G`, ...), at least `16M`. It only uses RAM for what is really in it. A lower-case suffix (`128m`) is taken as the upper-case one. |
 | `LOG2RAM_SYNC` | `hourly` | How often the logs are copied to the SD card: `hourly`, `daily` (log2ram's own time, once a night) or a [systemd calendar time](https://www.freedesktop.org/software/systemd/man/latest/systemd.time.html#Calendar%20Events) such as `*:0/30` (every 30 minutes). rsync writes only what changed, so a frequent copy costs few writes. |
 | `LOG2RAM_JOURNAL_MAX_SIZE` | `64M` | Space the system journal may use in that RAM disk; at most 3/4 of `LOG2RAM_SIZE`, so other logs still fit. Overrides `BASE_JOURNAL_MAX_SIZE`. |
 
@@ -28,8 +28,9 @@ or `sudo bash check.sh`.
   `/usr/share/keyrings/azlux-archive-keyring.gpg`, list in
   `/etc/apt/sources.list.d/azlux.list`), so `apt-get upgrade` and `update.sh`
   keep log2ram current, and installs `log2ram` and `rsync`.
-- `/etc/log2ram.conf`: `SIZE` from `LOG2RAM_SIZE` and `MAIL=false` (a Pi has
-  no mail setup); the package's other defaults stay.
+- `/etc/log2ram.conf`: `SIZE` from `LOG2RAM_SIZE` and `NOTIFICATION=false`
+  (a Pi has no mail setup; `MAIL=false` on log2ram before 1.7); the
+  package's other defaults stay.
 - `/etc/systemd/journald.conf.d/20-log2ram.conf`: `SystemMaxUse` from
   `LOG2RAM_JOURNAL_MAX_SIZE`. It sorts after the `base` task's
   `10-rpi-setup.conf` and wins over it, so the journal cannot fill the RAM disk.

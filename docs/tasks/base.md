@@ -41,7 +41,11 @@ Every setting is optional; an empty value means the default.
 - SSH is switched on (`raspi-config nonint do_ssh 0`).
 - `/etc/ssh/sshd_config.d/10-rpi-setup.conf`: root login over SSH is always
   off; password login off with `BASE_SSH_PASSWORD_AUTH=no`. The file is checked
-  with `sshd -t` and rolled back if sshd rejects it.
+  with `sshd -t` and rolled back if sshd rejects it. When you are logged in
+  as root over the network (not with `sudo` from your own account), the task
+  stops before changing anything, since that login would be gone next time:
+  create a user with `adduser alex && usermod -aG sudo alex` and run the
+  task from there.
 - `/etc/fail2ban/jail.local`: the SSH jail (reads the journal); 5 failed
   logins within 10 minutes ban the address for an hour. A `jail.local` you
   wrote yourself is left alone.

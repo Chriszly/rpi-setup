@@ -32,7 +32,11 @@ else is touched. All settings are checked before anything changes.
 - **Over SSH the session drops** when the address changes. Run this task alone
   or last, then reconnect with `ssh <user>@<new address>`. Tasks listed after
   `network` in the same run do not run; start them again after reconnecting.
-- With Pi-hole installed, point your router's DNS setting at the new address.
+  The task prints the reconnect command before it applies the address, as a
+  warning when it sees a remote session (`SSH_CONNECTION`, `who -m` or
+  logind) and as a note otherwise, since `sudo` hides the SSH variables.
+- With Pi-hole installed (natively or in its container), point your router's
+  DNS setting at the new address.
 - Back to DHCP (the task prints this command with your connection name):
 
   ```bash
