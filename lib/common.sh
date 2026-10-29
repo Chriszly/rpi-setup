@@ -289,12 +289,14 @@ config_is_system() { [[ "$(config_dir)" == "$(system_config_dir)" ]]; }
 central_config() { printf '%s/rpi-setup.env\n' "$(config_dir)"; }
 
 # The value part of a KEY=value line: surrounding whitespace, a matching pair
-# of quotes and a trailing " # comment" are removed. Nothing is expanded, so
-# $, backticks and backslashes reach the task literally. Quote a value that
-# contains " #"; a value with a double quote in it goes in single quotes.
+# of quotes and a trailing " # comment" are removed; "NAME=   # comment" is
+# an empty value. Nothing is expanded, so $, backticks and backslashes reach
+# the task literally. Quote a value that contains " #" or starts with #; a
+# value with a double quote in it goes in single quotes.
 config_value() {
   local v="$1"
   v="${v#"${v%%[![:space:]]*}"}"
+  [[ "$v" != '#'* ]] || v=''
   if [[ "$v" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]] || [[ "$v" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
     return

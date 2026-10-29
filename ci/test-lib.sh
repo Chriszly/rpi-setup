@@ -149,7 +149,10 @@ assert_eq "config_value unquotes double quotes"       "a b #c"       "$(config_v
 assert_eq "config_value unquotes single quotes"       'x"y $HOME'    "$(config_value "'x\"y \$HOME'")"
 assert_eq "config_value reads an empty value"         ""             "$(config_value '')"
 assert_eq "config_value reads empty quotes"           ""             "$(config_value "''")"
-for v in 'plain' 'with space' 'a #b' 'dollar $x' "it's" 'say "hi"'; do
+assert_eq "config_value: an empty value before a comment is empty" "" "$(config_value '   # set on first run')"
+assert_eq "config_value: a bare comment is empty"     ""             "$(config_value '#c')"
+assert_eq "config_value keeps a quoted leading #"     "#1"           "$(config_value "'#1'")"
+for v in 'plain' 'with space' 'a #b' '#x' 'dollar $x' "it's" 'say "hi"'; do
     assert_eq "config_quote round-trips: $v" "$v" "$(config_value "$(config_quote "$v")")"
 done
 assert_fails "config_quote refuses a value with both quote kinds" config_quote "a'b\"c"

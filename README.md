@@ -105,7 +105,7 @@ The format is one `NAME=value` per line:
 ```bash
 BASE_HOSTNAME=homepi
 BASE_TIMEZONE=Europe/Berlin
-SAMBA_PASSWORD='my secret #1'   # quote values with " #" or spaces at the ends
+SAMBA_PASSWORD='my secret #1'   # quote values with " #", a leading # or spaces at the ends
 PIHOLE_DNS=9.9.9.9
 ```
 
