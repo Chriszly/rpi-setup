@@ -23,22 +23,33 @@ run_web() {
       # it and abort the install, so keep the service down during install
       # and move the default site elsewhere.
       info "Port 80 is used by '$owner'; nginx will listen on $want instead"
-      local own_policy=0
+      local own_policy=0 prev_trap=""
       if [[ ! -e /usr/sbin/policy-rc.d ]]; then
         printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d
         chmod 0755 /usr/sbin/policy-rc.d
         own_policy=1
+        # Left in place, the file would stop every apt package from starting
+        # its service, so an interrupted run removes it too: in front of the
+        # EXIT trap setup.sh set (its log), which stays.
+        web_exit_trap prev_trap
+        # shellcheck disable=SC2064 # expanded now on purpose
+        trap "rm -f /usr/sbin/policy-rc.d${prev_trap:+; $prev_trap}" EXIT
       fi
       local rc=0
       apt_install nginx || rc=$?
-      [[ $own_policy -eq 0 ]] || rm -f /usr/sbin/policy-rc.d
+      if [[ $own_policy -eq 1 ]]; then
+        rm -f /usr/sbin/policy-rc.d
+        # shellcheck disable=SC2064  # the saved trap string is put back as it was
+        if [[ -n "$prev_trap" ]]; then trap "$prev_trap" EXIT; else trap - EXIT; fi
+      fi
       [[ $rc -eq 0 ]] || die 'nginx install failed'
     else
       apt_install nginx
     fi
   fi
 
-  cur="$(nginx_site_port "$site")"
+  cur="$(nginx_site_port "$site")" ||
+    die "nginx's default site $site is missing, but the start page is served from it. Restore it with: sudo apt-get install --reinstall -o Dpkg::Options::=--force-confmiss nginx-common"
   if [[ -n "$cur" && "$want" != "$cur" ]]; then
     owner="$(port_owner "$want")" || owner=""
     if [[ -n "$owner" && "$owner" != nginx ]]; then
@@ -60,16 +71,43 @@ run_web() {
   say "nginx running - open $(service_url "$(nginx_site_port "$site")") in your browser"
 }
 
-# The page is (re)written while it is ours or missing; a page you put there
-# yourself is never overwritten. Either way the service list next to it
+# Sets $1 to the command of the current EXIT trap (setup.sh's stop_log), or
+# to nothing. Not in $( ): a subshell has no traps to print.
+web_exit_trap() {
+  local -n _web_exit_trap="$1"
+  local t
+  t="$(trap -p EXIT)"
+  t="${t#trap -- \'}"
+  t="${t%\' EXIT}"
+  _web_exit_trap="${t//\'\\\'\'/\'}"
+}
+
+# The line that marks the start page as rpi-setup's (second line of the
+# page). The page is rewritten while it holds it and left alone once it is
+# removed. Pages written before the marker existed are told apart by their
+# footer line (RPI_WEB_PAGE_OLD_FOOTER) and marked once, with a copy of the old
+# page kept next to them.
+RPI_WEB_PAGE_MARK='<!-- Written by rpi-setup (tasks/web.sh). Remove this line to keep your own edits to this page. -->'
+RPI_WEB_PAGE_OLD_FOOTER='<footer>Provisioned by <a href="https://github.com/Programmer-Den/rpi-setup">rpi-setup</a>.'
+
+# The page is (re)written while it is ours (it holds RPI_WEB_PAGE_MARK) or
+# missing; a page you put there yourself, or ours without the marker line,
+# is never overwritten. Either way the service list next to it
 # (services.json) is kept up to date by web_links_install.
 web_index_page() {
   local f="$1" page
-  if [[ -f "$f" ]] && ! grep -q 'rpi-setup' "$f"; then
-    info "$f is your own page; leaving it alone"
-    return
+  if [[ -f "$f" ]] && ! grep -qF "$RPI_WEB_PAGE_MARK" "$f"; then
+    if ! grep -qF "$RPI_WEB_PAGE_OLD_FOOTER" "$f"; then
+      info "$f is your own page; leaving it alone"
+      return
+    fi
+    # A page from before the marker: rewritten this once, with the old one
+    # kept in case it was edited.
+    cp -p "$f" "$f.old"
+    info "$f was written by an older rpi-setup; the old page is kept as $f.old"
   fi
   page="$(web_index_html)"
+  page="${page//@MARK@/"$RPI_WEB_PAGE_MARK"}"
   printf '%s\n' "${page//@TITLE@/"$WEB_TITLE"}" | write_if_changed "$f" 0644 || true
 }
 
@@ -80,6 +118,7 @@ web_index_page() {
 web_index_html() {
   cat <<'HTML'
 <!DOCTYPE html>
+@MARK@
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -260,7 +299,7 @@ web_index_html() {
     <div class="list" id="tsx-recent"></div>
   </div>
   <noscript><p class="note">Turn on JavaScript to see the web pages on this Pi.</p></noscript>
-  <footer>Provisioned by <a href="https://github.com/Programmer-Den/rpi-setup">rpi-setup</a>.
+  <footer>Set up by <a href="https://github.com/Programmer-Den/rpi-setup">rpi-setup</a>.
     New services and containers show up here on their own within a minute.</footer>
 </main>
 <script>
@@ -875,9 +914,10 @@ web_links_run_known() {
   esac
 }
 
-# TCP ports container $1 offers on the LAN, one per line: the ports Docker
-# publishes (not those bound to localhost only), and for NetAlertX on the
-# host network its PORT setting.
+# TCP ports container $1 offers on the LAN, one per line as "port" or, for a
+# port published on one address only, "port address" (an IPv6 address in
+# brackets): the ports Docker publishes (not those bound to localhost only),
+# and for NetAlertX on the host network its PORT setting.
 web_links_run_ports() {
   if [[ "$1" == netalertx ]]; then
     sed -nE 's/^[[:space:]]*PORT:[[:space:]]*"?([0-9]+)"?[[:space:]]*$/\1/p' \
@@ -885,7 +925,8 @@ web_links_run_ports() {
     return 0
   fi
   docker port "$1" 2>/dev/null |
-    sed -nE '/-> (127\.|\[::1\])/d; s#^[0-9]+/tcp -> .*:([0-9]+)$#\1#p' | awk '!seen[$0]++'
+    sed -nE '/-> (127\.|\[::1\])/d; s#^[0-9]+/tcp -> (.*):([0-9]+)$#\2 \1#p; s/ (0\.0\.0\.0|\[::\])$//' |
+    awk '!seen[$1]++'
 }
 
 # The Pi's LAN address: the source address of its default route (no packet
@@ -897,27 +938,30 @@ web_links_run_ip() {
   printf '%s\n' "$addr"
 }
 
-# HTTP status code of http://127.0.0.1:$1$2, "000" when nothing answers.
+# HTTP status code of http://$3:$1$2 ($3: the address the port is published
+# on, 127.0.0.1 when it is on every address), "000" when nothing answers.
 web_links_run_http() {
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 4 \
-    "http://127.0.0.1:$1${2%%#*}" 2>/dev/null)" || true
+    "http://${3:-127.0.0.1}:$1${2%%#*}" 2>/dev/null)" || true
   printf '%s\n' "${code:-000}"
 }
 
 # Print one service as a JSON object: name $1, description $2, port $3, path
-# $4. With $5=probe it is listed only if it answers HTTP. Returns 1 if it was
-# left out: a bad port, a port already listed, or no answer to a probe. Uses
-# the caller's "seen" and "sep".
+# $4. With $5=probe it is listed only if it answers HTTP; $6 is the address
+# the port is published on, if only one. Returns 1 if it was left out: a bad
+# port, a port already listed, or no answer to a probe. Uses the caller's
+# "seen" and "sep".
 web_links_run_entry() {
-  local name="${1:0:60}" desc="${2:0:160}" port="$3" path="${4:-/}" mode="${5:-}" up=null code
-  local path_re='^/[A-Za-z0-9._~/?#=&%:@+,;!-]*$'
+  local name="${1:0:60}" desc="${2:0:160}" port="$3" path="${4:-/}" mode="${5:-}" addr="${6:-}" up=null code
+  local path_re='^/[A-Za-z0-9._~/?#=&%:@+,;!-]*$' addr_re='^[][0-9A-Za-z.:]*$'
   [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || return 1
   port=$((10#$port))
   [[ -z "${seen[$port]:-}" ]] || return 1
   [[ "$path" =~ $path_re ]] || path=/
+  [[ "$addr" =~ $addr_re ]] || addr=""
   if have curl; then
-    code="$(web_links_run_http "$port" "$path")"
+    code="$(web_links_run_http "$port" "$path" "$addr")"
     if [[ "$code" == 000 ]]; then up=false; else up=true; fi
   fi
   [[ "$mode" != probe || "$up" != false ]] || return 1
@@ -929,12 +973,13 @@ web_links_run_entry() {
 }
 
 # Print services.json: Pi-hole (in its container or on the host), then every
-# running container, sorted by name. A container's rpi-setup.link.* labels
-# win; rpi-setup's own containers have a name and description; any other
-# container is listed with the first published port that answers HTTP.
+# running container, sorted by name, from one "docker inspect" of their
+# labels. A container's rpi-setup.link.* labels win; rpi-setup's own
+# containers have a name and description; any other container is listed
+# with the first published port that answers HTTP.
 web_links_run_list() {
   local -A seen=()
-  local sep="" name port known title desc path hide lport lname lpath ldesc fmt
+  local sep="" name port addr known title desc path hide lport lname lpath ldesc fmt
   printf '{"host":%s,"ip":%s,"services":[\n' "$(web_links_run_json "$(hostname 2>/dev/null || true)")" \
     "$(web_links_run_json "$(web_links_run_ip)")"
   if task_in_container pihole || systemctl is-active --quiet pihole-FTL 2>/dev/null; then
@@ -942,15 +987,13 @@ web_links_run_list() {
     [[ -z "$port" ]] ||
       web_links_run_entry Pi-hole 'Blocks ads and trackers for every device on the network' "$port" /admin/ || true
   fi
-  if have docker && docker info >/dev/null 2>&1; then
-    fmt=$'{{index .Config.Labels "rpi-setup.link"}}\x1f{{index .Config.Labels "rpi-setup.link.port"}}\x1f'
+  if [[ "${WL_DOCKER:-0}" -eq 1 ]]; then
+    fmt=$'{{.Name}}\x1f{{index .Config.Labels "rpi-setup.link"}}\x1f{{index .Config.Labels "rpi-setup.link.port"}}\x1f'
     fmt+=$'{{index .Config.Labels "rpi-setup.link.name"}}\x1f{{index .Config.Labels "rpi-setup.link.path"}}\x1f'
     fmt+='{{index .Config.Labels "rpi-setup.link.description"}}'
-    while IFS= read -r name; do
+    while IFS=$'\x1f' read -r name hide lport lname lpath ldesc; do
+      name="${name#/}"
       [[ -n "$name" ]] || continue
-      hide="" lport="" lname="" lpath="" ldesc=""
-      IFS=$'\x1f' read -r hide lport lname lpath ldesc \
-        < <(docker inspect -f "$fmt" "$name" 2>/dev/null | head -n1 | sed 's/<no value>//g') || true
       [[ ! "${hide,,}" =~ ^(no|off|false|0)$ ]] || continue
       if [[ -n "$lport" ]]; then
         web_links_run_entry "${lname:-$name}" "$ldesc" "$lport" "${lpath:-/}" || true
@@ -959,14 +1002,15 @@ web_links_run_list() {
       if known="$(web_links_run_known "$name")"; then
         [[ "$known" != - ]] || continue
         IFS=$'\t' read -r title desc path <<<"$known"
-        port="$(web_links_run_ports "$name" | head -n1)"
-        web_links_run_entry "$title" "$desc" "$port" "$path" || true
+        port="" addr=""
+        read -r port addr < <(web_links_run_ports "$name" | head -n1) || true
+        web_links_run_entry "$title" "$desc" "$port" "$path" '' "$addr" || true
         continue
       fi
-      for port in $(web_links_run_ports "$name"); do
-        ! web_links_run_entry "$name" '' "$port" / probe || break
-      done
-    done < <(docker ps --format '{{.Names}}' 2>/dev/null | sort)
+      while read -r port addr; do
+        ! web_links_run_entry "$name" '' "$port" / probe "${addr:-}" || break
+      done < <(web_links_run_ports "$name")
+    done < <(docker ps -q 2>/dev/null | xargs -r docker inspect -f "$fmt" 2>/dev/null | sed 's/<no value>//g' | sort)
   fi
   printf '\n]}\n'
 }
@@ -978,7 +1022,7 @@ web_links_run_list() {
 web_links_run_containers() {
   local fmt name image state health started finished restarts net ports p host ip sep="" list
   printf '{"containers":[\n'
-  if have docker && docker info >/dev/null 2>&1; then
+  if [[ "${WL_DOCKER:-0}" -eq 1 ]]; then
     # Written for Docker's raw JSON (HostIp, a missing Health key), which
     # "docker inspect" falls back to when the template does not fit its types.
     fmt=$'{{.Name}}\x1f{{.Config.Image}}\x1f{{.State.Status}}\x1f{{with index .State "Health"}}{{index . "Status"}}{{end}}\x1f'
@@ -1048,7 +1092,10 @@ web_links_run_teamspeak() {
 
 # Write the lists to $WL_OUT, and containers.json, tasks.json and
 # teamspeak.json next to it; each file only changes when its list does.
+# WL_DOCKER says once whether Docker answers.
 web_links_run() {
+  WL_DOCKER=0
+  if have docker && docker info >/dev/null 2>&1; then WL_DOCKER=1; fi
   web_links_run_list | write_if_changed "$WL_OUT" 0644 || true
   web_links_run_containers | write_if_changed "${WL_OUT%/*}/containers.json" 0644 || true
   web_links_run_tasks | write_if_changed "${WL_OUT%/*}/tasks.json" 0644 || true
@@ -1125,7 +1172,7 @@ web_updates_script() {
   printf 'WU_ROOT=%q\n' "$RPI_SETUP_ROOT"
   # shellcheck disable=SC2016 # expanded by the written script
   printf ': "${WU_PIHOLE_VERSIONS:=/etc/pihole/versions}"\n'
-  declare -f have write_if_changed web_links_run_json web_updates_run_item web_updates_run_digest \
+  declare -f have container_dir task_in_container write_if_changed web_links_run_json web_updates_run_item web_updates_run_digest \
     web_updates_run_containers web_updates_run_git_as web_updates_run_git web_updates_run_apt \
     web_updates_run_pihole web_updates_run_eeprom web_updates_run_list web_updates_run
   printf 'web_updates_run\n'
@@ -1272,10 +1319,13 @@ web_updates_run_apt() {
 
 # Pi-hole installed on the host: its own update check (the "pihole
 # updatechecker" its cron job runs) keeps the installed and the newest
-# versions of Core, Web and FTL in /etc/pihole/versions.
+# versions of Core, Web and FTL in /etc/pihole/versions. With Pi-hole in its
+# container the native install stays installed but stopped, and the
+# container is listed with the others.
 web_updates_run_pihole() {
   local f="$WU_PIHOLE_VERSIONS" part label c l cur="" new="" update=false
   have pihole && [[ -f "$f" ]] || return 0
+  ! task_in_container pihole || return 0
   for part in CORE WEB FTL; do
     case "$part" in CORE) label=Core ;; WEB) label=Web ;; *) label=FTL ;; esac
     c="$(sed -nE "s/^${part}_VERSION=['\"]?([^'\"]*)['\"]?\$/\\1/p" "$f" | head -n1)"
@@ -1356,40 +1406,68 @@ web_port() {
 # two can swap; the caller starts it again on port 80. web_port runs it in
 # $( ), where errexit is off, so every step checks its own result.
 web_move_pihole() {
-  local to="$1" dir owner
+  local to="$1" dir owner stopped=0 cur new
   owner="$(port_owner "$to")" || owner=""
   if [[ "$owner" == nginx ]]; then
     info "Stopping nginx on port $to so Pi-hole can move there"
     if task_in_container web; then docker stop web >/dev/null; else systemctl stop nginx; fi ||
       die "Could not stop nginx on port $to"
-    owner=""
+    owner="" stopped=1
   fi
   [[ -z "$owner" || "$owner" == pihole-FTL ]] ||
-    die "Port 80 is for the start page, but Pi-hole cannot move to $to: '$owner' uses it (set PIHOLE_WEB_PORT)"
+    web_move_fail "Port 80 is for the start page, but Pi-hole cannot move to $to: '$owner' uses it (set PIHOLE_WEB_PORT)"
   info "Moving Pi-hole's web admin from port 80 to $to so the start page gets port 80"
   if task_in_container pihole; then
     dir="$(container_dir pihole)"
-    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${to}o,[::]:${to}o\"/" "$dir/docker-compose.yml" ||
-      die "Could not change the port in $dir/docker-compose.yml"
-    docker compose -f "$dir/docker-compose.yml" up -d >/dev/null || die 'Could not restart the Pi-hole container'
+    cur="$(sed -nE 's/^[[:space:]]*FTLCONF_webserver_port:[[:space:]]*"?([^"]*)"?.*/\1/p' "$dir/docker-compose.yml" | head -n1)" || cur=""
+    new="$(pihole_port_setting "${cur:-$PH_DEFAULT_PORTS}" "$to")"
+    sed -Ei "s/^([[:space:]]*FTLCONF_webserver_port:[[:space:]]*).*/\\1\"${new}\"/" "$dir/docker-compose.yml" ||
+      web_move_fail "Could not change the port in $dir/docker-compose.yml"
+    docker compose -f "$dir/docker-compose.yml" up -d >/dev/null || web_move_fail 'Could not restart the Pi-hole container'
   else
-    pihole-FTL --config webserver.port "${to}o,[::]:${to}o" >/dev/null ||
-      die "Could not set Pi-hole's web admin port to $to"
-    systemctl restart pihole-FTL || die 'Could not restart pihole-FTL'
+    cur="$(pihole-FTL --config webserver.port 2>/dev/null)" || cur=""
+    new="$(pihole_port_setting "${cur:-$PH_DEFAULT_PORTS}" "$to")"
+    pihole-FTL --config webserver.port "$new" >/dev/null ||
+      web_move_fail "Could not set Pi-hole's web admin port to $to"
+    systemctl restart pihole-FTL || web_move_fail 'Could not restart pihole-FTL'
   fi
   for _ in $(seq 1 30); do
     [[ "$(port_owner 80 || true)" == pihole-FTL ]] || break
     sleep 1
   done
-  [[ "$(port_owner 80 || true)" != pihole-FTL ]] || die 'Pi-hole still holds port 80 after the move'
+  [[ "$(port_owner 80 || true)" != pihole-FTL ]] || web_move_fail 'Pi-hole still holds port 80 after the move'
   say "Pi-hole web admin moved to $(service_url "$to")/admin"
-  if have ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    warn "Re-run the firewall task to open port $to for Pi-hole: sudo bash setup.sh firewall"
+  web_move_firewall_warn "$to"
+}
+
+# A failed Pi-hole move: nginx stopped for it (the caller's "stopped") is
+# started again on its old port before dying with message $1.
+web_move_fail() {
+  if [[ "${stopped:-0}" -eq 1 ]]; then
+    if task_in_container web; then docker start web >/dev/null; else systemctl start nginx; fi ||
+      warn 'Could not start nginx again; see: sudo systemctl status nginx'
+  fi
+  die "$1"
+}
+
+# After the move, port $1 is closed by a firewall that opened Pi-hole's old
+# port: the rpi-setup firewall (its unit, or its nftables table while it is
+# loaded) or ufw. The firewall task reads Pi-hole's port when it runs, so it
+# has to run again.
+web_move_firewall_warn() {
+  local to="$1"
+  if systemctl is-enabled --quiet rpi-setup-firewall.service 2>/dev/null ||
+     systemctl is-active --quiet rpi-setup-firewall.service 2>/dev/null ||
+     { have nft && nft list table inet rpi_setup >/dev/null 2>&1; }; then
+    warn "The firewall task still blocks Pi-hole's new port $to; open it with: sudo bash setup.sh firewall"
+  elif have ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    warn "ufw is on; open port $to for Pi-hole, e.g. with: sudo ufw allow $to/tcp"
   fi
 }
 
 # The IPv4 port of the default site's first "listen" line, e.g. "80".
 nginx_site_port() {
+  [[ -f "$1" ]] || return 1  # the callers say what a missing site file means
   sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)([[:space:];]).*/\1/p' "$1" 2>/dev/null | head -n1
 }
 

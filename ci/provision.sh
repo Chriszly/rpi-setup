@@ -118,7 +118,7 @@ run_setup() {
 # The settings from the central file reached the tasks.
 verify_settings() {
     echo "=== Verifying settings from config/rpi-setup.env ==="
-    local t
+    local t hash
     for t in "${TASKS[@]}"; do
         case "$t" in
             web)
@@ -132,9 +132,20 @@ verify_settings() {
                     { echo "FAILED: BASE_JOURNAL_MAX_SIZE not applied" >&2; return 1; }
                 echo "OK: BASE_TIMEZONE and BASE_JOURNAL_MAX_SIZE applied" ;;
             samba)
-                [[ -n "$(pdbedit -L 2>/dev/null)" ]] ||
+                # The NT hash of the user's password (pdbedit -w): the re-run
+                # without SAMBA_PASSWORD must keep it, so the old password
+                # still works.
+                hash="$(pdbedit -L -w 2>/dev/null | head -n1 | cut -d: -f4)"
+                [[ -n "$hash" ]] ||
                     { echo "FAILED: no Samba user was created" >&2; return 1; }
-                echo "OK: Samba user exists" ;;
+                if [[ -s "$CI_CONFIG_DIR/samba.hash" ]]; then
+                    [[ "$hash" == "$(cat "$CI_CONFIG_DIR/samba.hash")" ]] ||
+                        { echo "FAILED: the re-run changed the Samba password" >&2; return 1; }
+                    echo "OK: Samba user kept its password"
+                else
+                    printf '%s\n' "$hash" >"$CI_CONFIG_DIR/samba.hash"
+                    echo "OK: Samba user exists"
+                fi ;;
         esac
     done
 }

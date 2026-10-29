@@ -35,16 +35,20 @@ run_firewall() {
     fi
   done
 
-  # "port/proto kind service" lines: kind "open" (anyone) or "web" (FIREWALL_ALLOW_FROM).
-  local services="" open="" web="" spec kind svc
+  # "port/proto kind service [docker]" lines: kind "open" (anyone) or "web"
+  # (FIREWALL_ALLOW_FROM); "docker" marks a port Docker publishes itself.
+  local services="" open="" web="" spec kind svc note
   if setting_on FIREWALL_AUTO_PORTS; then
     services="$(firewall_service_ports)" || exit 1
   fi
-  while read -r spec kind svc; do
+  while read -r spec kind svc note; do
     [[ -n "$spec" ]] || continue
     if [[ "$kind" == web ]]; then
       web+=" $spec"
       info "Allowing $spec for $svc${allow:+ (from $allow only)}"
+    elif [[ "$note" == docker ]]; then
+      open+=" $spec"
+      info "Allowing $spec for $svc (published by Docker, not limited by FIREWALL_ALLOW_FROM)"
     else
       open+=" $spec"
       info "Allowing $spec for $svc"
@@ -92,6 +96,13 @@ run_firewall() {
   elif [[ $changed -eq 1 ]]; then
     systemctl reload "$FW_UNIT" || die "Could not reload $FW_UNIT; see: journalctl -u $FW_UNIT"
     say 'Firewall rules updated'
+  elif ! firewall_table_loaded; then
+    # The unit is oneshot with RemainAfterExit, so it stays "active" after
+    # something else flushed the ruleset (nft flush ruleset, a restart of
+    # nftables.service with Debian's stock /etc/nftables.conf).
+    warn "$FW_UNIT is active but the table inet rpi_setup is gone (something flushed the ruleset); loading it again"
+    systemctl reload "$FW_UNIT" || die "Could not reload $FW_UNIT; see: journalctl -u $FW_UNIT"
+    say 'Firewall rules loaded again'
   else
     say 'Firewall is already on with these rules'
   fi
@@ -125,7 +136,10 @@ firewall_cidrs() {
   local name="$1" v="${2//,/ }" c ip prefix out=""
   for c in $v; do
     ip="${c%/*}" prefix=""
-    [[ "$c" != */* ]] || prefix="${c##*/}"
+    if [[ "$c" == */* ]]; then
+      prefix="${c##*/}"
+      [[ "$prefix" =~ ^[0-9]{1,3}$ ]] || die "$name: '$c' needs a prefix length after the /, such as 192.168.1.0/24"
+    fi
     if [[ "$ip" =~ ^[0-9.]+$ ]]; then
       valid_ipv4 "$ip" || die "$name: '$c' is not an IPv4 address or subnet"
       [[ -z "$prefix" ]] || { [[ "$prefix" =~ ^[0-9]{1,2}$ ]] && (( 10#$prefix <= 32 )); } ||
@@ -236,9 +250,22 @@ WantedBy=sysinit.target
 EOF
 }
 
-# TCP ports sshd listens on (empty if none or ss is missing).
+# True while the kernel holds the table the unit loads.
+firewall_table_loaded() {
+  nft list table inet rpi_setup >/dev/null 2>&1
+}
+
+# TCP ports sshd is reachable on, space separated (empty if none can be
+# found): the Port lines of its configuration ("sshd -T"), what really
+# listens as sshd (ss), and the ListenStream of ssh.socket, since with a
+# socket-activated sshd the listener belongs to systemd, not sshd.
 firewall_sshd_ports() {
-  ss -H -ltnp 2>/dev/null | awk '/"sshd/ { n = split($4, a, ":"); print a[n] }' | sort -un | tr '\n' ' '
+  {
+    sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' || true
+    ss -H -ltnp 2>/dev/null | awk '/"sshd/ { n = split($4, a, ":"); print a[n] }' || true
+    systemctl show ssh.socket sshd.socket -p Listen 2>/dev/null |
+      awk -F'[= ]' '$1 == "Listen" && $3 == "(Stream)" { n = split($2, a, ":"); print a[n] }' || true
+  } | grep -Ex '[0-9]+' | sort -un | tr '\n' ' ' || true
 }
 
 # Every web server port nginx listens on (from its enabled sites, or the
@@ -288,23 +315,26 @@ firewall_service_ports() {
     require_port TEAMSPEAK_VOICE_PORT
     require_port TEAMSPEAK_FILE_PORT
     require_port TEAMSPEAK_QUERY_PORT
-    printf '%s/udp open teamspeak-voice\n%s/tcp open teamspeak-file\n' "$TEAMSPEAK_VOICE_PORT" "$TEAMSPEAK_FILE_PORT"
-    if setting_on TEAMSPEAK_QUERY_HTTP; then printf '%s/tcp open teamspeak-query\n' "$TEAMSPEAK_QUERY_PORT"; fi
+    printf '%s/udp open teamspeak-voice docker\n%s/tcp open teamspeak-file docker\n' "$TEAMSPEAK_VOICE_PORT" "$TEAMSPEAK_FILE_PORT"
+    if setting_on TEAMSPEAK_QUERY_HTTP; then printf '%s/tcp open teamspeak-query docker\n' "$TEAMSPEAK_QUERY_PORT"; fi
   fi
+  # Den-Watcher and the apps publish their ports ("ports:" in the compose
+  # file): Docker forwards those to the container before the input chain
+  # sees them, so a "web" rule could never limit them to FIREWALL_ALLOW_FROM.
   if [[ -f "$(container_dir denwatcher)/docker-compose.yml" ]]; then
     load_task_config denwatcher >/dev/null
     : "${DENWATCHER_PORT:=9393}"
     require_port DENWATCHER_PORT
-    printf '%s/tcp web denwatcher\n' "$DENWATCHER_PORT"
+    printf '%s/tcp open denwatcher docker\n' "$DENWATCHER_PORT"
     # The status page is meant for outside the local network.
     if [[ -n "${DENWATCHER_STATUS_PORT:-}" ]]; then
       require_port DENWATCHER_STATUS_PORT
-      printf '%s/tcp open denwatcher-status\n' "$DENWATCHER_STATUS_PORT"
+      printf '%s/tcp open denwatcher-status docker\n' "$DENWATCHER_STATUS_PORT"
     fi
   fi
   # The apps task's ports, from its compose file (one per app).
   if [[ -f "$(container_dir apps)/docker-compose.yml" ]]; then
-    sed -n 's/^ *- "0\.0\.0\.0:\([0-9]*\):[0-9]*"$/\1\/tcp web apps/p' "$(container_dir apps)/docker-compose.yml"
+    sed -n 's/^ *- "0\.0\.0\.0:\([0-9]*\):[0-9]*"$/\1\/tcp open apps docker/p' "$(container_dir apps)/docker-compose.yml"
   fi
   if apt_installed samba || task_in_container samba; then
     printf '445/tcp open samba\n139/tcp open samba\n137/udp open samba-netbios\n138/udp open samba-netbios\n'

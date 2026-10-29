@@ -19,9 +19,13 @@ The private repository's layout, workflow and step-by-step setup are in
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `RUNNER_REPO` | none (required) | Your private repository as `owner/name`, e.g. `Chriszly/rpi-private`. Never a public one. |
-| `RUNNER_TOKEN` | empty | One-time registration token: in the private repository open *Settings > Actions > Runners > New self-hosted runner* and copy the value after `--token`. Valid for one hour; not needed once the runner is registered. |
-| `RUNNER_NAME` | the Pi's hostname | Runner name shown at GitHub. |
-| `RUNNER_LABELS` | `RUNNER_NAME` | Comma separated labels; the workflow's *pi* input picks the Pi by one of them and reads `pis/<pi>/rpi-setup.env`. |
+| `RUNNER_TOKEN` | empty | One-time registration token: in the private repository open *Settings > Actions > Runners > New self-hosted runner* and copy the value after `--token`. Valid for one hour; not needed once the runner is registered. It is passed on `config.sh`'s command line (its only way to take it), so it is visible in `ps` for that moment; it is worthless afterwards. |
+| `RUNNER_NAME` | the Pi's hostname | Runner name shown at GitHub. Applied at registration. |
+| `RUNNER_LABELS` | `RUNNER_NAME` | Comma separated labels; the workflow's *pi* input picks the Pi by one of them and reads `pis/<pi>/rpi-setup.env`. Applied at registration. |
+
+`RUNNER_REPO`, `RUNNER_NAME` and `RUNNER_LABELS` only count when the runner
+registers. A re-run with changed values warns and says how to register
+again ([below](#pitfalls)).
 | `RUNNER_BRANCHES` | `main` | Branches of this repository a deploy may switch the Pi to. |
 
 ## What it installs
@@ -105,3 +109,15 @@ The full output of both steps stays on the Pi in `/var/log/rpi-setup-deploy/`.
   `cd <checkout> && sudo bash setup.sh --move-config`.
 - Remove the runner: `cd /opt/rpi-runner && sudo ./svc.sh uninstall`, then
   delete it at *Settings > Actions > Runners* in the private repository.
+- Register it again (another repository, name or labels): stop and remove
+  the service and the registration, then run the task with a new token:
+
+  ```bash
+  cd /opt/rpi-runner && sudo ./svc.sh stop && sudo ./svc.sh uninstall
+  sudo rm -f .runner .credentials .credentials_rsaparams .service .labels
+  sudo RUNNER_TOKEN=<new token> bash setup.sh runner
+  ```
+
+  A runner registered under the same name replaces the old entry at
+  GitHub; one with another name or repository stays listed there until you
+  delete it under *Settings > Actions > Runners*.

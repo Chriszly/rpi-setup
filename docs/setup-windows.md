@@ -68,11 +68,19 @@ default shown in brackets):
 3. Your PC's SSH public key, so you can log in to the Pi without a password
    (default: the key found in `$HOME\.ssh`, `none` to skip).
 4. A username (1-32 lowercase letters, digits, `_` or `-`).
-5. A password (at least 8 characters, ASCII, no `:`, hidden).
+5. A password, asked twice (hidden). Any characters but `:` and control
+   characters such as a tab; shorter than 8 characters only gets a warning.
+   Same rules as on Linux.
 6. The target disk, from a numbered list of removable drives with model,
    size, bus and drive letters, e.g.
    `1) PhysicalDrive1  Generic MassStorageClass  119.2 GB  (USB)  D: SDCARD`.
+   Only when no removable (USB, SD, MMC) disk is found are the other
+   non-system disks listed, each to be confirmed at the keyboard.
 7. `yes` to confirm it will DESTROY all data on that disk.
+
+Right before the card is written, after the download, the script checks that
+the chosen disk still has the size, model and serial it had when you
+confirmed it, and stops if a different card or reader is there now.
 
 Then it installs Imager if needed, downloads and checks the image and writes
 the card without asking anything else. It also creates a new SSH key for the
@@ -96,7 +104,7 @@ All switches:
 | `-SkipCustomize`    | Skip SSH/user setup; boot to the on-screen first-run wizard         |
 | `-SkipImagerInstall`| Don't auto-install Raspberry Pi Imager; fail if it is missing       |
 | `-DownloadDir`      | Override the image download/cache folder (default `host\downloads\`)|
-| `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`) |
+| `-Force`            | Skip the "type `yes` to DESTROY" prompt (unattended use with `-Disk`; only a removable USB/SD/MMC disk, never an internal one) |
 | `-NoEject`          | Leave the card mounted at the end instead of ejecting it            |
 | `-Hostname`         | Host name, e.g. `homepi` (reachable as `homepi.local`)              |
 | `-WifiSsid`         | Wi-Fi network to join on first boot                                 |
@@ -127,16 +135,19 @@ password is never printed.
 
 Everything is checked before the card is written: the host name (letters,
 digits and `-`), the country (two letters), the Wi-Fi password (8-63
-characters) and the key file (must be an OpenSSH public key, not the private
-key). On a **Trixie** image the settings go into cloud-init's `user-data` and
+characters, typed or set) and the key file (must be an OpenSSH public key, not
+the private key; a leading `~/` or `~\` is your home folder, also in the
+settings file). On a **Trixie** image the settings go into cloud-init's `user-data` and
 `network-config` on the boot partition; on **Bookworm** (no cloud-init) into a
 one-time `firstrun.sh` started from `cmdline.txt`, as Raspberry Pi Imager does
 it, so the Pi reboots once on first boot. The login user and SSH are still set
 up by `userconf.txt` and `ssh`, exactly as without these options.
 
 An already installed Raspberry Pi Imager is used as it is. If none is
-installed, the script downloads the latest installer into `host\downloads\`
-and installs it silently before flashing. An Imager the script installed is
+installed, the script downloads the latest installer into `host\downloads\`,
+checks that it carries a valid Authenticode signature from Raspberry Pi (a
+download that does not is deleted and the script stops) and installs it
+silently before flashing. An Imager the script installed is
 uninstalled again once the run finishes - even if it failed - and the
 installer is deleted, leaving the host clean.
 

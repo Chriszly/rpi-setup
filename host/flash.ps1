@@ -102,12 +102,27 @@ function Clear-ImagerCache {
         Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
+# The installer runs elevated, so it must carry a valid Authenticode signature
+# from Raspberry Pi before it is started. A bad download is removed.
+function Assert-ImagerSignature {
+    param([string]$Path)
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    $signer = ''
+    if ($sig.SignerCertificate) { $signer = $sig.SignerCertificate.Subject }
+    if ($sig.Status -ne 'Valid' -or $signer -notmatch 'Raspberry Pi') {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        Fail "The downloaded Raspberry Pi Imager installer is not signed by Raspberry Pi (signature: $($sig.Status); signer: '$signer'). Deleted it; re-run, or install Imager from https://www.raspberrypi.com/software/ and re-run."
+    }
+    Write-Info "Imager installer signature is valid ($signer)"
+}
+
 function Install-Imager {
     $dir = $script:DownloadDir
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
 
     $installer = Join-Path $dir 'imager_latest.exe'
     Invoke-Download -Url 'https://downloads.raspberrypi.com/imager/imager_latest.exe' -OutFile $installer
+    Assert-ImagerSignature -Path $installer
     Write-Step "Installing Raspberry Pi Imager from $installer (silent)"
     $p = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
     if ($p.ExitCode -ne 0) {
@@ -178,14 +193,18 @@ function Get-ReleaseFiles {
     }
 }
 
+# Download $Url to $OutFile. -ProgressBar shows curl's progress bar (for the
+# image, hundreds of MB); without it the transfer is silent (checksum files).
 function Invoke-Download {
-    param([string]$Url, [string]$OutFile)
+    param([string]$Url, [string]$OutFile, [switch]$ProgressBar)
     Write-Info "Downloading $([System.IO.Path]::GetFileName($OutFile))"
     # Download to a .part file and move it into place only when complete, so an
     # interrupted transfer never leaves a file that looks finished.
     $part = "$OutFile.part"
     if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
-    & curl.exe -L --fail --silent --show-error --output $part $Url
+    $quiet = @('--silent', '--show-error')
+    if ($ProgressBar) { $quiet = @('--progress-bar') }
+    & curl.exe -L --fail @quiet --output $part $Url
     if ($LASTEXITCODE -ne 0) {
         if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
         Fail "Download failed: $Url. Check network connectivity and re-run."
@@ -219,7 +238,7 @@ function Get-Image {
             if (-not (Test-Path -LiteralPath $imgPath)) { continue }
             Write-Info "Using cached image: $imgPath"
         } else {
-            Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath
+            Invoke-Download -Url "$Script:BaseUri/images/$release/$($files.Image)" -OutFile $imgPath -ProgressBar
         }
         Write-Step "Verifying SHA-256 of $($files.Image)"
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $imgPath).Hash.ToLowerInvariant()
@@ -243,18 +262,50 @@ function Get-DiskVolumeText {
     return '  ' + ($names -join ', ')
 }
 
+# The disks of this PC, and one disk as it is now ($null when it is gone):
+# seams the tests replace with made-up disks.
+function Get-AllDisks { return @(Get-Disk) }
+function Get-DiskNow { param([int]$Number) return (Get-Disk -Number $Number -ErrorAction SilentlyContinue) }
+
+# Size, model and serial of a disk on one line: compared before writing with
+# what was confirmed, so a reader plugged in or a card swapped in between can
+# never receive the image.
+function Get-DiskIdentity {
+    param([object]$Disk)
+    return ('{0}|{1}|{2}' -f $Disk.Size, $Disk.FriendlyName, $Disk.SerialNumber)
+}
+
+# Fail unless PhysicalDrive$Number is still the disk that was confirmed: the
+# download takes minutes, in which a card can be swapped or a reader added.
+function Assert-DiskUnchanged {
+    param([object]$Disk)
+    $now = Get-DiskNow $Disk.Number
+    if (-not $now) { Fail "PhysicalDrive$($Disk.Number) is gone. Plug the card in again and re-run." }
+    $wasId = Get-DiskIdentity $Disk
+    $nowId = Get-DiskIdentity $now
+    if ($nowId -ne $wasId) {
+        Fail "PhysicalDrive$($Disk.Number) is not the disk that was confirmed (was: $wasId; now: $nowId). Nothing was written; re-run."
+    }
+    if ($now.IsSystem -or $now.IsBoot) { Fail "PhysicalDrive$($Disk.Number) is a system disk now. Nothing was written; re-run." }
+}
+
 function Select-Disk {
     param([int]$Requested)
 
     # Get-Disk has no IsRemovable property; card readers show up as BusType USB,
     # SD or MMC. Size 0 is an empty slot of a multi-slot reader.
-    $disks = @(Get-Disk | Where-Object {
+    $disks = @(Get-AllDisks | Where-Object {
         $_.BusType -in @('USB', 'SD', 'MMC') -and -not $_.IsSystem -and -not $_.IsBoot -and $_.Size -gt 0
     } | Sort-Object Number)
 
+    # Without a removable disk every other data disk is offered, but only
+    # for a choice that is confirmed at the keyboard: an unattended run
+    # (-Force) must never reach a second internal disk this way.
+    $fallback = $false
     if ($disks.Count -eq 0) {
         Write-Warn 'No removable SD/USB disk detected. Make sure your card reader is plugged in and the card is inserted.'
-        $disks = @(Get-Disk | Where-Object { -not $_.IsSystem -and -not $_.IsBoot -and $_.Size -gt 0 } | Sort-Object Number)
+        $disks = @(Get-AllDisks | Where-Object { -not $_.IsSystem -and -not $_.IsBoot -and $_.Size -gt 0 } | Sort-Object Number)
+        $fallback = $true
         if ($disks.Count -eq 0) { Fail 'No writable disks found.' }
     }
 
@@ -262,6 +313,12 @@ function Select-Disk {
         $disk = $disks | Where-Object Number -eq $Requested
         if (-not $disk) { Fail "Disk $Requested not found among removable disks." }
         Write-Info ("Target: PhysicalDrive{0}  {1}  {2} GB  ({3})" -f $disk.Number, $disk.FriendlyName, [math]::Round($disk.Size / 1GB, 1), $disk.BusType)
+        if ($fallback) {
+            if ($Force) {
+                Fail "PhysicalDrive$Requested is not a removable SD/USB/MMC disk (bus $($disk.BusType)); -Force only writes removable disks. Plug the card reader in, or run without -Force and confirm the disk."
+            }
+            Write-Warn "PhysicalDrive$Requested is not a removable SD/USB/MMC disk (bus $($disk.BusType)). Check the name and size before you confirm."
+        }
         if (-not $Force) { Confirm-Destroy $disk }
         return $disk
     }
@@ -353,7 +410,9 @@ function Invoke-OpenSslPasswd {
     } finally {
         if ($savedEncoding) { [Console]::InputEncoding = $savedEncoding }
     }
-    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Password + "`n")
+    # UTF-8, as the Pi's login and sudo read what is typed there; ASCII would
+    # turn an umlaut into "?" and hash a password no one knows.
+    $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($Password + "`n")
     $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
     $p.StandardInput.Close()
     $out = $p.StandardOutput.ReadToEnd().Trim()
@@ -374,6 +433,19 @@ function New-CryptHash {
     return $hash
 }
 
+# A hidden answer from the console as plain text, '' for Enter (a seam the
+# tests replace, like Read-Answer).
+function Read-Secret {
+    param([string]$Prompt)
+    $sec = Read-Host -AsSecureString $Prompt
+    if (-not $sec -or $sec.Length -eq 0) { return '' }
+    return [Net.NetworkCredential]::new('', $sec).Password
+}
+
+# Ask for the login user and password where -UserName/-Password did not give
+# them, and check both. The password rules are those of userconf.txt and
+# crypt: no ":" (the field separator) and no control characters; anything
+# else, umlauts included, is fine. Same as flash.sh.
 function Get-Credentials {
     param([string]$UserName, [string]$Password)
     if (-not $UserName) {
@@ -385,15 +457,26 @@ function Get-Credentials {
         Fail "Invalid username '$UserName'. Use 1-32 lowercase letters, digits, '_' or '-'."
     }
     if (-not $Password) {
-        $sec = Read-Host -AsSecureString 'Password for the Pi user (input is hidden)'
-        if (-not $sec -or $sec.Length -eq 0) { Fail 'Password required.' }
-        $Password = [Net.NetworkCredential]::new('', $sec).Password
+        $Password = Read-Secret 'Password for the Pi user (input is hidden)'
+        if (-not $Password) { Fail 'Password required.' }
+        $again = Read-Secret 'Repeat password'
+        if ($Password -cne $again) { Fail 'Passwords do not match.' }
     }
-    if ($Password -match ':' -or $Password -match '[^\x21-\x7E]') {
-        Fail 'Password must be ASCII and must not contain a colon (":").'
-    }
+    if ($Password -match ':') { Fail 'Password must not contain a colon (":").' }
+    if ($Password -match '[\x00-\x1F\x7F]') { Fail 'Password must not contain control characters (tab, newline, ...).' }
     if ($Password.Length -lt 8) { Write-Warn 'Password is shorter than 8 characters - consider a stronger one.' }
     return @{ User = $UserName; Pass = $Password }
+}
+
+# The first drive letter D-Z not in $Used, or '' when all are taken. Written
+# with character codes: Windows PowerShell 5.1 has no range of letters.
+function Get-FreeDriveLetter {
+    param([string[]]$Used)
+    foreach ($code in 68..90) {
+        $letter = [string][char]$code
+        if ($Used -notcontains $letter) { return $letter }
+    }
+    return ''
 }
 
 function Get-BootRoot {
@@ -409,9 +492,9 @@ function Get-BootRoot {
                     Sort-Object Size | Select-Object -First 1
             if ($part -and $part.Size -lt 4GB) {
                 if ($part.DriveLetter) { return "$($part.DriveLetter):\" }
-                $used  = Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter |
-                         ForEach-Object { [string]$_.DriveLetter }
-                $letter = ('D'..'Z' | Where-Object { [string]$_ -notin $used } | Select-Object -First 1)
+                $used  = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter |
+                           ForEach-Object { [string]$_.DriveLetter })
+                $letter = Get-FreeDriveLetter -Used $used
                 if (-not $letter) { Fail 'No free drive letter available to mount the boot partition.' }
                 Set-Partition -DiskNumber $DiskNumber -PartitionNumber $part.PartitionNumber -NewDriveLetter $letter
                 Start-Sleep -Seconds 2
@@ -635,6 +718,7 @@ function ConvertFrom-ConfigValue {
 }
 
 # The FLASH_* values of the settings file $Path (only those lines are read).
+# Of a repeated name the first line counts, as in flash.sh.
 function Read-FlashConfig {
     param([string]$Path)
     $values = @{}
@@ -644,9 +728,29 @@ function Read-FlashConfig {
         if (-not $m.Success) { continue }
         $key = $m.Groups[2].Value
         if ($Script:FlashNames -notcontains $key) { Write-Warn "${Path}: ignoring unknown setting $key"; continue }
+        if ($values.ContainsKey($key)) { Write-Warn "${Path}: $key is set more than once; keeping the first value"; continue }
         $values[$key] = ConvertFrom-ConfigValue $m.Groups[3].Value
     }
     return $values
+}
+
+# $Path with a leading ~/ or ~\ replaced by the home folder (a settings file
+# is not read by a shell, so nothing else expands it).
+function Expand-HomePath {
+    param([string]$Path, [string]$HomeDir = $HOME)
+    if ($Path -match '^~[/\\]') { return Join-Path $HomeDir $Path.Substring(2) }
+    return $Path
+}
+
+# FLASH_GITHUB_KEY as yes or no; '' stays '' (decided later: yes at a
+# console, no without one). Fails on anything else.
+function ConvertTo-GitHubKeySetting {
+    param([string]$Value)
+    $v = ([string]$Value).ToLowerInvariant()
+    if ($v -eq '') { return '' }
+    if ($v -in @('y', 'yes', 'true', '1')) { return 'yes' }
+    if ($v -in @('n', 'no', 'false', '0')) { return 'no' }
+    Fail "Invalid GitHub key setting '$Value'. Use yes or no."
 }
 
 # Merge parameters, environment and settings file (in that order of priority).
@@ -715,10 +819,12 @@ function Assert-FlashSettings {
         Fail 'A Wi-Fi password was given without an SSID. Set the SSID too (-WifiSsid or FLASH_WIFI_SSID).'
     }
     $Settings['SSH_KEYS'] = @()
-    if ($Settings['FLASH_SSH_PUBKEY_FILE']) { $Settings['SSH_KEYS'] = Read-PublicKeys $Settings['FLASH_SSH_PUBKEY_FILE'] }
-    $gk = ([string]$Settings['FLASH_GITHUB_KEY']).ToLowerInvariant()
-    if ($gk -in @('y', 'yes', 'true', '1')) { $gk = 'yes' } elseif ($gk -in @('', 'n', 'no', 'false', '0')) { $gk = 'no' }
-    else { Fail "Invalid GitHub key setting '$($Settings['FLASH_GITHUB_KEY'])'. Use yes or no." }
+    if ($Settings['FLASH_SSH_PUBKEY_FILE']) {
+        $Settings['FLASH_SSH_PUBKEY_FILE'] = Expand-HomePath $Settings['FLASH_SSH_PUBKEY_FILE']
+        $Settings['SSH_KEYS'] = Read-PublicKeys $Settings['FLASH_SSH_PUBKEY_FILE']
+    }
+    $gk = ConvertTo-GitHubKeySetting $Settings['FLASH_GITHUB_KEY']
+    if ($gk -eq '') { $gk = 'no' }
     $Settings['FLASH_GITHUB_KEY'] = $gk
 }
 
@@ -759,21 +865,24 @@ function Request-FlashSettings {
         } else {
             $k = (Read-Answer "Your PC's SSH public key file, to log in to the Pi without a password (empty to skip)").Trim()
         }
-        if ($k -match '^~') { $k = $HOME + $k.Substring(1) }
-        $Settings['FLASH_SSH_PUBKEY_FILE'] = $k
+        $Settings['FLASH_SSH_PUBKEY_FILE'] = Expand-HomePath $k
     }
     # The Pi's own GitHub key is made without asking; -GitHubKey no turns it off.
     if (-not $Settings['FLASH_GITHUB_KEY']) { $Settings['FLASH_GITHUB_KEY'] = 'yes' }
 }
 
-# Ask for the Wi-Fi password when an SSID is set without one. An empty answer
-# means an open network.
+# Ask for the Wi-Fi password when an SSID is set without one, and check it
+# like a setting. An empty answer (or no console to ask on) means an open
+# network.
 function Request-WifiPassword {
     param([hashtable]$Settings)
     if (-not $Settings['FLASH_WIFI_SSID'] -or $Settings['FLASH_WIFI_PASSWORD']) { return }
-    $sec = Read-Host -AsSecureString "Wi-Fi password for '$($Settings['FLASH_WIFI_SSID'])' (hidden, empty for an open network)"
-    if ($sec -and $sec.Length -gt 0) {
-        $Settings['FLASH_WIFI_PASSWORD'] = [Net.NetworkCredential]::new('', $sec).Password
+    $pass = ''
+    if (Test-CanPrompt) {
+        $pass = Read-Secret "Wi-Fi password for '$($Settings['FLASH_WIFI_SSID'])' (hidden, empty for an open network)"
+    }
+    if ($pass) {
+        $Settings['FLASH_WIFI_PASSWORD'] = $pass
         Assert-FlashSettings $Settings
     } else {
         Write-Warn "No Wi-Fi password: '$($Settings['FLASH_WIFI_SSID'])' is set up as an open network."
@@ -1037,6 +1146,8 @@ try {
         FLASH_GITHUB_KEY      = $GitHubKey
     }
     $firstBoot = Get-FlashSettings -Given $given -FromFile (Read-FlashConfig (Join-Path $configDir 'rpi-setup.env'))
+    # Normalised first, so -SkipCustomize sees "true" or "1" as the yes it is.
+    $firstBoot['FLASH_GITHUB_KEY'] = ConvertTo-GitHubKeySetting $firstBoot['FLASH_GITHUB_KEY']
     if ($SkipCustomize -and (Test-FirstBootWanted $firstBoot)) {
         Fail '-SkipCustomize cannot be combined with a hostname, Wi-Fi or SSH key setting.'
     }
@@ -1070,6 +1181,8 @@ try {
         $img = Get-Image $DownloadDir
     }
 
+    # The download took a while: make sure the target is still the confirmed disk.
+    Assert-DiskUnchanged $targetDisk
     Invoke-Flash -Disk $targetDisk -ImagePath $img.Path -Imager $imager
 
     if (-not $SkipCustomize) {

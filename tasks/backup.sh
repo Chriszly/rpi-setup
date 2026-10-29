@@ -21,27 +21,30 @@ run_backup() {
     warn 'Mount a USB disk (e.g. at /mnt/usb) and set BACKUP_DEST=/mnt/usb/rpi-setup, then copy the archives off the Pi now and then.'
   fi
 
-  local cfg=() d
+  # The settings: in the checkout only config/rpi-setup.env and config/local/
+  # (the tracked files come with the clone, and restoring old ones over a
+  # newer clone would break the next deploy), /etc/rpi-setup as a whole.
+  local cfg=() d repo
+  repo="$(cd "$RPI_SETUP_ROOT" && pwd -P)"
   for d in "$RPI_SETUP_ROOT/config" "$(config_dir)"; do
-    [[ -d "$d" ]] && cfg+=("$(cd "$d" && pwd -P)")
+    [[ -d "$d" ]] || continue
+    d="$(cd "$d" && pwd -P)"
+    if [[ "$d" == "$repo"/* ]]; then cfg+=("$d/rpi-setup.env" "$d/local"); else cfg+=("$d"); fi
   done
 
+  # The file system the destination is on now, so a run refuses to write
+  # when the backup disk is not mounted (the archives would land on the SD
+  # card under the mount point, hidden once the disk is back).
+  local fsid
+  fsid="$(backup_run_fs_id "$BACKUP_DEST")"
+
   install -m 0755 -d "$(dirname "$RPI_BACKUP_SCRIPT")"
-  if backup_script "$BACKUP_DEST" "$BACKUP_KEEP" "$share" "${cfg[@]}" | write_if_changed "$RPI_BACKUP_SCRIPT" 0700; then
+  if backup_script "$BACKUP_DEST" "$BACKUP_KEEP" "$share" "$fsid" "${cfg[@]}" | write_if_changed "$RPI_BACKUP_SCRIPT" 0700; then
     say "Wrote $RPI_BACKUP_SCRIPT"
   fi
 
   local units=0
-  printf '%s\n' \
-    '[Unit]' \
-    'Description=rpi-setup backup (tasks/backup.sh)' \
-    'After=local-fs.target docker.service' \
-    '' \
-    '[Service]' \
-    'Type=oneshot' \
-    "ExecStart=$RPI_BACKUP_SCRIPT" \
-    'Nice=10' \
-    'IOSchedulingClass=idle' |
+  backup_unit_file "$BACKUP_DEST" |
     write_if_changed "/etc/systemd/system/$RPI_BACKUP_UNIT.service" && units=1
   printf '%s\n' \
     '[Unit]' \
@@ -91,6 +94,22 @@ backup_check_settings() {
   setting_on BACKUP_INCLUDE_SHARE || true
 }
 
+# The service unit. RequiresMountsFor= keeps a run from starting while the
+# mount under BACKUP_DEST ($1) is missing, when that mount is in /etc/fstab.
+backup_unit_file() {
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=rpi-setup backup (tasks/backup.sh)' \
+    'After=local-fs.target docker.service' \
+    "RequiresMountsFor=$1" \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStart=$RPI_BACKUP_SCRIPT" \
+    'Nice=10' \
+    'IOSchedulingClass=idle'
+}
+
 # True if path $1 (or its nearest existing parent) is on the same disk as /.
 backup_on_root_disk() {
   local p="$1"
@@ -111,8 +130,8 @@ backup_disk_of() {
 # Print the standalone backup script: its settings, then the backup_run_*
 # functions below (so the unit tests exercise the very code that runs nightly).
 backup_script() {
-  local dest="$1" keep="$2" share="$3"
-  shift 3
+  local dest="$1" keep="$2" share="$3" fsid="$4"
+  shift 4
   printf '#!/usr/bin/env bash\n'
   printf '# Written by rpi-setup (tasks/backup.sh). Change the BACKUP_* settings and\n'
   printf '# re-run "sudo bash setup.sh backup" instead of editing this file.\n'
@@ -121,14 +140,26 @@ backup_script() {
   printf 'BK_DEST=%q\n' "$dest"
   printf 'BK_KEEP=%q\n' "$keep"
   printf 'BK_INCLUDE_SHARE=%q\n' "$share"
-  printf 'BK_CONFIG_DIRS=('
+  printf 'BK_FS_ID=%q\n' "$fsid"
+  printf 'BK_CONFIG_PATHS=('
   printf ' %q' "$@"
   printf ' )\n'
-  declare -f backup_run_paths backup_run_shares backup_run_container_share backup_run_prune backup_run
+  declare -f backup_run_fs_id backup_run_paths backup_run_shares backup_run_container_share \
+    backup_run_db_copies backup_run_prune backup_run
   printf 'backup_run\n'
 }
 
 # --- Code of the backup script (uses only BK_* variables and plain tools) ---
+
+# Identity of the file system holding path $1 (or its nearest existing
+# parent): its UUID, else its mount source, else its device number.
+backup_run_fs_id() {
+  local p="$1" id
+  while [[ ! -e "$p" && "$p" != / ]]; do p="$(dirname "$p")"; done
+  id="$(findmnt -no UUID,SOURCE -T "$p" 2>/dev/null | awk '{ print $1; exit }')" || id=""
+  [[ -n "$id" ]] || id="$(stat -c 'dev:%d' "$p")"
+  printf '%s\n' "$id"
+}
 
 # Paths to archive, relative to $BK_ROOT, one per line: what exists of the
 # files and folders rpi-setup's tasks create.
@@ -142,7 +173,7 @@ backup_run_paths() {
              etc/nginx/sites-available etc/ssh/sshd_config.d; do
       printf '%s\n' "$p"
     done
-    for p in "${BK_CONFIG_DIRS[@]}"; do
+    for p in "${BK_CONFIG_PATHS[@]}"; do
       [[ -n "$p" ]] && printf '%s\n' "${p#/}"
     done
     if [[ "${BK_INCLUDE_SHARE:-no}" == yes ]]; then
@@ -167,12 +198,41 @@ backup_run_shares() {
 
 # Folder the Samba container (SAMBA_DOCKER=yes) shares, from its compose file
 # $1: the bind mount source whose target is /samba/share (no leading /).
+# The source is a double-quoted YAML string (or a bare one in older files).
 backup_run_container_share() {
   [[ -f "$1" ]] || return 0
   awk '
     /^[[:space:]]*-[[:space:]]*type:/ { src = "" }
-    /^[[:space:]]*source:/ { src = $0; sub(/^[^:]*:[[:space:]]*/, "", src); sub(/[[:space:]]+$/, "", src) }
+    /^[[:space:]]*source:/ {
+      src = $0; sub(/^[^:]*:[[:space:]]*/, "", src); sub(/[[:space:]]+$/, "", src)
+      if (src ~ /^".*"$/) { src = substr(src, 2, length(src) - 2); gsub(/\\"/, "\"", src); gsub(/\\\\/, "\\", src) }
+    }
     /^[[:space:]]*target:[[:space:]]*\/samba\/share[[:space:]]*$/ { if (src != "") print src }' "$1" | sed 's|^/||'
+}
+
+# Consistent copies of the SQLite databases rpi-setup knows (Pi-hole's,
+# native or in its container) under folder $1, at their paths relative to
+# $BK_ROOT, which are printed one per line. sqlite3's ".backup" (or the
+# sqlite3 shell built into pihole-FTL) copies a database FTL is writing
+# without tearing it, which tar cannot. Prints nothing without either tool.
+backup_run_db_copies() {
+  local into="$1" root="${BK_ROOT%/}" db rel
+  local -a sq
+  if command -v sqlite3 >/dev/null 2>&1; then sq=(sqlite3)
+  elif command -v pihole-FTL >/dev/null 2>&1; then sq=(pihole-FTL sqlite3)
+  else return 0
+  fi
+  for db in "$root"/etc/pihole/*.db "$root"/opt/pihole/etc-pihole/*.db; do
+    [[ -f "$db" ]] || continue
+    rel="${db#"$root"/}"
+    mkdir -p "$into/${rel%/*}"
+    if "${sq[@]}" "$db" ".backup '$into/$rel'" >/dev/null 2>&1; then
+      printf '%s\n' "$rel"
+    else
+      echo "rpi-setup-backup: ${sq[*]} could not copy $rel; archiving the file as it is" >&2
+      rm -f "${into:?}/$rel"
+    fi
+  done
 }
 
 # Delete all but the newest $2 archives in folder $1, and leftovers of an
@@ -185,29 +245,50 @@ backup_run_prune() {
 # Make one dated archive (mode 0600: it holds passwords) in $BK_DEST, prune
 # old ones and print the new archive's path as the last line.
 backup_run() {
-  local root="${BK_ROOT:-/}" name tmp rc=0 dest_rel
-  local -a paths exclude=()
+  local root="${BK_ROOT:-/}" name tmp rc=0 dest_rel dbdir db
+  local -a paths exclude=() dbs=() from_copies=()
   mapfile -t paths < <(backup_run_paths)
   [[ ${#paths[@]} -gt 0 ]] || { echo 'rpi-setup-backup: nothing to back up' >&2; return 1; }
+  # A destination on a USB disk: refuse while the disk is not mounted, or
+  # the archives would land on the SD card under the mount point.
+  if [[ -n "${BK_FS_ID:-}" && "$(backup_run_fs_id "$BK_DEST")" != "$BK_FS_ID" ]]; then
+    echo "rpi-setup-backup: $BK_DEST is not on the file system it was on when the backup task was set up (is the backup disk mounted?); nothing was written. If the disk changed on purpose, run: sudo bash setup.sh backup" >&2
+    return 1
+  fi
   umask 077
   mkdir -p "$BK_DEST"
-  chmod 0700 "$BK_DEST"
+  # A FAT or exFAT disk cannot hold file modes; the archives are then as
+  # private as the mount options make them (umask=077 in /etc/fstab).
+  chmod 0700 "$BK_DEST" 2>/dev/null ||
+    echo "rpi-setup-backup: cannot make $BK_DEST root-only (a FAT or exFAT disk?); mount it with umask=077, or use an ext4 disk" >&2
   name="rpi-setup-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
   tmp="$BK_DEST/.$name.partial"
   dest_rel="$(cd "$BK_DEST" && pwd -P)"
   dest_rel="${dest_rel#"$(cd "$root" && pwd -P)"}"
   dest_rel="${dest_rel#/}"
   [[ -z "$dest_rel" ]] || exclude=(--exclude="$dest_rel")
+  # Live SQLite databases go in from a consistent copy under $dbdir/snapshot
+  # (stored at their real paths) instead of the file itself and its journal.
+  dbdir="$(mktemp -d)"
+  mapfile -t dbs < <(backup_run_db_copies "$dbdir/snapshot")
+  if [[ ${#dbs[@]} -gt 0 ]]; then
+    exclude+=(--anchored)
+    for db in "${dbs[@]}"; do
+      exclude+=(--exclude="$db" --exclude="$db-wal" --exclude="$db-shm" --exclude="$db-journal")
+    done
+    from_copies=(-C "$dbdir" --transform='s,^snapshot/,,S' "${dbs[@]/#/snapshot/}")
+  fi
   printf 'rpi-setup-backup: %s\n' "${paths[@]}" >&2
   # Exit status 1 only means a file changed while it was read (a live
   # container writing); anything else is a real failure.
-  tar -C "$root" --warning=no-file-changed "${exclude[@]}" -czpf "$tmp" -- "${paths[@]}" || rc=$?
+  tar -C "$root" --warning=no-file-changed "${exclude[@]}" -czpf "$tmp" "${paths[@]}" "${from_copies[@]}" || rc=$?
+  rm -rf "${dbdir:?}"
   if (( rc > 1 )); then
     rm -f "$tmp"
     echo "rpi-setup-backup: tar failed (exit $rc)" >&2
     return 1
   fi
-  chmod 0600 "$tmp"
+  chmod 0600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$BK_DEST/$name"
   backup_run_prune "$BK_DEST" "$BK_KEEP"
   printf '%s\n' "$BK_DEST/$name"

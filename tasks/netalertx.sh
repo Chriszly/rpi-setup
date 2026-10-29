@@ -10,6 +10,9 @@ run_netalertx() {
   : "${NETALERTX_PORT:=20211}" "${NETALERTX_IMAGE:=ghcr.io/netalertx/netalertx:latest}"
   : "${NETALERTX_LOGIN:=yes}"
   require_port NETALERTX_PORT
+  # The web UI talks to NetAlertX's API on 20212, which is fixed.
+  (( 10#$NETALERTX_PORT != 20212 )) ||
+    die "NETALERTX_PORT must not be 20212, the port of NetAlertX's API that the web UI talks to; set another port"
   local login=no
   setting_on NETALERTX_LOGIN && login=yes
   [[ "${NETALERTX_PASSWORD:-}" != *[[:cntrl:]]* ]] || die 'NETALERTX_PASSWORD must not contain control characters'

@@ -3,7 +3,9 @@ name: Virtual Testing Environment
 # Docs-only and .claude/ (agent skill) changes cannot affect provisioning, so
 # pushes to main skip this workflow. Pull requests always run it, so the
 # "Virtual Testing Environment" job at the end can be a required check; on a
-# docs-only PR only the quick syntax and unit jobs run.
+# docs-only PR only the quick syntax and unit jobs run, and the nspawn gate
+# runs only when a PR touches what it exercises. A push to main and a manual
+# run go through every job.
 on:
   pull_request:
   push:
@@ -105,8 +107,7 @@ jobs:
     name: Docker tasks on plain runner
     runs-on: ubuntu-latest
     needs: [syntax, unit, changes]
-    # changes only runs on pull requests; on a push it is skipped and this runs.
-    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -131,7 +132,7 @@ jobs:
     name: Container helpers (lib/containers.sh)
     runs-on: ubuntu-latest
     needs: [syntax, unit, changes]
-    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -141,6 +142,10 @@ jobs:
 
   # One ci/smoke-container-<task>.sh per task: runs "setup.sh <task>" with
   # <TASK>_DOCKER=yes, checks the service answers, re-runs it and switches back.
+  # ci/smoke-container-web-pihole.sh runs between them (glob order) and checks
+  # that the web task takes port 80 from a Pi-hole container, moving the
+  # admin page to 8080; it needs the Pi-hole image the pihole script pulled
+  # and nginx not yet installed, which the web script does last.
   container-smoke:
     name: Container tasks on plain runner
     runs-on: ubuntu-latest
@@ -170,27 +175,33 @@ jobs:
           done
 
   # Decides whether the PR touches anything the nspawn gate exercises (provision)
-  # and anything besides docs (code). PRs that only change the flashers, their
-  # tests or other workflows skip the gate; docs-only PRs also skip the Docker
-  # and container jobs.
+  # and anything besides docs (code). PRs that only change the flasher tests
+  # or other workflows skip the gate; docs-only PRs also skip the Docker and
+  # container jobs. The filters read the PR's file list, so they only run on
+  # a pull request; a push to main or a manual run counts as both changed,
+  # and every job runs.
   changes:
     name: Detect provisioning changes
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     permissions:
       pull-requests: read
     outputs:
-      provision: ${{ steps.filter.outputs.provision }}
-      code: ${{ steps.code.outputs.code }}
+      provision: ${{ github.event_name != 'pull_request' || steps.filter.outputs.provision == 'true' }}
+      code: ${{ github.event_name != 'pull_request' || steps.code.outputs.code == 'true' }}
     steps:
+      # host/flash.sh resolves the gate's "latest" image (prepare-image calls
+      # its latest_release); config/ holds the task settings setup.sh splits.
       - uses: dorny/paths-filter@v4.0.3
         id: filter
+        if: github.event_name == 'pull_request'
         with:
           filters: |
             provision:
               - setup.sh
               - lib/**
               - tasks/**
+              - config/**
+              - host/flash.sh
               - ci/provision.sh
               - .github/workflows/test-provision.yml
               - .github/actions/**
@@ -199,6 +210,7 @@ jobs:
       # quantifier would break the provision filter, hence a second step.
       - uses: dorny/paths-filter@v4.0.3
         id: code
+        if: github.event_name == 'pull_request'
         with:
           predicate-quantifier: every
           filters: |

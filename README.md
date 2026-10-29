@@ -81,7 +81,10 @@ The SD card settings of the flash scripts (`FLASH_*`) have their own page:
 
 How a run works:
 
-- `base` runs first when you pick it; the others run in the order given.
+- `base` runs first and `firewall` last when you pick them; the others run
+  in the order given. In the menu, `all` picks every task except `apps`
+  and `runner` (they need settings) and `network` (it changes the Pi's
+  address); pick those by number.
   `netalertx`, `teamspeak`, `denwatcher` and `apps` need Docker; they run the `docker` task
   themselves when Docker is not installed.
 - A failed task does not stop the others, and `setup.sh` then exits non-zero.
@@ -105,11 +108,13 @@ The format is one `NAME=value` per line:
 ```bash
 BASE_HOSTNAME=homepi
 BASE_TIMEZONE=Europe/Berlin
-SAMBA_PASSWORD='my secret #1'   # quote values with " #" or spaces at the ends
+SAMBA_PASSWORD='my secret #1'   # quote values with " #", a leading # or spaces at the ends
 PIHOLE_DNS=9.9.9.9
 ```
 
-- Leave a value empty, or delete the line, to get the default.
+- Leave a value empty, or delete the line, to get the default. Deleting
+  the whole file puts every task back to its defaults: the split files it
+  left in `config/local/` are then ignored, with a warning.
 - Each name starts with its task's name (`SAMBA_...` belongs to `samba`); an
   unknown name stops the run before anything changes, so typos are caught.
 - `config/rpi-setup.env` and everything generated from it are ignored by git:
@@ -150,7 +155,8 @@ instead of installing it with apt. Set it to `yes` and run the task again:
   you back up. `<TASK>_IMAGE` picks the image; pin a tag to control updates.
 - On a Pi that already runs the native service, its data is copied over once
   and the native service is stopped (its packages stay). If the container
-  does not stay up, the native service is started again.
+  does not stay up, or its health check fails, the native service is
+  started again.
 - Setting it back to `no` stops the container and starts the native service.
 
 Tasks that can do this: [`web`](docs/tasks/web.md#run-it-in-docker),
@@ -186,7 +192,9 @@ apply after a reboot; switching them back to `no` removes the block again.
 `sudo bash check.sh` checks the Pi without changing anything: board, OS
 and firmware, power and temperature (under-voltage, throttling), disk space,
 LAN address and SSH, and for every task that looks installed whether its
-service or container runs and its port answers. It prints one
+service or container runs and its port answers (for `firewall` also that
+its rules are loaded, for `backup`, `runner` and `web` that their timers
+and the runner service run). It prints one
 `OK`, `WARN` or `FAIL` line per check and exits 1 if anything failed. No
 password or key is printed.
 
@@ -194,9 +202,11 @@ password or key is printed.
 
 Re-running a container task pulls its image and recreates the container when
 the image changed. To bring the whole Pi up to date, run `sudo bash update.sh`: it upgrades the
-OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`) and
-recreates the ones that changed, re-runs the `web` task so its start page is
-the current version, runs `pihole -up` if Pi-hole is installed and
+OS packages, pulls new images for rpi-setup's containers (`/opt/<task>`),
+rebuilds the images built on the Pi (the TeamSpeak usage logger) and
+recreates the containers that changed, re-runs the `web` task so its start page is
+the current version, runs `pihole -up` if Pi-hole is installed natively (in
+its container it is updated with the containers) and
 `rpi-eeprom-update -a` on a Pi. Steps for things that are not installed are
 skipped, a failed step does not stop the others, and it tells you when a reboot
 is recommended. Options: `--dry-run` (only print the commands), `--no-apt`,

@@ -34,6 +34,28 @@ assert_fails "cidrs: v4 prefix 33"      firewall_cidrs X '10.0.0.0/33'
 assert_fails "cidrs: v6 prefix 129"     firewall_cidrs X 'fd00::/129'
 assert_fails "cidrs: host name"         firewall_cidrs X 'mypc.local'
 assert_fails "cidrs: injection attempt" firewall_cidrs X '10.0.0.0/8}'
+assert_fails "cidrs: trailing slash"    firewall_cidrs X '192.168.1.0/'
+assert_fails "cidrs: v6 trailing slash" firewall_cidrs X 'fd00::/'
+assert_fails "cidrs: two slashes"       firewall_cidrs X '10.0.0.0/8/'
+assert_contains "cidrs: trailing slash names the setting" "FIREWALL_ALLOW_FROM: '192.168.1.0/' needs a prefix length" \
+  "$( (firewall_cidrs FIREWALL_ALLOW_FROM '192.168.1.0/') 2>&1 || true)"
+
+# --- firewall_sshd_ports (sshd, ss and systemctl stubbed) --------------------------
+SSHD_T='' SS_OUT='' SOCKET_OUT=''
+sshd() { [[ -n "$SSHD_T" ]] || return 1; printf '%s\n' "$SSHD_T"; }
+ss() { printf '%s\n' "$SS_OUT"; }
+systemctl() { printf '%s\n' "$SOCKET_OUT"; }
+assert_eq "sshd ports: nothing known" "" "$(firewall_sshd_ports)"
+SSHD_T=$'port 2222\nport 22\naddressfamily any'
+assert_eq "sshd ports: from sshd -T, sorted" "22 2222 " "$(firewall_sshd_ports)"
+SSHD_T='' SS_OUT='LISTEN 0 128 0.0.0.0:2200 0.0.0.0:* users:(("sshd",pid=1,fd=3))'
+assert_eq "sshd ports: from a listening sshd" "2200 " "$(firewall_sshd_ports)"
+SS_OUT='LISTEN 0 4096 [::]:2222 [::]:* users:(("systemd",pid=1,fd=50))'
+SOCKET_OUT=$'Listen=[::]:2222 (Stream)\nListen=/run/other.sock (Stream)\n\nListen='
+assert_eq "sshd ports: from ssh.socket when systemd holds the listener" "2222 " "$(firewall_sshd_ports)"
+SSHD_T='port 22'
+assert_eq "sshd ports: all sources, deduplicated" "22 2222 " "$(firewall_sshd_ports)"
+unset -f sshd ss systemctl
 
 # --- firewall_ports_of ------------------------------------------------------------
 assert_eq "ports_of: tcp, deduplicated" "22, 80, 1000-2000" \
@@ -122,19 +144,19 @@ else
   assert_contains "containers: nginx port from the container's site" "8090/tcp web nginx" "$out"
   assert_contains "containers: samba" "445/tcp open samba" "$out"
   install -d "$ctr/denwatcher"; touch "$ctr/denwatcher/docker-compose.yml"
-  assert_contains "containers: Den-Watcher on its default port" "9393/tcp web denwatcher" \
+  assert_contains "containers: Den-Watcher is open, published by Docker" "9393/tcp open denwatcher docker" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: Den-Watcher port from its settings" "8095/tcp web denwatcher" \
+  assert_contains "containers: Den-Watcher port from its settings" "8095/tcp open denwatcher docker" \
     "$(DENWATCHER_PORT=8095 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   assert_lacks "containers: no Den-Watcher status page by default" "denwatcher-status" \
     "$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: Den-Watcher status page open to anyone" "9443/tcp open denwatcher-status" \
+  assert_contains "containers: Den-Watcher status page open to anyone" "9443/tcp open denwatcher-status docker" \
     "$(DENWATCHER_STATUS_PORT=9443 RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
   install -d "$ctr/apps"
   printf '    ports:\n      - "0.0.0.0:8096:8080"\n    ports:\n      - "0.0.0.0:8097:80"\n' >"$ctr/apps/docker-compose.yml"
   out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" firewall_service_ports)"
-  assert_contains "containers: each app's port" "8096/tcp web apps" "$out"
-  assert_contains "containers: each app's port, not the one inside" "8097/tcp web apps" "$out"
+  assert_contains "containers: each app's port is open, published by Docker" "8096/tcp open apps docker" "$out"
+  assert_contains "containers: each app's port, not the one inside" "8097/tcp open apps docker" "$out"
   unset -f docker
 fi
 
@@ -155,15 +177,18 @@ if [[ $EUID -eq 0 ]] && command -v nft >/dev/null 2>&1 &&
   in_container() { return 0; }
   systemctl() { :; }
   firewall_sshd_ports() { printf '2222 '; }
-  firewall_service_ports() { printf '53/udp open pihole-dns\n80/tcp web pihole-web\n'; }
+  firewall_service_ports() { printf '53/udp open pihole-dns\n80/tcp web pihole-web\n9393/tcp open denwatcher docker\n'; }
   FW_NFT_FILE="$TMP/etc/firewall.nft"
   FW_UNIT_DIR="$TMP"
   run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
   assert_contains "run_firewall: container mode does not load" "did not load" "$run_out"
+  assert_contains "run_firewall: a Docker-published port says it is not limited" \
+    "Allowing 9393/tcp for denwatcher (published by Docker, not limited by FIREWALL_ALLOW_FROM)" "$run_out"
   gen="$(cat "$FW_NFT_FILE")"
   assert_contains "run_firewall: sshd's real port kept" 'tcp dport { 22, 2222 }' "$gen"
   assert_contains "run_firewall: extra port" "8123" "$gen"
   assert_contains "run_firewall: web port limited" 'ip saddr { 192.168.1.0/24 } tcp dport { 80 }' "$gen"
+  assert_contains "run_firewall: a Docker-published port is open, not limited" 'tcp dport { 9393, 8123 } accept' "$gen"
   assert_eq "run_firewall: creates its folder root-only" "700" "$(stat -c %a "$TMP/etc")"
   assert_contains "run_firewall: unit loads the file" "ExecStart=/usr/sbin/nft -f $FW_NFT_FILE" \
     "$(cat "$TMP/rpi-setup-firewall.service")"
@@ -175,6 +200,23 @@ if [[ $EUID -eq 0 ]] && command -v nft >/dev/null 2>&1 &&
   assert_fails "run_firewall: bad FIREWALL_EXTRA_PORTS" env_run FIREWALL_EXTRA_PORTS=http
   assert_fails "run_firewall: bad FIREWALL_ALLOW_FROM" env_run FIREWALL_ALLOW_FROM=lan
   assert_fails "run_firewall: bad FIREWALL_AUTO_PORTS" env_run FIREWALL_AUTO_PORTS=maybe
+
+  # On a Pi (no container) with the unit enabled and active: unchanged rules
+  # are left alone, unless the table is gone from the kernel.
+  in_container() { return 1; }
+  SYSCTL_LOG="$TMP/systemctl.log"
+  systemctl() { printf '%s\n' "$*" >>"$SYSCTL_LOG"; }
+  firewall_table_loaded() { return 0; }
+  : >"$SYSCTL_LOG"
+  run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
+  assert_contains "run_firewall: unchanged rules with the table loaded are left alone" "already on with these rules" "$run_out"
+  assert_lacks "run_firewall: and nothing is reloaded" "reload rpi-setup-firewall" "$(cat "$SYSCTL_LOG")"
+  firewall_table_loaded() { return 1; }
+  : >"$SYSCTL_LOG"
+  run_out="$(FIREWALL_EXTRA_PORTS='8123/tcp' FIREWALL_ALLOW_FROM='192.168.1.0/24' run_firewall 2>&1)"
+  assert_contains "run_firewall: a flushed table is noticed" "table inet rpi_setup is gone" "$run_out"
+  assert_contains "run_firewall: and loaded again" "reload rpi-setup-firewall.service" "$(cat "$SYSCTL_LOG")"
+  in_container() { return 0; }
 else
   skip "nft -c and run_firewall cases need root and a working nft"
 fi

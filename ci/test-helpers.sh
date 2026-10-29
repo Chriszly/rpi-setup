@@ -10,10 +10,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 TEST_FAILURES=0
 TEST_PASSES=0
+TEST_SKIPS=0
 
 pass() { printf '[PASS] %s\n' "$*"; TEST_PASSES=$((TEST_PASSES + 1)); }
 fail() { printf '[FAIL] %s\n' "$*" >&2; TEST_FAILURES=$((TEST_FAILURES + 1)); }
-skip() { printf '[SKIP] %s\n' "$*"; }
+skip() { printf '[SKIP] %s\n' "$*"; TEST_SKIPS=$((TEST_SKIPS + 1)); }
 
 # assert_eq NAME EXPECTED ACTUAL
 assert_eq() {
@@ -72,11 +73,27 @@ stub_container_helpers() {
     port_owner() { return 1; }
 }
 
+# A run without a single assertion is not a pass: the body was skipped. It
+# fails unless a [SKIP] line says why; then it is a loud warning (a machine
+# that cannot run the cases, such as a Pi that already has what the test
+# would set up, is not a regression).
 finish_tests() {
     echo
     if [[ $TEST_FAILURES -gt 0 ]]; then
         printf '[FAIL] %d assertion(s) failed, %d passed.\n' "$TEST_FAILURES" "$TEST_PASSES" >&2
         exit 1
     fi
-    printf '[PASS] All %d assertions passed.\n' "$TEST_PASSES"
+    if [[ $TEST_PASSES -eq 0 ]]; then
+        if [[ $TEST_SKIPS -gt 0 ]]; then
+            printf '[WARN] No assertion ran: the whole test body was skipped (%d [SKIP] line(s) above say why). Nothing was tested.\n' "$TEST_SKIPS" >&2
+            exit 0
+        fi
+        printf '[FAIL] No assertion ran and nothing was marked [SKIP]: the test body was skipped.\n' >&2
+        exit 1
+    fi
+    if [[ $TEST_SKIPS -gt 0 ]]; then
+        printf '[PASS] All %d assertions passed (%d case(s) skipped).\n' "$TEST_PASSES" "$TEST_SKIPS"
+    else
+        printf '[PASS] All %d assertions passed.\n' "$TEST_PASSES"
+    fi
 }

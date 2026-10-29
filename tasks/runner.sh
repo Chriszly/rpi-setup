@@ -58,18 +58,25 @@ run_runner() {
 
   if [[ -f "$RPI_RUNNER_DIR/.runner" ]]; then
     info "Runner already registered ($(jq -r '.agentName + " at " + .gitHubUrl' "$RPI_RUNNER_DIR/.runner" 2>/dev/null || echo 'see .runner'))"
+    runner_check_registration "$RPI_RUNNER_DIR"
   else
     [[ -n "$RUNNER_TOKEN" ]] || die "RUNNER_TOKEN is empty. In https://github.com/$RUNNER_REPO/settings/actions/runners/new copy the token after --token, put it in RUNNER_TOKEN (valid for one hour) and run: sudo bash setup.sh runner"
+    # The one-time token goes on config.sh's command line (its only way to
+    # take it); it is worthless after this call.
     ( cd "$RPI_RUNNER_DIR" &&
       runuser -u "$RPI_RUNNER_USER" -- ./config.sh --unattended --replace \
         --url "https://github.com/$RUNNER_REPO" --token "$RUNNER_TOKEN" \
         --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --work _work ) ||
       die "Registering the runner failed. A token is valid for one hour; get a new one at https://github.com/$RUNNER_REPO/settings/actions/runners/new"
+    # .runner holds the repository and name but not the labels.
+    printf '%s\n' "$RUNNER_LABELS" >"$RPI_RUNNER_DIR/.labels"
     say "Runner '$RUNNER_NAME' registered to $RUNNER_REPO (labels: $RUNNER_LABELS)"
     info 'The token is no longer needed; you can empty RUNNER_TOKEN.'
   fi
 
-  ( cd "$RPI_RUNNER_DIR" && { ./svc.sh status >/dev/null 2>&1 || ./svc.sh install "$RPI_RUNNER_USER" >/dev/null; } && ./svc.sh start >/dev/null ) ||
+  # svc.sh status exits 3 for an installed but stopped service, so it cannot
+  # tell "not installed" apart; the unit file can.
+  ( cd "$RPI_RUNNER_DIR" && { runner_service_installed "$RPI_RUNNER_DIR" || ./svc.sh install "$RPI_RUNNER_USER" >/dev/null; } && ./svc.sh start >/dev/null ) ||
     die "Could not start the runner service (see: cd $RPI_RUNNER_DIR && sudo ./svc.sh status)"
   say "Runner service running. Deploy from https://github.com/$RUNNER_REPO/actions with the 'Deploy to Pi' workflow."
   info "The deploy command accepts these branches of this repo: $RUNNER_BRANCHES"
@@ -94,6 +101,33 @@ runner_check_settings() {
       die "RUNNER_BRANCHES: '$b' is not a branch name"
     fi
   done
+}
+
+# Warn when RUNNER_REPO, RUNNER_NAME or RUNNER_LABELS differ from the
+# registration in $1/.runner (and $1/.labels, written at registration): the
+# settings only count when the runner registers, so a changed value does
+# nothing until it is registered again.
+runner_check_registration() {
+  local dir="$1" url name labels diff=""
+  url="$(jq -r '.gitHubUrl // ""' "$dir/.runner" 2>/dev/null)" || url=""
+  name="$(jq -r '.agentName // ""' "$dir/.runner" 2>/dev/null)" || name=""
+  labels="$(head -n1 "$dir/.labels" 2>/dev/null)" || labels=""
+  [[ -z "$url" || "${url%/}" == "https://github.com/$RUNNER_REPO" ]] || diff+=", RUNNER_REPO (registered: ${url#https://github.com/})"
+  [[ -z "$name" || "$name" == "$RUNNER_NAME" ]] || diff+=", RUNNER_NAME (registered: $name)"
+  [[ -z "$labels" || "$labels" == "$RUNNER_LABELS" ]] || diff+=", RUNNER_LABELS (registered: $labels)"
+  [[ -n "$diff" ]] || return 0
+  warn "The runner is registered with other settings than these: ${diff#, }. A registered runner ignores the settings."
+  warn "To register it again: cd $dir && sudo ./svc.sh stop && sudo ./svc.sh uninstall && sudo rm -f .runner .credentials .credentials_rsaparams .service .labels, then put a new token in RUNNER_TOKEN and run: sudo bash setup.sh runner"
+  warn "A runner with another name or repository stays listed at GitHub; delete it there under Settings > Actions > Runners."
+}
+
+# True once svc.sh installed the runner's systemd unit: it writes the unit
+# name to $1/.service and the unit file to /etc/systemd/system.
+runner_service_installed() {
+  local f="$1/.service" unit
+  [[ -f "$f" ]] || return 1
+  unit="$(head -n1 "$f")"
+  [[ -n "$unit" && -f "${RPI_RUNNER_UNIT_DIR:-/etc/systemd/system}/$unit" ]]
 }
 
 # The runner release asset name for CPU $1 (uname -m), e.g. linux-arm64.
@@ -181,28 +215,35 @@ deploy_run_args() {
   local opt words
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --branch) DP_BRANCH="${2:-}"; shift 2 ;;
-      --config) DP_CONFIG="${2:-}"; shift 2 ;;
-      --tasks) DP_TASKS="${2:-}"; shift 2 ;;
-      --skip) DP_SKIP="${2:-}"; shift 2 ;;
+      --branch|--config|--tasks|--skip)
+        # As the last argument "shift 2" would fail and spin this loop forever.
+        if [[ $# -lt 2 ]]; then echo "rpi-setup-deploy: $1 needs a value" >&2; return 2; fi
+        case "$1" in
+          --branch) DP_BRANCH="$2" ;;
+          --config) DP_CONFIG="$2" ;;
+          --tasks) DP_TASKS="$2" ;;
+          --skip) DP_SKIP="$2" ;;
+        esac
+        shift 2 ;;
       --update) DP_UPDATE=1; shift ;;
-      *) echo "rpi-setup-deploy: unknown argument '$1'" >&2; return 2 ;;
+      *) echo "rpi-setup-deploy: unknown argument $(printf '%q' "$1")" >&2; return 2 ;;
     esac
   done
   case " $DP_BRANCHES " in
     *" $DP_BRANCH "*) ;;
-    *) echo "rpi-setup-deploy: branch '$DP_BRANCH' is not allowed (RUNNER_BRANCHES: $DP_BRANCHES)" >&2; return 2 ;;
+    *) echo "rpi-setup-deploy: branch $(printf '%q' "$DP_BRANCH") is not allowed (RUNNER_BRANCHES: $DP_BRANCHES)" >&2; return 2 ;;
   esac
   DP_TASKS="${DP_TASKS//,/ }" DP_SKIP="${DP_SKIP//,/ }"
   for opt in tasks skip; do
     [[ $opt == tasks ]] && words="$DP_TASKS" || words="$DP_SKIP"
+    # Printed with %q, so a tab, a CR or a control character is visible.
     if [[ ! "$words" =~ ^[a-z0-9_\ -]*$ ]]; then
-      echo "rpi-setup-deploy: --$opt: task names may only use a-z, 0-9, '-' and '_' (got '$words')" >&2
+      echo "rpi-setup-deploy: --$opt: task names may only use a-z, 0-9, '-' and '_' (got $(printf '%q' "$words"))" >&2
       return 2
     fi
     # A word starting with '-' would reach setup.sh as an option (--move-config).
     if [[ " $words" == *" -"* ]]; then
-      echo "rpi-setup-deploy: --$opt: task names may not start with '-' (got '$words')" >&2
+      echo "rpi-setup-deploy: --$opt: task names may not start with '-' (got $(printf '%q' "$words"))" >&2
       return 2
     fi
   done

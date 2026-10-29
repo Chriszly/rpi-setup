@@ -108,7 +108,8 @@ container_state() {
 
 # Wait until container $1 has stayed up for $2 seconds (default 10) without
 # restarting, then up to $3 seconds (default 120) for its health check if it
-# has one. Returns 1 if it exits or restarts; a health check that is still
+# has one. Returns 1 if it exits, restarts or reports "unhealthy" (its
+# service does not work, e.g. Pi-hole's DNS); a health check that is still
 # starting at the end only warns.
 container_wait_stable() {
   local name="$1" settle="${2:-10}" health_wait="${3:-120}" st status restarts health first="" i
@@ -127,6 +128,10 @@ container_wait_stable() {
     read -r status restarts health <<<"${st:-missing 0 none}"
     [[ "$status" == running && "$restarts" == "$first" ]] || return 1
     [[ "$health" != healthy ]] || return 0
+    if [[ "$health" == unhealthy ]]; then
+      warn "$name is running but its health check fails"
+      return 1
+    fi
     sleep 1
   done
   warn "$name is running but its health check still says '$health'; see: docker logs $name"
@@ -175,20 +180,41 @@ container_fail() {
 # the compose file is renamed to docker-compose.yml.disabled so that update.sh
 # and task_in_container no longer see a live project (update.sh would start the
 # container again next to the native service). <TASK>_DOCKER=yes writes a fresh
-# one. If "down" fails the file is kept, so the next run tries again.
+# one. The file is only renamed once "down" ran, or Docker confirmed that the
+# project has no container; if "down" fails it is kept, so the next run tries
+# again. Without the docker command the native units are started and the
+# file is kept, with a warning; with the Docker daemon stopped the run ends,
+# since the container would otherwise come back next to the native service.
 # Not called for netalertx and teamspeak, which always run in a container.
 container_leave() {
-  local task="$1" dir file down=0
+  local task="$1" dir file ids
   dir="$(container_dir "$task")"
   file="$dir/docker-compose.yml"
   [[ -f "$file" ]] || return 0
-  if command -v docker >/dev/null 2>&1; then
-    if [[ -n "$(docker compose -f "$file" ps -aq 2>/dev/null)" ]]; then
-      info "Stopping the $task container (${task^^}_DOCKER is off); its data stays in $dir"
-      docker compose -f "$file" down >/dev/null 2>&1 || { warn "Could not stop the $task container"; down=1; }
-    fi
+  if ! have docker; then
     container_restore_native "$dir"
+    warn "Docker is not installed, so the $task container could not be taken down; $file is kept. Delete it if the container is gone."
+    return 0
   fi
-  [[ $down -eq 0 ]] || return 0
+  ids="$(docker compose -f "$file" ps -aq 2>/dev/null)" ||
+    die "Docker is not running, so the $task container cannot be taken down. Start it (sudo systemctl start docker) and run the task again."
+  if [[ -n "$ids" ]]; then
+    info "Stopping the $task container (${task^^}_DOCKER is off); its data stays in $dir"
+    if ! docker compose -f "$file" down >/dev/null 2>&1; then
+      warn "Could not stop the $task container; $file is kept, the next run tries again"
+      container_restore_native "$dir"
+      return 0
+    fi
+  fi
+  container_restore_native "$dir"
   mv -f "$file" "$file.disabled"
+}
+
+# container_port_holder PORT - prints the name of the container that publishes
+# PORT (its docker-proxy holds the port on the host); false if Docker knows
+# none, or Docker is missing.
+container_port_holder() {
+  have docker || return 1
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
+    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
 }

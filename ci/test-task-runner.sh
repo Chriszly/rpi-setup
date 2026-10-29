@@ -35,6 +35,28 @@ assert_fails "labels with spaces are refused" eval 'L="pi5, home" ok'
 assert_ok    "several branches are valid" eval 'B="main, next" ok'
 assert_fails "a bad branch is refused" eval 'B="main;x" ok'
 
+# --- runner_check_registration: changed settings after registration ----------
+mkdir -p "$tmp/reg"
+printf '{"agentName":"pi5","gitHubUrl":"https://github.com/me/rpi-private","workFolder":"_work"}\n' >"$tmp/reg/.runner"
+printf 'pi5,home\n' >"$tmp/reg/.labels"
+reg() { ( RUNNER_REPO="${1:-me/rpi-private}" RUNNER_NAME="${2:-pi5}" RUNNER_LABELS="${3:-pi5,home}" runner_check_registration "$tmp/reg" ) 2>&1; }
+assert_eq "the same settings as registered say nothing" "" "$(reg)"
+assert_contains "another repository is noticed" "RUNNER_REPO (registered: me/rpi-private)" "$(reg me/other)"
+assert_contains "another name is noticed" "RUNNER_NAME (registered: pi5)" "$(reg me/rpi-private pi6)"
+assert_contains "other labels are noticed" "RUNNER_LABELS (registered: pi5,home)" "$(reg me/rpi-private pi5 pi5)"
+assert_contains "the warning says how to register again" "put a new token in RUNNER_TOKEN and run: sudo bash setup.sh runner" "$(reg me/other)"
+assert_contains "and what to remove first" "rm -f .runner" "$(reg me/other)"
+rm -f "$tmp/reg/.labels"
+assert_eq "an older registration without .labels only compares what .runner holds" "" "$(reg me/rpi-private pi5 other)"
+
+# --- runner_service_installed: the unit file, not "svc.sh status" ------------
+mkdir -p "$tmp/svc" "$tmp/units"
+assert_fails "no .service file: not installed" eval 'RPI_RUNNER_UNIT_DIR="$tmp/units" runner_service_installed "$tmp/svc"'
+printf 'actions.runner.me-rpi-private.pi5.service\n' >"$tmp/svc/.service"
+assert_fails "a .service file without the unit: not installed" eval 'RPI_RUNNER_UNIT_DIR="$tmp/units" runner_service_installed "$tmp/svc"'
+touch "$tmp/units/actions.runner.me-rpi-private.pi5.service"
+assert_ok "unit file present: installed (even when stopped)" eval 'RPI_RUNNER_UNIT_DIR="$tmp/units" runner_service_installed "$tmp/svc"'
+
 # --- runner_platform ----------------------------------------------------------
 assert_eq "Pi 5 64-bit" linux-arm64 "$(runner_platform aarch64)"
 assert_eq "x86_64" linux-x64 "$(runner_platform x86_64)"
@@ -65,6 +87,15 @@ assert_eq "--skip may be comma separated" "pihole web" "$( (DP_BRANCHES=main; de
 assert_fails "a skipped task with odd characters is refused" args --skip 'web;reboot'
 assert_fails "an option hidden in --skip is refused" args --skip 'web --init-config'
 assert_fails "a missing settings file is refused" args --config "$tmp/nope.env"
+# An option as the last argument used to make "shift 2" fail and the loop spin forever.
+for opt in --tasks --skip --branch --config; do
+    assert_eq "$opt as the last argument is refused, not hung" "rpi-setup-deploy: $opt needs a value" \
+        "$( (DP_BRANCHES=main; timeout 5 bash -c "$(declare -f deploy_run_args); DP_BRANCHES=main deploy_run_args --update $opt") 2>&1 || true)"
+done
+assert_contains "a bad task word is printed so that a tab is visible" "(got \$'base\\tweb')" \
+    "$( (DP_BRANCHES=main; deploy_run_args --tasks $'base\tweb') 2>&1 || true)"
+assert_contains "an unknown argument is printed the same way" "unknown argument \$'--force\\r'" \
+    "$( (DP_BRANCHES=main; deploy_run_args $'--force\r') 2>&1 || true)"
 if [[ $EUID -eq 0 ]] && id nobody >/dev/null 2>&1; then
     printf 'X=1\n' >"$tmp/root-only.env"; chmod 600 "$tmp/root-only.env"
     assert_fails "a settings file the sudo caller cannot read is refused" \
@@ -242,5 +273,36 @@ assert_eq "and the containers of the skipped tasks alone" "--containers-only --s
 rm -f "$tmp/updated"
 assert_fails "--update refuses an unknown task" eval 'deploy --update --tasks nope >/dev/null'
 assert_ok "before updating anything" test ! -e "$tmp/updated"
+
+# --- an outdated deploy command writes itself again and runs the new one ------
+# The fixture repository gets a copy of tasks/runner.sh whose fixed paths
+# point into the temp folder, so the command written from it runs here.
+sed -e "s|^RPI_DEPLOY_CMD=.*|RPI_DEPLOY_CMD=$tmp/self|" \
+    -e "s|DP_CONFIG_DIR=/etc/rpi-setup|DP_CONFIG_DIR=$tmp/etc|" \
+    -e "s|DP_LOG_DIR=/var/log/rpi-setup-deploy|DP_LOG_DIR=$tmp/log|" \
+    -e "s|DP_LOCK=/run/rpi-setup-deploy.lock|DP_LOCK=$tmp/lock|" \
+    "$ROOT/tasks/runner.sh" >"$tmp/work/tasks/runner.sh"
+git_q -C "$tmp/work" add tasks/runner.sh
+git_q -C "$tmp/work" commit -m runner
+git_q -C "$tmp/work" push origin main
+# The outdated command: written from that copy, with one extra line.
+( RPI_SETUP_DONE_FILE="$tmp/done"; TASKS=(); . "$tmp/work/tasks/runner.sh"; runner_deploy_script "$tmp/pi" main ) >"$tmp/self"
+sed -i 's/^deploy_run "\$@"$/# outdated\n&/' "$tmp/self"
+chmod 0755 "$tmp/self"
+printf 'base\n' >"$tmp/done"
+rm -f "$tmp/ran" "$tmp/lock"
+if [[ $EUID -eq 0 ]]; then
+    # The real command refuses a root-owned checkout; hand it to a regular
+    # account, which then also runs git in it.
+    chmod 0755 "$TMP"
+    chown -R "$DEPLOY_OWNER" "$tmp/pi" "$tmp/origin.git"
+fi
+out="$(DP_FRESH='' "$tmp/self" --tasks base 2>&1)" || fail "the self-updating deploy failed: $out"
+assert_eq "the outdated command replaces itself once" "1" "$(grep -c "updated $tmp/self from the checkout; running the new one" <<<"$out")"
+assert_eq "the new command runs the deploy once" "1" "$(grep -c 'running setup.sh base' <<<"$out")"
+assert_eq "with the given task" "base cfg=$tmp/etc" "$(cat "$tmp/ran")"
+assert_lacks "the new command is not outdated" "# outdated" "$(cat "$tmp/self")"
+assert_contains "and points at itself" "DP_SELF=$tmp/self" "$(cat "$tmp/self")"
+assert_ok "the lock is free afterwards" flock -n "$tmp/lock" true
 
 finish_tests

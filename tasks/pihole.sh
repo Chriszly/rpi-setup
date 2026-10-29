@@ -6,6 +6,9 @@ set -euo pipefail
 
 TASKS+=("pihole|Pi-hole ad blocker (official installer, unattended)")
 
+# Pi-hole's configuration file (pre-seeded before the native install).
+PH_TOML="${PH_TOML:-/etc/pihole/pihole.toml}"
+
 run_pihole() {
   : "${PIHOLE_DNS:=1.1.1.1,1.0.0.1}" "${PIHOLE_QUERY_LOGGING:=yes}" "${PIHOLE_DOCKER:=no}"
   setting_on PIHOLE_QUERY_LOGGING || true
@@ -78,9 +81,37 @@ pihole_dns_list() {
   read -r -a _dns_list <<<"${PIHOLE_DNS//,/ }"
   [[ ${#_dns_list[@]} -gt 0 ]] || die 'PIHOLE_DNS needs at least one upstream DNS server'
   for _dns in "${_dns_list[@]}"; do
-    # An IPv4/IPv6 address, optionally with Pi-hole's "#port" suffix.
-    [[ "$_dns" =~ ^[0-9a-fA-F.:]+(#[0-9]{1,5})?$ ]] || die "PIHOLE_DNS: '$_dns' is not an IP address"
+    pihole_valid_upstream "$_dns" ||
+      die "PIHOLE_DNS: '$_dns' is not an IPv4 or IPv6 address (with an optional #port, e.g. 1.1.1.1#5353)"
   done
+}
+
+# True if $1 is an upstream for Pi-hole: an IPv4 or IPv6 address, with an
+# optional "#port" (1-65535) as Pi-hole writes it.
+pihole_valid_upstream() {
+  local ip="${1%%#*}" port
+  if [[ "$1" == *#* ]]; then
+    port="${1#*#}"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || return 1
+  fi
+  valid_ipv4 "$ip" || pihole_valid_ipv6 "$ip"
+}
+
+# True if $1 is an IPv6 address: hex groups of 1-4 digits, eight of them, or
+# fewer with one "::" standing for the rest.
+pihole_valid_ipv6() {
+  local ip="$1" groups
+  [[ "$ip" =~ ^[0-9A-Fa-f:]+$ && "$ip" == *:* && "$ip" != *:::* ]] || return 1
+  [[ ! "$ip" =~ [0-9A-Fa-f]{5} ]] || return 1
+  [[ "$ip" != :* || "$ip" == ::* ]] || return 1
+  [[ "$ip" != *: || "$ip" == *:: ]] || return 1
+  read -r -a groups <<<"${ip//:/ }"
+  if [[ "$ip" == *::* ]]; then
+    [[ "${ip/::/}" != *::* ]] || return 1
+    (( ${#groups[@]} <= 7 ))
+  else
+    (( ${#groups[@]} == 8 ))
+  fi
 }
 
 # A pihole.toml before installing makes the installer run without dialogs
@@ -93,7 +124,7 @@ pihole_preseed() {
   if setting_on PIHOLE_QUERY_LOGGING; then log=true; fi
   if [[ -z "$port" ]] && port_owner 80 >/dev/null; then port=8080; fi
 
-  install -m 0755 -d /etc/pihole
+  install -m 0755 -d "${PH_TOML%/*}"
   {
     echo '# Pre-seeded by rpi-setup (tasks/pihole.sh); Pi-hole manages this file from here on.'
     echo '[dns]'
@@ -102,25 +133,27 @@ pihole_preseed() {
     echo "  queryLogging = $log"
     if [[ -n "$port" ]]; then
       echo '[webserver]'
-      echo "  port = \"${port}o,[::]:${port}o\""
+      echo "  port = \"$(pihole_port_setting "$PH_DEFAULT_PORTS" "$port")\""
     fi
     echo '[database]'
     echo "  DBinterval = $(pihole_db_interval)"
-  } >/etc/pihole/pihole.toml
-  info "Pre-seeded /etc/pihole/pihole.toml (interface $iface, upstream DNS ${*})"
+  } >"$PH_TOML"
+  info "Pre-seeded $PH_TOML (interface $iface, upstream DNS ${*})"
 }
 
-# Move the admin UI to PIHOLE_WEB_PORT if it is set and differs.
+# Move the admin UI to PIHOLE_WEB_PORT if it is set and differs; the HTTPS
+# listener (443) stays as it is.
 pihole_apply_web_port() {
-  local want="${PIHOLE_WEB_PORT:-}" cur owner
+  local want="${PIHOLE_WEB_PORT:-}" cur new owner
   [[ -n "$want" ]] || return 0
-  cur="$(pihole_web_ports | head -n1)"
-  [[ "$cur" != "$want" ]] || return 0
+  cur="$(pihole-FTL --config webserver.port 2>/dev/null)" || cur=""
+  new="$(pihole_port_setting "$cur" "$want")"
+  [[ "$cur" != "$new" ]] || return 0
   owner="$(port_owner "$want")" || owner=""
   if [[ -n "$owner" && "$owner" != pihole-FTL ]]; then
     die "PIHOLE_WEB_PORT=$want is already used by '$owner'; pick another port"
   fi
-  pihole-FTL --config webserver.port "${want}o,[::]:${want}o" >/dev/null
+  pihole-FTL --config webserver.port "$new" >/dev/null
   systemctl restart pihole-FTL || true
   say "Pi-hole web admin moved to port $want"
 }
@@ -201,10 +234,19 @@ run_pihole_container() {
       die "Port $p is already used by '$owner'; Pi-hole needs it (set PIHOLE_WEB_PORT for the admin port)"
   done
 
-  install -m 0755 -d "$dir"
-  local pw="${PIHOLE_PASSWORD:-}"
+  install -m 0755 -d "$dir" "$dir/etc-pihole"
+  # Compose reads secrets.env when it parses the file, so it must exist
+  # before the pull, even when the password is only known later.
+  [[ -f "$dir/secrets.env" ]] || install -m 0600 /dev/null "$dir/secrets.env"
+  if pihole_container_compose "$dir" "$name" "$iface" "$port" "$@" | write_if_changed "$dir/docker-compose.yml" 0644; then changed=1; fi
+  container_pull "$dir"
+  # The native Pi-hole is stopped before its /etc/pihole is copied, so the
+  # databases are not copied while FTL writes them (the copy happens once);
+  # container_up starts it again if the container does not stay up.
+  container_stop_native "$dir" pihole-FTL
   container_copy_once "$dir" /etc/pihole "$dir/etc-pihole" || true
-  install -m 0755 -d "$dir/etc-pihole"
+
+  local pw="${PIHOLE_PASSWORD:-}"
   # No password set: keep the one Pi-hole already has (copied from the native
   # install or set by an earlier run), else generate one.
   if [[ -z "$pw" ]] && ! grep -Eq '^[[:space:]]*pwhash[[:space:]]*=[[:space:]]*"[^"]+' "$dir/etc-pihole/pihole.toml" 2>/dev/null; then
@@ -214,12 +256,7 @@ run_pihole_container() {
   fi
   if [[ -n "$pw" ]]; then
     if container_write_secrets "$dir" "FTLCONF_webserver_api_password=$pw"; then changed=1; fi
-  elif [[ ! -f "$dir/secrets.env" ]]; then
-    install -m 0600 /dev/null "$dir/secrets.env"
   fi
-  if pihole_container_compose "$dir" "$name" "$iface" "$port" "$@" | write_if_changed "$dir/docker-compose.yml" 0644; then changed=1; fi
-  container_pull "$dir"
-  container_stop_native "$dir" pihole-FTL
 
   container_up "$dir" "$name" "$changed"
   say "Pi-hole container running - web admin: $(service_url "$port")/admin (DNS on port 53, interface $iface)"
@@ -242,7 +279,7 @@ services:
   pihole:
     image: "$PIHOLE_IMAGE"
     container_name: $name
-    hostname: $(hostname)
+    hostname: "$(hostname)"
     restart: unless-stopped
     network_mode: host
     pids_limit: 512
@@ -254,7 +291,7 @@ services:
       FTLCONF_dns_upstreams: "$ups"
       FTLCONF_dns_interface: "$iface"
       FTLCONF_dns_queryLogging: "$log"
-      FTLCONF_webserver_port: "${port}o,[::]:${port}o"
+      FTLCONF_webserver_port: "$(pihole_port_setting "$PH_DEFAULT_PORTS" "$port")"
       FTLCONF_database_DBinterval: "$interval"
 $([[ -z "$mode" ]] || printf '      FTLCONF_dns_listeningMode: "%s"\n' "$mode")
     volumes:

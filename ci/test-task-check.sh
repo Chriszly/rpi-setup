@@ -105,19 +105,22 @@ for t in web pihole samba; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compos
 install -d "$ctr/web/conf" "$ctr/samba/data"
 printf 'server {\n    listen 8088;\n}\n' >"$ctr/web/conf/default.conf"
 printf 'share:\n  - name: "nas-share"\n' >"$ctr/samba/data/config.yml"
-docker() {
-  case "$1 ${2:-}" in
-    "inspect --type") [[ " web pihole samba " == *" ${4:-} "* ]] ;;
-    "inspect -f") echo running ;;
-    "exec pihole") echo '8089o,[::]:8089o' ;;
-    *) return 1 ;;
-  esac
-}
-curl() { printf '200'; }
-ss() { echo 'LISTEN 0 0 *:x *:*'; }
-unit_exists() { return 1; }
-apt_installed() { return 1; }
-out="$(RPI_SETUP_CONTAINER_ROOT="$ctr" RPI_SETUP_CONFIG_DIR="$ctr/cfg" check_tasks 2>&1)"
+# The stubs live in the subshell, so the library's own helpers stay intact.
+out="$(
+  docker() {
+    case "$1 ${2:-}" in
+      "inspect --type") [[ " web pihole samba " == *" ${4:-} "* ]] ;;
+      "inspect -f") echo running ;;
+      "exec pihole") echo '8089o,[::]:8089o' ;;
+      *) return 1 ;;
+    esac
+  }
+  curl() { printf '200'; }
+  ss() { echo 'LISTEN 0 0 *:x *:*'; }
+  unit_exists() { return 1; }
+  apt_installed() { return 1; }
+  RPI_SETUP_CONTAINER_ROOT="$ctr" RPI_SETUP_CONFIG_DIR="$ctr/cfg" check_tasks 2>&1
+)"
 for c in web pihole samba; do
   assert_contains "container mode: $c is checked as a container" "container $c" "$out"
 done
@@ -126,7 +129,67 @@ assert_contains "container mode: Pi-hole port from FTL in the container" ":8089/
 assert_contains "container mode: samba share from config.yml" "[nas-share] in the container's config.yml" "$out"
 assert_lacks "container mode: no native nginx check" "service nginx" "$out"
 assert_lacks "container mode: no native smbd check" "service smbd" "$out"
-unset -f docker curl ss unit_exists apt_installed
+rm -rf "$ctr"
+
+# --- check_tasks: firewall, backup, runner, web timers, netalertx, teamspeak -----
+# systemctl, nft and docker are stubbed; the units and projects "exist" in a
+# temp folder. The firewall unit is active while the nft table is missing.
+ctr="$(mktemp -d)"
+for t in netalertx teamspeak; do install -d "$ctr/$t"; touch "$ctr/$t/docker-compose.yml"; done
+install -d "$ctr/runner" "$ctr/cfg/local"
+printf 'actions.runner.alex-pis.homepi.service\n' >"$ctr/runner/.service"
+printf "TEAMSPEAK_QUERY_HTTP='yse'\n" >"$ctr/cfg/local/teamspeak.env"
+chmod 0600 "$ctr/cfg/local/teamspeak.env"
+# stubs UNITS... - the stubs for one check_tasks run: the named systemd units
+# exist (unit_exists goes through systemctl list-unit-files), every unit is
+# active and enabled, the last backup run failed, nft returns $NFT_RC.
+stubs() {
+  STUB_UNITS=" $* "
+  systemctl() {
+    case "$1" in
+      list-unit-files) [[ "$STUB_UNITS" == *" $3 "* ]] && echo "$3 enabled"; return 0 ;;
+      is-active) echo active ;;
+      is-enabled) echo enabled ;;
+      is-failed) echo failed ;;
+    esac
+  }
+  nft() { return "${NFT_RC:-1}"; }
+  docker() { case "$1 ${2:-}" in "inspect -f") echo running ;; *) return 1 ;; esac; }
+  curl() { printf '200'; }
+  ss() { echo 'LISTEN 0 0 *:x *:*'; }
+  apt_installed() { return 1; }
+  have() { case "$1" in docker|nft|curl|ss|systemctl) return 0 ;; *) return 1 ;; esac; }
+}
+out="$(
+  stubs rpi-setup-firewall.service rpi-setup-backup.timer actions.runner.alex-pis.homepi.service
+  RPI_SETUP_CONTAINER_ROOT="$ctr" RPI_SETUP_CONFIG_DIR="$ctr/cfg" RPI_SETUP_RUNNER_DIR="$ctr/runner" check_tasks 2>&1
+)"
+assert_contains "firewall unit is checked" "OK    firewall               service rpi-setup-firewall active, enabled" "$out"
+if [[ $EUID -eq 0 ]]; then
+  assert_contains "a missing rpi_setup table is a FAIL although the unit is active" "FAIL  firewall: rules        table inet rpi_setup is missing" "$out"
+else
+  assert_contains "the rules are not read without root" "WARN  firewall: rules        not run as root" "$out"
+fi
+assert_contains "backup timer is checked" "OK    backup: timer          service rpi-setup-backup.timer active, enabled" "$out"
+assert_contains "a failed backup run is a WARN" "WARN  backup: last run       failed" "$out"
+assert_contains "runner service is checked by the unit svc.sh recorded" "OK    runner                 service actions.runner.alex-pis.homepi.service active" "$out"
+assert_contains "netalertx is found under RPI_SETUP_CONTAINER_ROOT" "container netalertx" "$out"
+assert_contains "teamspeak is found under RPI_SETUP_CONTAINER_ROOT" "container teamspeak" "$out"
+assert_contains "a mistyped TEAMSPEAK_QUERY_HTTP is a WARN" "WARN  teamspeak: query       TEAMSPEAK_QUERY_HTTP must be yes or no (got 'yse')" "$out"
+assert_lacks "web timers are only checked with the web task" "web: links timer" "$out"
+out="$(
+  NFT_RC=0
+  stubs rpi-setup-firewall.service nginx.service rpi-setup-web-links.timer rpi-setup-updates.timer
+  RPI_SETUP_CONTAINER_ROOT="$ctr/none" RPI_SETUP_CONFIG_DIR="$ctr/cfg" RPI_SETUP_RUNNER_DIR="$ctr/none" check_tasks 2>&1
+)"
+if [[ $EUID -eq 0 ]]; then
+  assert_contains "a loaded rpi_setup table is OK" "OK    firewall: rules        table inet rpi_setup is loaded" "$out"
+fi
+assert_contains "web links timer is checked" "OK    web: links timer       service rpi-setup-web-links.timer active" "$out"
+assert_contains "web updates timer is checked" "OK    web: updates timer     service rpi-setup-updates.timer active" "$out"
+assert_lacks "no backup timer: nothing reported" "backup:" "$out"
+assert_lacks "no runner: nothing reported" "runner" "$out"
+unset -f stubs
 rm -rf "$ctr"
 
 # --- whole script ---------------------------------------------------------------

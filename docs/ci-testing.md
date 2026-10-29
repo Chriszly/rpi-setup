@@ -15,17 +15,18 @@ quirks). The workflow uses several increasingly faithful layers:
 | Job              | Trigger                      | Mechanism                                        | Fidelity | Speed   |
 |------------------|------------------------------|--------------------------------------------------|----------|---------|
 | `syntax`         | PR, push to `main`, manual   | `bash -n`, shellcheck, actionlint, `--list`      | -        | seconds |
-| `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`             | -        | seconds |
+| `unit`           | PR, push to `main`, manual   | `ci/test-lib.sh`, `ci/test-setup.sh`, `ci/test-task-*.sh` | - | seconds |
 | `docker-smoke`   | PR, push to `main`, manual   | Docker tasks on a plain `ubuntu-latest` runner   | low      | minutes |
 | `container-helpers`, `container-smoke` | PR, push to `main`, manual | `<TASK>_DOCKER=yes` on a plain `ubuntu-latest` runner | low | minutes |
-| `provision-gate` | `pull_request` touching provisioning | booted `systemd-nspawn` container, latest release and Bookworm, two parallel halves each | high | minutes |
+| `provision-gate` | PR touching provisioning, push to `main`, manual | booted `systemd-nspawn` container, latest release and Bookworm, two parallel halves each | high | minutes |
 | `provision-qemu` | `workflow_dispatch` (manual) | full QEMU VM, Pi 3B+ emulation                   | highest  | slow    |
 
 - **`syntax`** and **`unit`** are fast pre-checks; every other job `needs:`
   both (directly or through `container-helpers`), so lint or unit-test
   failures stop before the expensive part.
   `unit` runs the tests under `sudo` so the root-only assertions (UID
-  assignment, the `setup.sh` menu) are included.
+  assignment, the `setup.sh` menu) are included; `ci/test-task-<name>.sh`
+  are the unit tests of the single tasks.
 - **`docker-smoke`** runs the `docker`, `netalertx` and `teamspeak` tasks on the
   stock Ubuntu runner (x86_64, Docker preinstalled). It is not a Pi, but it is
   the only per-PR coverage of the compose/UID logic, because Docker does not
@@ -34,19 +35,23 @@ quirks). The workflow uses several increasingly faithful layers:
   (`lib/containers.sh`), then **`container-smoke`** runs every
   `ci/smoke-container-<task>.sh`: each runs `setup.sh <task>` with
   `<TASK>_DOCKER=yes`, checks the service answers, re-runs it and switches
-  back. The runner has Docker and a booted systemd; the nspawn gate has neither
-  Docker nor a free port 53.
+  back. `ci/smoke-container-web-pihole.sh` runs in between and checks that
+  the `web` task takes port 80 from a Pi-hole container and moves the admin
+  page to 8080. The runner has Docker and a booted systemd; the nspawn gate
+  has neither Docker nor a free port 53.
 - **`provision-gate`** is the per-PR gate. It boots the image with systemd as
   PID 1 (`ethanjli/pinspawn-action` with `boot: true`) inside a
   `systemd-nspawn` container on an `ubuntu-latest` runner. Systemd PID 1 is
   essential: several tasks rely on `systemctl` (`web`, `samba`),
   which fails in a plain chroot-style container that never boots an init program.
-  Each release runs as two parallel jobs, `system` (`base samba`) and `web`
-  (`web pihole`): package installs under arm64 emulation dominate
+  Each release runs as two parallel jobs, `system` (`base samba log2ram`)
+  and `web` (`web pihole`): package installs under arm64 emulation dominate
   the gate, so splitting them roughly halves its wall time. A small `changes`
   job (`dorny/paths-filter`) skips the gate for PRs that touch none of
-  `setup.sh`, `lib/`, `tasks/`, `ci/provision.sh`, this workflow or
-  `.github/actions/` (a skipped job counts as passed for required checks).
+  `setup.sh`, `lib/`, `tasks/`, `config/`, `host/flash.sh`,
+  `ci/provision.sh`, this workflow or `.github/actions/` (a skipped job
+  counts as passed for required checks); on a push to `main` and on a manual
+  run the gate always runs.
 - **`provision-qemu`** is the manual maximum-fidelity run. It boots the same
   image in `qemu-system-aarch64` emulating a Raspberry Pi 3B+
   (`ethanjli/piqemu-action`, `machine: rpi-3b+`). Use it before a release or
@@ -70,8 +75,10 @@ checks the PR description and that the PR has at least one `changetype` and
 one `domaintype` label (the first word of a label's description is its type;
 Dependabot's PRs are skipped), and
 [`pr-links.yml`](../.github/workflows/pr-links.yml) fails a PR whose title,
-description or commit messages link anywhere but GitHub (Dependabot's PRs are
-skipped).
+description or commit messages link anywhere but GitHub; code blocks and code
+spans, private and loopback addresses, `localhost`, `*.local`, the reserved
+example names and `<placeholder>` hosts do not count, and Dependabot's PRs
+are skipped.
 
 ## What runs
 
@@ -107,7 +114,8 @@ When any step of `ci/provision.sh` fails, an `EXIT` trap writes the guest's
 `journalctl -b`, `dmesg`, `/var/log/*.log`, `systemctl status` for every
 expected service and `docker logs` for every expected container into
 `<workdir>/ci-logs/`. The workflow uploads that directory as an artifact
-(`provision-gate-logs`, `provision-qemu-logs` or `docker-smoke-logs`):
+(`provision-gate-logs-<release>-<group>`, `provision-qemu-logs` or
+`docker-smoke-logs`):
 
 - **gate / smoke**: the workdir is the checkout, so the logs land directly on
   the runner.
@@ -144,8 +152,8 @@ Both come from the shared
 action, which downloads (or restores from the cache), verifies, extracts and
 grows the image; the steps and the reasons for them are commented there. The
 gate's steps in [`test-provision.yml`](../.github/workflows/test-provision.yml)
-then cache and install the host packages `pinspawn-action` needs, and bind
-the checkout into the container at `/workspace`; the QEMU job copies it into
+then install the host packages `pinspawn-action` needs, and bind the
+checkout into the container at `/workspace`; the QEMU job copies it into
 the image's `/opt/rpi-setup` instead, since QEMU has no bind mounts.
 
 ### Bumping the pinned image
@@ -202,6 +210,7 @@ The unit tests and linters run anywhere with bash:
 ```bash
 bash ci/test-lib.sh          # sudo for the UID-assignment tests
 bash ci/test-setup.sh        # sudo for the menu/CLI tests
+for t in ci/test-task-*.sh; do bash "$t"; done
 shellcheck setup.sh lib/*.sh tasks/*.sh host/*.sh ci/*.sh config/*.sh
 docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12
 ```

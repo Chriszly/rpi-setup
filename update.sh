@@ -27,7 +27,8 @@ usage() {
 Usage: sudo bash update.sh [options]
 Update everything rpi-setup installed on this Pi:
   - OS packages (apt-get update and upgrade)
-  - the Docker containers of rpi-setup tasks (pull new images, recreate changed ones)
+  - the Docker containers of rpi-setup tasks (pull new images, rebuild the
+    images built on this Pi, recreate changed containers)
   - the start page of the web task, if installed (setup.sh web)
   - Pi-hole (pihole -up), if installed
   - the EEPROM firmware (rpi-eeprom-update -a), on a Raspberry Pi
@@ -36,7 +37,8 @@ Options:
   --no-apt         skip the OS package upgrade
   --no-containers  skip the container update
   --containers-only
-                   only update the containers (no apt, Pi-hole or EEPROM)
+                   only update the containers and the start page of the web
+                   task (no apt, Pi-hole or EEPROM)
   --skip "a b"     leave these tasks alone: their containers, and the start
                    page for the web task (names, space or comma separated)
   -h, --help       show this help
@@ -92,13 +94,17 @@ step_apt() {
 }
 
 # Pull every project's images, then "up -d": Compose recreates only the
-# containers whose image or configuration changed.
+# containers whose image or configuration changed. A project that builds an
+# image on the Pi (the TeamSpeak usage logger) is built again with its base
+# image pulled, since "pull" and "up" never rebuild.
 step_containers() {
   local file rc=0
   for file in "$@"; do
     hr
     info "Updating $file"
-    if run docker compose -f "$file" pull && run docker compose -f "$file" up -d; then
+    if run docker compose -f "$file" pull &&
+       { ! grep -qE '^[[:space:]]+build:' "$file" || run docker compose -f "$file" build --pull; } &&
+       run docker compose -f "$file" up -d; then
       say "Updated $file"
     else
       warn "Could not update $file (inspect with: docker compose -f $file logs)"
@@ -129,6 +135,7 @@ skip_step() {
 }
 
 main() {
+  local name
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
@@ -137,13 +144,16 @@ main() {
       --containers-only) DO_APT=0 DO_PIHOLE=0 DO_EEPROM=0 SKIP_REASON=--containers-only ;;
       --skip)
         [[ $# -ge 2 ]] || die '--skip needs task names, e.g. --skip "pihole web"'
+        for name in ${2//,/ }; do
+          [[ -f "$SCRIPT_DIR/tasks/$name.sh" ]] || die "--skip: unknown task '$name' (no tasks/$name.sh)"
+        done
         SKIP_TASKS+="${2//,/ } "; shift ;;
       -h|--help) usage; return 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
     shift
   done
-  [[ $DRY_RUN -eq 1 ]] || need_root
+  [[ $DRY_RUN -eq 1 ]] || need_root 'update.sh [options]'
   export DEBIAN_FRONTEND=noninteractive
 
   if [[ $DO_APT -eq 0 ]]; then
@@ -177,8 +187,12 @@ main() {
     skip_step web 'start page not installed'
   fi
 
+  # With PIHOLE_DOCKER=yes the native package stays installed: "pihole -up"
+  # would update it and start pihole-FTL again next to the container.
   if [[ $DO_PIHOLE -eq 0 ]]; then
     skip_step pihole "$SKIP_REASON"
+  elif task_in_container pihole; then
+    skip_step pihole 'Pi-hole runs in its container (updated with the containers)'
   elif have pihole; then
     do_step pihole run pihole -up
   else

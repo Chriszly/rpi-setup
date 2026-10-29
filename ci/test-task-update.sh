@@ -43,8 +43,10 @@ make_shims "$TMP/nodocker" apt-get pihole rpi-eeprom-update
 OPT="$TMP/opt"
 # pihole was switched back to native (container_leave disabled its compose file).
 mkdir -p "$OPT/netalertx" "$OPT/teamspeak" "$OPT/other" "$OPT/samba" "$OPT/pihole"
-touch "$OPT/netalertx/docker-compose.yml" "$OPT/teamspeak/docker-compose.yml" "$OPT/other/docker-compose.yml" \
+touch "$OPT/netalertx/docker-compose.yml" "$OPT/other/docker-compose.yml" \
       "$OPT/pihole/docker-compose.yml.disabled"
+# teamspeak builds its usage logger's image on the Pi (a "build:" service).
+printf 'services:\n  usage:\n    build:\n      context: ./usage\n' >"$OPT/teamspeak/docker-compose.yml"
 printf 'Raspberry Pi 5 Model B Rev 1.0\0' >"$TMP/model-pi"
 printf 'Generic x86 PC\0' >"$TMP/model-pc"
 
@@ -79,6 +81,9 @@ assert_contains "dry-run: apt upgrade with the noninteractive dpkg options" \
 assert_contains "dry-run: pull netalertx" "[dry-run] docker compose -f $OPT/netalertx/docker-compose.yml pull" "$OUT"
 assert_contains "dry-run: up netalertx" "[dry-run] docker compose -f $OPT/netalertx/docker-compose.yml up -d" "$OUT"
 assert_contains "dry-run: pull teamspeak" "[dry-run] docker compose -f $OPT/teamspeak/docker-compose.yml pull" "$OUT"
+assert_contains "dry-run: a project with a build is rebuilt on a fresh base image" \
+    "[dry-run] docker compose -f $OPT/teamspeak/docker-compose.yml build --pull" "$OUT"
+assert_lacks "dry-run: a project without a build is not built" "$OPT/netalertx/docker-compose.yml build" "$OUT"
 assert_contains "dry-run: up teamspeak" "[dry-run] docker compose -f $OPT/teamspeak/docker-compose.yml up -d" "$OUT"
 assert_contains "dry-run: image prune" "[dry-run] docker image prune -f" "$OUT"
 assert_contains "dry-run: pihole -up" "[dry-run] pihole -up" "$OUT"
@@ -88,6 +93,16 @@ assert_lacks "a task switched back to native is not updated" "$OPT/pihole" "$OUT
 assert_lacks "no reboot hint without reboot-required" "Reboot recommended" "$OUT"
 
 assert_contains "no start page: web skipped" "skipped (start page not installed)" "$OUT"
+
+# PIHOLE_DOCKER=yes: the native pihole command is still there, but pihole -up
+# would start the native pihole-FTL again next to the container.
+mv "$OPT/pihole/docker-compose.yml.disabled" "$OPT/pihole/docker-compose.yml"
+upd all pi --dry-run
+assert_eq "Pi-hole in its container: exits 0" 0 "$RC"
+assert_lacks "Pi-hole in its container: no pihole -up" "[dry-run] pihole -up" "$OUT"
+assert_contains "Pi-hole in its container: says so" "skipped (Pi-hole runs in its container" "$OUT"
+assert_contains "Pi-hole in its container: its project is updated" "[dry-run] docker compose -f $OPT/pihole/docker-compose.yml pull" "$OUT"
+mv "$OPT/pihole/docker-compose.yml" "$OPT/pihole/docker-compose.yml.disabled"
 
 touch "$TMP/web-links"
 WEB_LINKS="$TMP/web-links" upd all pi --dry-run --containers-only
@@ -130,6 +145,10 @@ assert_contains "and says so" "skipped (--skip)" "$OUT"
 rm -f "$TMP/web-links"
 upd all pi --dry-run --skip
 assert_eq "--skip without names exits non-zero" 1 "$RC"
+upd all pi --dry-run --skip pihol
+assert_eq "--skip with a name that is no task exits non-zero" 1 "$RC"
+assert_contains "--skip names the unknown task" "unknown task 'pihol'" "$OUT"
+assert_lacks "--skip with a typo updates nothing" "[dry-run]" "$OUT"
 
 upd nodocker pc --dry-run
 assert_eq "dry-run without docker exits 0" 0 "$RC"
@@ -142,10 +161,12 @@ assert_contains "no pihole: skipped" "skipped (Pi-hole not installed)" "$OUT"
 assert_contains "no apt-get: skipped" "skipped (apt-get not found)" "$OUT"
 assert_contains "no rpi-eeprom-update: skipped" "skipped (rpi-eeprom-update not found)" "$OUT"
 
-rm -f "$OPT/netalertx/docker-compose.yml" "$OPT/teamspeak/docker-compose.yml"
+mv "$OPT/netalertx/docker-compose.yml" "$OPT/netalertx/away"
+mv "$OPT/teamspeak/docker-compose.yml" "$OPT/teamspeak/away"
 upd all pi --dry-run
 assert_contains "no rpi-setup project: containers skipped" "skipped (no rpi-setup compose project" "$OUT"
-touch "$OPT/netalertx/docker-compose.yml" "$OPT/teamspeak/docker-compose.yml"
+mv "$OPT/netalertx/away" "$OPT/netalertx/docker-compose.yml"
+mv "$OPT/teamspeak/away" "$OPT/teamspeak/docker-compose.yml"
 
 touch "$TMP/reboot-required"
 upd all pi --dry-run --no-apt
@@ -161,6 +182,7 @@ apt-get upgrade -y --with-new-pkgs -o Dpkg::Options::=--force-confdef -o Dpkg::O
 docker compose -f $OPT/netalertx/docker-compose.yml pull
 docker compose -f $OPT/netalertx/docker-compose.yml up -d
 docker compose -f $OPT/teamspeak/docker-compose.yml pull
+docker compose -f $OPT/teamspeak/docker-compose.yml build --pull
 docker compose -f $OPT/teamspeak/docker-compose.yml up -d
 docker image prune -f
 pihole -up
@@ -181,6 +203,9 @@ rpi-eeprom-update -a"
     assert_lacks "no upgrade after a failed apt update" "apt-get upgrade" "$(cat "$LOG")"
     assert_contains "containers still update after apt failed" "docker image prune -f" "$(cat "$LOG")"
 else
+    upd all pi
+    assert_eq "update.sh refuses to run as non-root" 1 "$RC"
+    assert_contains "update.sh says how to run it as root" "sudo bash update.sh" "$OUT"
     skip "real runs against the shims need root"
 fi
 

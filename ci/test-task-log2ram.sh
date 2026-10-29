@@ -28,20 +28,26 @@ assert_fails "size injection"          log2ram_size_k '1M;rm'
 
 # --- log2ram_set_conf ---------------------------------------------------------
 conf="$TMP/log2ram.conf"
-printf '# Size\nSIZE=40M\nUSE_RSYNC=true\nMAIL=true\nPATH_DISK="/var/log"\n' >"$conf"
+printf '# Size\nSIZE=40M\nUSE_RSYNC=true\nNOTIFICATION=true\nPATH_DISK="/var/log"\n' >"$conf"
 assert_ok "conf: changing the size reports a change" log2ram_set_conf "$conf" 128M
-assert_eq "conf: size and mail set, rest kept" \
-  "$(printf '# Size\nSIZE=128M\nUSE_RSYNC=true\nMAIL=false\nPATH_DISK="/var/log"\n')" "$(cat "$conf")"
+assert_eq "conf: size set and notifications off, rest kept" \
+  "$(printf '# Size\nSIZE=128M\nUSE_RSYNC=true\nNOTIFICATION=false\nPATH_DISK="/var/log"\n')" "$(cat "$conf")"
 assert_fails "conf: same size again changes nothing" log2ram_set_conf "$conf" 128M
+assert_fails "conf: the same size in lower case changes nothing" log2ram_set_conf "$conf" 128m
+log2ram_set_conf "$conf" 256m || true
+assert_contains "conf: a lower-case suffix is written upper-case" "SIZE=256M" "$(cat "$conf")"
 printf 'MAIL=true\n' >"$conf"
 log2ram_set_conf "$conf" 256M || true
-assert_eq "conf: missing SIZE is added" "$(printf 'MAIL=false\nSIZE=256M\n')" "$(cat "$conf")"
+assert_eq "conf: missing SIZE is added, MAIL of an old log2ram turned off" "$(printf 'MAIL=false\nSIZE=256M\n')" "$(cat "$conf")"
 
 # --- log2ram_journald ---------------------------------------------------------
 L2R_JOURNALD_CONF="$TMP/journald.conf.d/20-log2ram.conf"
 assert_ok "journald: first write reports a change" log2ram_journald 64M
 assert_contains "journald: SystemMaxUse set" "SystemMaxUse=64M" "$(cat "$L2R_JOURNALD_CONF")"
 assert_fails "journald: same limit changes nothing" log2ram_journald 64M
+assert_fails "journald: the same limit in lower case changes nothing" log2ram_journald 64m
+log2ram_journald 32m || true
+assert_contains "journald: a lower-case suffix is written upper-case (journald rejects 32m)" "SystemMaxUse=32M" "$(cat "$L2R_JOURNALD_CONF")"
 
 # --- log2ram_valid_sync / log2ram_timer_dropin -------------------------------
 assert_ok    "sync accepts hourly"          log2ram_valid_sync hourly

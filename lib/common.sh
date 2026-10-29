@@ -62,30 +62,47 @@ boot_config_block() {
 # True inside a container (systemd-nspawn, Docker, ...) rather than on real hardware.
 in_container() { [[ -f /run/systemd/container ]] || grep -q 'container' /proc/1/cgroup 2>/dev/null; }
 
-need_root() { [[ $EUID -eq 0 ]] || die 'Please run as root: sudo bash setup.sh [task ...]'; }
+# Dies unless run as root; $1 names the command to repeat with sudo (default:
+# setup.sh).
+need_root() { [[ $EUID -eq 0 ]] || die "Please run as root: sudo bash ${1:-setup.sh [task ...]}"; }
+
+# True when this run came in over the network (SSH), so a change to the
+# address or to sshd can end it. sudo's env_reset strips SSH_CONNECTION, so
+# logind and "who -m" (which shows the remote host in parentheses) are asked
+# as well.
+remote_session() {
+  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
+  [[ "$(loginctl show-session self -p Remote --value 2>/dev/null)" == yes ]] && return 0
+  [[ "$(who -m 2>/dev/null)" == *'('*')'* ]]
+}
 
 # True if command $1 is available.
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# True if systemd unit $1 exists on this system (installed, whatever its state).
+# True if systemd unit $1 exists on this system (installed, whatever its
+# state). A bare name is a service; give "name.timer" for a timer.
 unit_exists() {
-  [[ -n "$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null)" ]]
+  local unit="$1"
+  [[ "$unit" == *.* ]] || unit+=.service
+  [[ -n "$(systemctl list-unit-files --no-legend "$unit" 2>/dev/null)" ]]
 }
 
-# Refresh apt lists at most once an hour per run.
+# Refresh apt lists at most once an hour per run. The stamp file records the
+# last refresh; RPI_SETUP_APT_STAMP moves it (the unit tests).
 apt_update() {
-  if [[ ! -f /var/lib/rpi-setup/apt-updated ]] ||
-     [[ $(( $(date +%s) - $(stat -c %Y /var/lib/rpi-setup/apt-updated) )) -gt 3600 ]]; then
+  local stamp="${RPI_SETUP_APT_STAMP:-/var/lib/rpi-setup/apt-updated}"
+  if [[ ! -f "$stamp" ]] ||
+     [[ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -gt 3600 ]]; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y
-    install -m 0755 -d /var/lib/rpi-setup
-    touch /var/lib/rpi-setup/apt-updated
+    install -m 0755 -d "$(dirname "$stamp")"
+    touch "$stamp"
   fi
 }
 
 # Refresh apt lists now, ignoring the hourly cache. Needed right after adding
 # an apt source: lists fetched a minute ago (e.g. by "base") don't know it yet.
 apt_update_now() {
-  rm -f /var/lib/rpi-setup/apt-updated
+  rm -f "${RPI_SETUP_APT_STAMP:-/var/lib/rpi-setup/apt-updated}"
   apt_update
 }
 
@@ -211,6 +228,27 @@ pihole_web_ports() {
   done | awk '!seen[$0]++'
 }
 
+# Pi-hole's own webserver.port: HTTP on 80 and HTTPS on 443, IPv4 and IPv6
+# ("o" = optional, so a taken port does not stop FTL; "s" = TLS).
+PH_DEFAULT_PORTS='80o,443os,[::]:80o,[::]:443os'
+
+# Pi-hole's webserver.port list $1 with every plain HTTP entry moved to
+# port $2; the TLS entries ("s" flag, the admin UI's HTTPS listener on 443)
+# keep their port. A list without an HTTP entry gets $2 for IPv4 and IPv6
+# in front. Entries look like [address:]port[flags].
+pihole_port_setting() {
+  local cfg="$1" want="$2" e out="" http=0
+  for e in ${cfg//,/ }; do
+    if [[ "$e" =~ ^(.*:)?([0-9]+)([A-Za-z]*)$ && "${BASH_REMATCH[3]}" != *s* ]]; then
+      e="${BASH_REMATCH[1]}${want}${BASH_REMATCH[3]}"
+      http=1
+    fi
+    out+="${out:+,}$e"
+  done
+  (( http )) || out="${want}o,[::]:${want}o${out:+,$out}"
+  printf '%s\n' "$out"
+}
+
 # Grep container logs until a pattern matches (default: 30 tries, 1s apart).
 # Prints the last matching line, or the empty string on timeout.
 wait_for_log() {
@@ -289,12 +327,14 @@ config_is_system() { [[ "$(config_dir)" == "$(system_config_dir)" ]]; }
 central_config() { printf '%s/rpi-setup.env\n' "$(config_dir)"; }
 
 # The value part of a KEY=value line: surrounding whitespace, a matching pair
-# of quotes and a trailing " # comment" are removed. Nothing is expanded, so
-# $, backticks and backslashes reach the task literally. Quote a value that
-# contains " #"; a value with a double quote in it goes in single quotes.
+# of quotes and a trailing " # comment" are removed; "NAME=   # comment" is
+# an empty value. Nothing is expanded, so $, backticks and backslashes reach
+# the task literally. Quote a value that contains " #" or starts with #; a
+# value with a double quote in it goes in single quotes.
 config_value() {
   local v="$1"
   v="${v#"${v%%[![:space:]]*}"}"
+  [[ "$v" != '#'* ]] || v=''
   if [[ "$v" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]] || [[ "$v" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
     return
@@ -331,12 +371,13 @@ config_each() {
   done <"$file"
 }
 
-# Warn if file $1 holds a non-empty password/key and other users can read it.
+# Warn if file $1 holds a non-empty password or token and other users can
+# read it.
 config_warn_perms() {
   local file="$1" mode
   mode="$(stat -c %a "$file" 2>/dev/null)" || return 0
   [[ "$mode" =~ ^[0-7]+$ ]] && (( 8#$mode & 077 )) || return 0
-  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(PASSWORD|AUTHKEY)=[[:space:]]*[^[:space:]#]' "$file"; then
+  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(PASSWORD|TOKEN)=[[:space:]]*[^[:space:]#]' "$file"; then
     warn "$file holds a password but other users can read it; run: chmod 600 $file"
   fi
 }
@@ -348,6 +389,21 @@ task_setting_names() {
   sed -nE 's/^[[:space:]]*([A-Z][A-Z0-9_]*)=.*/\1/p' "$file"
 }
 
+# The split files in config/local/ are only ever written from the central
+# file, so when that file is gone they are left over from an earlier run and
+# would keep its values in force. Warn and have load_task_config ignore them
+# (every task then uses its defaults). setup.sh calls this when the central
+# file is missing. Returns 0 either way.
+_LOCAL_CONFIG_STALE=0
+ignore_stale_local_config() {
+  local dir
+  dir="$(config_dir)/local"
+  [[ -n "$(ls "$dir"/*.env 2>/dev/null)" ]] || return 0
+  _LOCAL_CONFIG_STALE=1
+  warn "$(central_config) does not exist, but $dir still holds settings split from it; they are ignored and every task uses its defaults."
+  warn "Delete $dir, or create the file again with: bash setup.sh --init-config"
+}
+
 # Read task $1's settings from $2 (default: config/local/<task>.env) into
 # shell variables. Only keys named <TASK>_... are accepted, so a settings file
 # can never change PATH or another task's settings. A variable that is already
@@ -355,7 +411,10 @@ task_setting_names() {
 # A missing file is fine: every setting has a default.
 load_task_config() {
   local task="$1" file="${2:-}"
-  [[ -n "$file" ]] || file="$(config_dir)/local/$task.env"
+  if [[ -z "$file" ]]; then
+    [[ $_LOCAL_CONFIG_STALE -eq 0 ]] || return 0
+    file="$(config_dir)/local/$task.env"
+  fi
   [[ -f "$file" ]] || return 0
   [[ -r "$file" ]] || die "Cannot read $file"
   config_warn_perms "$file"

@@ -16,7 +16,7 @@ taken down again. The first scan takes 5-10 minutes.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `NETALERTX_PORT` | `20211` | Web UI port. |
+| `NETALERTX_PORT` | `20211` | Web UI port. Not 20212: NetAlertX's API, which the web UI talks to, has that port, and the task stops on it. |
 | `NETALERTX_SCAN_SUBNETS` | detected from the default route | Subnets to scan, e.g. `'192.168.1.0/24 --interface=eth0'`; several separated by `;`. |
 | `NETALERTX_LOGIN` | `yes` | Ask for a password before the web UI opens. `no` lets anyone on the LAN open it. |
 | `NETALERTX_PASSWORD` | empty: generated | Web UI password. Empty: generated on the first install, printed once and saved; re-runs keep using it. |
