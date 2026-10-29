@@ -60,4 +60,9 @@ this task through the [runner](runner.md)'s Deploy workflow with
 ## Reach it
 
 `http://<pi>:<port>` for each app, and its card on the start page.
-The `firewall` task opens each app's port.
+
+Docker publishes each app's port itself, before the `firewall` task's rules
+see it, so the port is open to anyone who reaches the Pi: the firewall task
+lists it as open, and `FIREWALL_ALLOW_FROM` does not limit it. How to close
+or limit such a port, with a rule in Docker's `DOCKER-USER` chain:
+[Ports of Docker containers](firewall.md#ports-of-docker-containers).

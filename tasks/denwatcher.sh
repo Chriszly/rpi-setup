@@ -99,7 +99,10 @@ EOF2
 # addons volume the website reads. It never gets the Docker socket, which
 # would give it control of the Pi. It runs as root only so it may read those
 # names (root-only files), but without any capability, network or writable
-# file system. Compose does not create a missing DOCKER_DIR/containers.
+# file system. The same files hold every container's whole configuration
+# (its environment, with the values of its env_file) and its logs, and
+# Docker keeps no narrower folder, so the add-on can read all of that; the
+# docs say so. Compose does not create a missing DOCKER_DIR/containers.
 denwatcher_compose_containers() {
   cat <<EOF2
   den-watcher-containers:

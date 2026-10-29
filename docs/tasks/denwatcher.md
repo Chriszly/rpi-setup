@@ -20,7 +20,7 @@ shown and it is taken down again.
 | `DENWATCHER_PORT` | `9393` | Port of the website on the Pi (TCP). The task stops if another program already uses it. |
 | `DENWATCHER_IMAGE` | `ghcr.io/programmer-den/den-watcher:main` | Docker image. `:main` follows Den-Watcher's main branch; a release such as `:1.2.3` stays fixed. |
 | `DENWATCHER_ROUTERS` | empty | Routers to show as devices of their own (Den-Watcher 2.0 and later), as `name=protocol:address`, comma-separated, such as `Router=upnp:192.168.1.1`. The protocol is `upnp` (no login), `asus`, `fritzbox` or `snmpv3` (with the user before the address, such as `Box=fritzbox:user@192.168.178.1`) or `snmp` (v2c). Becomes Den-Watcher's `HUB_ROUTERS`. |
-| `DENWATCHER_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see below). `no` leaves it out. |
+| `DENWATCHER_CONTAINERS` | `yes` | Show the CPU and memory of every other Docker container on the Pi, with Den-Watcher's containers add-on (see [Containers on the page](#containers-on-the-page), also for what it can read). `no` leaves it out. |
 | `DENWATCHER_ADDONS` | `all` | Den-Watcher's other add-ons, each in a container of its own (see [Add-ons](#add-ons)): `all`, `none`, or a comma-separated list of `power`, `pressure`, `kernel`, `wifi`, `bluetooth`, `memory`, `ports` and `processes`. |
 | `DENWATCHER_RETENTION_DAYS` | empty: Den-Watcher's own, 30 | Days of history to keep, 1 to 3650; older values are deleted. A longer history takes more room on the SD card. |
 | `DENWATCHER_STATUS_PORT` | empty: no status page | Port of Den-Watcher's status page for outside the local network (TCP), such as `9443`; see [Status from anywhere](#status-from-anywhere). The task stops if it is `DENWATCHER_PORT` or another program already uses it. |
@@ -92,6 +92,17 @@ root inside its container only because the container names are in files only
 root may read, but without any capability, without network and with a
 read-only file system, so it can only read.
 
+What it can read is more than the names, though: Docker keeps each
+container's record in that folder, and the record holds the container's
+whole configuration, with its environment and the values from its
+`env_file` (such as Pi-hole's web password), and its log file. Docker has no
+narrower folder to mount, so the add-on can read every container's settings,
+passwords and logs; the one the task runs does not send anything (no
+network), but it runs whatever the image holds. With the moving `:main` tag
+a new build gets that access at the next update; for a Pi with other
+containers, a release tag such as `:1.2.3` in `DENWATCHER_IMAGE`, updated by
+hand, is the safer choice, or `DENWATCHER_CONTAINERS=no`.
+
 Raspberry Pi OS's kernel counts no memory per container unless
 `cgroup_enable=memory` is added to the line in `/boot/firmware/cmdline.txt`
 (and the Pi rebooted); without it the page shows only the CPU of each
@@ -111,8 +122,9 @@ addresses or version. It is the only part of Den-Watcher meant to be reached
 from the internet, so it answers only HTTPS, with a certificate Den-Watcher
 makes itself, and shows nothing but a sign-in form until its password is
 given. The task publishes it as Den-Watcher's `STATUS_ADDR` (`:9443` inside
-the container) and `STATUS_PUBLIC_PORT`, and the `firewall` task opens the
-port to anyone, not only `FIREWALL_ALLOW_FROM`.
+the container) and `STATUS_PUBLIC_PORT`. Docker publishes the port itself,
+so it is open to anyone; `FIREWALL_ALLOW_FROM` does not limit it (see
+[Good to know](#good-to-know)).
 
 Then, once:
 
@@ -144,8 +156,11 @@ the port on the router too.
   container, so the address is the same with or without Docker and stays
   clear of nginx (80 or 8080). An install from before used 8080 or 8090; the
   next run of the task moves it to 9393 unless `DENWATCHER_PORT` is set.
-- Ports published by Docker bypass the `firewall` task's rules (it opens the
-  port for `FIREWALL_ALLOW_FROM` anyway). How to close or limit them:
+- Docker publishes the website's port and the status port itself, before
+  the `firewall` task's rules see them, so they are open to anyone who
+  reaches the Pi: the firewall task lists them as open, and
+  `FIREWALL_ALLOW_FROM` does not limit them. How to close or limit them, with
+  a rule in Docker's `DOCKER-USER` chain:
   [Ports of Docker containers](firewall.md#ports-of-docker-containers).
 - A router's password does not belong in the settings file, which may be in
   git: set it once on the Pi with
