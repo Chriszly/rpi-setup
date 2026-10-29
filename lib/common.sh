@@ -354,6 +354,21 @@ task_setting_names() {
   sed -nE 's/^[[:space:]]*([A-Z][A-Z0-9_]*)=.*/\1/p' "$file"
 }
 
+# The split files in config/local/ are only ever written from the central
+# file, so when that file is gone they are left over from an earlier run and
+# would keep its values in force. Warn and have load_task_config ignore them
+# (every task then uses its defaults). setup.sh calls this when the central
+# file is missing. Returns 0 either way.
+_LOCAL_CONFIG_STALE=0
+ignore_stale_local_config() {
+  local dir
+  dir="$(config_dir)/local"
+  [[ -n "$(ls "$dir"/*.env 2>/dev/null)" ]] || return 0
+  _LOCAL_CONFIG_STALE=1
+  warn "$(central_config) does not exist, but $dir still holds settings split from it; they are ignored and every task uses its defaults."
+  warn "Delete $dir, or create the file again with: bash setup.sh --init-config"
+}
+
 # Read task $1's settings from $2 (default: config/local/<task>.env) into
 # shell variables. Only keys named <TASK>_... are accepted, so a settings file
 # can never change PATH or another task's settings. A variable that is already
@@ -361,7 +376,10 @@ task_setting_names() {
 # A missing file is fine: every setting has a default.
 load_task_config() {
   local task="$1" file="${2:-}"
-  [[ -n "$file" ]] || file="$(config_dir)/local/$task.env"
+  if [[ -z "$file" ]]; then
+    [[ $_LOCAL_CONFIG_STALE -eq 0 ]] || return 0
+    file="$(config_dir)/local/$task.env"
+  fi
   [[ -f "$file" ]] || return 0
   [[ -r "$file" ]] || die "Cannot read $file"
   config_warn_perms "$file"

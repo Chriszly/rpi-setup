@@ -263,6 +263,8 @@ main() {
   warn_shadowed_config
   if [[ -f "$(central_config)" ]]; then
     split_config "$(central_config)"
+  else
+    ignore_stale_local_config
   fi
   check_task_configs "${PLAN[@]}"
   run_tasks "${PLAN[@]}"

@@ -112,7 +112,9 @@ SAMBA_PASSWORD='my secret #1'   # quote values with " #", a leading # or spaces 
 PIHOLE_DNS=9.9.9.9
 ```
 
-- Leave a value empty, or delete the line, to get the default.
+- Leave a value empty, or delete the line, to get the default. Deleting
+  the whole file puts every task back to its defaults: the split files it
+  left in `config/local/` are then ignored, with a warning.
 - Each name starts with its task's name (`SAMBA_...` belongs to `samba`); an
   unknown name stops the run before anything changes, so typos are caught.
 - `config/rpi-setup.env` and everything generated from it are ignored by git:

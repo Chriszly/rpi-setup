@@ -208,6 +208,16 @@ assert_fails "split_config stops on an unknown name" eval 'RPI_SETUP_CONFIG_DIR=
 assert_ok "split_config accepts the committed example" eval \
     'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$ROOT/config/rpi-setup.env.example" >/dev/null'
 assert_fails "split_config explains a missing central file" eval 'RPI_SETUP_CONFIG_DIR="$cfg" split_config "$cfg/nope.env"'
+
+# Split files left over from a deleted central file are ignored, with a warning.
+rm -f "$cfg/rpi-setup.env"
+printf "WEB_PORT='8081'\n" >"$cfg/local/web.env"
+out="$( (RPI_SETUP_CONFIG_DIR="$cfg"; ignore_stale_local_config; unset WEB_PORT; load_task_config web; printf 'WEB_PORT=%s\n' "${WEB_PORT:-unset}") 2>&1)"
+assert_contains "stale config/local is reported" "still holds settings split from it; they are ignored" "$out"
+assert_contains "stale config/local is not loaded" "WEB_PORT=unset" "$out"
+assert_eq "a file given by name is still read" "8081" \
+    "$(RPI_SETUP_CONFIG_DIR="$cfg"; ignore_stale_local_config >/dev/null 2>&1; unset WEB_PORT; load_task_config web "$cfg/local/web.env" >/dev/null; printf '%s' "$WEB_PORT")"
+assert_eq "without stale files nothing is reported" "" "$(RPI_SETUP_CONFIG_DIR="$cfg/none"; ignore_stale_local_config 2>&1)"
 rm -rf "$cfg"
 
 # config_dir: RPI_SETUP_CONFIG_DIR, else /etc/rpi-setup once it has the file, else config/.
