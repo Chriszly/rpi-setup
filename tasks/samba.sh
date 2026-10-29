@@ -6,6 +6,8 @@ set -euo pipefail
 
 TASKS+=("samba|Samba NAS share (read-write, per-user password)")
 
+SMB_CONF="${SMB_CONF:-/etc/samba/smb.conf}"
+
 run_samba() {
   : "${SAMBA_SHARE_NAME:=nas-share}" "${SAMBA_READ_ONLY:=no}" "${SAMBA_DOCKER:=no}"
   local u="${SAMBA_USER:-}" dir="${SAMBA_SHARE_PATH:-}" share="$SAMBA_SHARE_NAME" home ro=no
@@ -33,7 +35,7 @@ run_samba() {
     say "Created $dir"
   fi
 
-  local conf=/etc/samba/smb.conf changed=0
+  local conf="$SMB_CONF" changed=0
   if samba_share_section "$conf" "$share" "$dir" "$u" "$ro"; then
     changed=1
     say "Wrote the [$share] share to ${conf}"
@@ -42,11 +44,19 @@ run_samba() {
   fi
   testparm -s "$conf" >/dev/null 2>&1 || die 'smb.conf failed testparm validation'
 
+  # The password, in the same order as for the container: the setting, the
+  # one saved by an earlier run (also the container's), else a new one.
   local pw
   if [[ -z "${SAMBA_PASSWORD:-}" ]] && pdbedit -L -u "$u" >/dev/null 2>&1; then
     say "Samba user '${u}' already exists; keeping its password (set SAMBA_PASSWORD to change it)"
   else
     pw="${SAMBA_PASSWORD:-}"
+    if [[ -z "$pw" ]] && pw="$(load_secret samba SAMBA_PASSWORD)"; then
+      say "Using the Samba password saved by an earlier run (set SAMBA_PASSWORD to change it)"
+    elif [[ -z "$pw" && -f "$(container_dir samba)/password" ]]; then
+      pw="$(<"$(container_dir samba)/password")"
+      say "Using the Samba password of the samba container (set SAMBA_PASSWORD to change it)"
+    fi
     if [[ -z "$pw" ]]; then new_secret pw samba SAMBA_PASSWORD "Samba password for ${u}" 16; fi
     printf '%s\n%s\n' "$pw" "$pw" | smbpasswd -s -a "$u" >/dev/null
     smbpasswd -e "$u" >/dev/null
@@ -59,21 +69,35 @@ run_samba() {
   say "Share ready: \\\\$(hostname)\\${share} (user ${u}$([[ $ro == yes ]] && echo ', read-only'))"
 }
 
-# Replace the [$2] section of smb.conf $1 (up to the next section) with the
-# share rpi-setup manages, or append it. Returns 0 if the file changed.
+# Write the share rpi-setup manages into smb.conf $1 as section [$2]: it
+# takes the place of the first section that is either named [$2] or marked
+# "Managed by rpi-setup" (a renamed share), every other such section is
+# removed, and without one it is appended. Returns 0 if the file changed.
 samba_share_section() {
   local conf="$1" share="$2" dir="$3" u="$4" ro="$5" body
   body="$(printf '[%s]\n   # Managed by rpi-setup (SAMBA_* settings); re-run "setup.sh samba" to change.\n   comment = Raspberry Pi share\n   path = %s\n   browseable = yes\n   read only = %s\n   guest ok = no\n   valid users = %s\n' \
     "$share" "$dir" "$ro" "$u")"
   SAMBA_BODY="$body" awk -v sec="$share" '
     BEGIN { body = ENVIRON["SAMBA_BODY"] }
-    /^[[:space:]]*\[.*\][[:space:]]*$/ {
-      name = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", name)
-      if (tolower(name) == tolower(sec)) { print body; skip = 1; done = 1; next }
-      skip = 0
+    # A section is kept back until its end, since the marker is inside it.
+    function flush(  i) {
+      if (!insec) return
+      if (same || managed) { if (!done) print body; done = 1 }
+      else for (i = 1; i <= n; i++) print buf[i]
+      n = 0; same = 0; managed = 0
     }
-    !skip { print }
-    END { if (!done) print body }' "$conf" | write_if_changed "$conf"
+    /^[[:space:]]*\[.*\][[:space:]]*$/ {
+      flush()
+      insec = 1
+      name = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", name)
+      same = (tolower(name) == tolower(sec))
+    }
+    {
+      if (!insec) { print; next }
+      buf[++n] = $0
+      if ($0 ~ /Managed by rpi-setup/) managed = 1
+    }
+    END { flush(); if (!done) print body }' "$conf" | write_if_changed "$conf"
 }
 
 # SAMBA_DOCKER=yes: Samba in its own container (crazymax/samba, host network
@@ -146,6 +170,13 @@ share:
 EOF
 }
 
+# $1 as a double-quoted YAML string (a path with ": ", " #", a quote or a
+# backslash would otherwise break the compose file).
+samba_yaml_str() {
+  local s="${1//\\/\\\\}"
+  printf '"%s"' "${s//\"/\\\"}"
+}
+
 # Compose file: folder $1, container name $2, share folder $3.
 samba_container_compose() {
   local cdir="$1" name="$2" dir="$3"
@@ -154,7 +185,7 @@ services:
   samba:
     image: "$SAMBA_IMAGE"
     container_name: $name
-    hostname: $(hostname)
+    hostname: $(samba_yaml_str "$(hostname)")
     restart: unless-stopped
     network_mode: host
     pids_limit: 512
@@ -164,14 +195,14 @@ services:
       TZ: "$(cat /etc/timezone 2>/dev/null || echo UTC)"
     volumes:
       - type: bind
-        source: $cdir/data
+        source: $(samba_yaml_str "$cdir/data")
         target: /data
       - type: bind
-        source: $cdir/password
+        source: $(samba_yaml_str "$cdir/password")
         target: /run/secrets/samba_password
         read_only: true
       - type: bind
-        source: $dir
+        source: $(samba_yaml_str "$dir")
         target: /samba/share
 EOF
 }

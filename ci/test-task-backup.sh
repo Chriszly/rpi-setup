@@ -44,6 +44,9 @@ printf 'services:\n  samba:\n    volumes:\n      - type: bind\n        source: /
 assert_eq "backup_run_container_share reads the Samba container's share" "srv/container-share" \
     "$(backup_run_container_share "$r/opt/samba/docker-compose.yml")"
 assert_contains "backup_run_paths adds the Samba container's share when asked" "srv/container-share" "$(paths yes)"
+printf 'services:\n  samba:\n    volumes:\n      - type: bind\n        source: "/srv/my share \\"x\\""\n        target: /samba/share\n' >"$tmp/quoted.yml"
+assert_eq "backup_run_container_share reads a quoted source (the task writes YAML strings)" 'srv/my share "x"' \
+    "$(backup_run_container_share "$tmp/quoted.yml")"
 assert_lacks "backup_run_paths leaves the container share out unless asked" "container-share" "$(paths no)"
 mv "$r/opt/samba/docker-compose.yml" "$r/opt/samba/docker-compose.yml.disabled"
 assert_contains "backup_run_paths keeps a task switched back to native" "opt/samba" "$(paths no)"

@@ -198,11 +198,15 @@ backup_run_shares() {
 
 # Folder the Samba container (SAMBA_DOCKER=yes) shares, from its compose file
 # $1: the bind mount source whose target is /samba/share (no leading /).
+# The source is a double-quoted YAML string (or a bare one in older files).
 backup_run_container_share() {
   [[ -f "$1" ]] || return 0
   awk '
     /^[[:space:]]*-[[:space:]]*type:/ { src = "" }
-    /^[[:space:]]*source:/ { src = $0; sub(/^[^:]*:[[:space:]]*/, "", src); sub(/[[:space:]]+$/, "", src) }
+    /^[[:space:]]*source:/ {
+      src = $0; sub(/^[^:]*:[[:space:]]*/, "", src); sub(/[[:space:]]+$/, "", src)
+      if (src ~ /^".*"$/) { src = substr(src, 2, length(src) - 2); gsub(/\\"/, "\"", src); gsub(/\\\\/, "\\", src) }
+    }
     /^[[:space:]]*target:[[:space:]]*\/samba\/share[[:space:]]*$/ { if (src != "") print src }' "$1" | sed 's|^/||'
 }
 
