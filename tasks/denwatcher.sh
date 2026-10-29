@@ -228,6 +228,15 @@ denwatcher_move_old() {
   fi
 }
 
+# denwatcher_port_container PORT - prints the name of the container that
+# publishes PORT (its docker-proxy holds the port); false if Docker knows
+# none.
+denwatcher_port_container() {
+  have docker || return 1
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null |
+    awk -v p=":$1->" 'index($0, p) { print $1; exit }' | grep .
+}
+
 # denwatcher_wifi_radio COUNTRY - switches the Wi-Fi radio on where it is
 # off, so the wifi add-on hears the networks nearby on a Pi on cable too.
 # Raspberry Pi OS keeps the radio blocked (rfkill) until a Wi-Fi country is
@@ -322,18 +331,22 @@ run_denwatcher() {
       passwords="$(load_secret usagecontrol USAGECONTROL_ROUTER_PASSWORD)" || passwords=""
   fi
 
-  # The image is published for arm64 and amd64 only.
-  local arch
-  arch="$(dpkg --print-architecture)"
-  [[ "$arch" == arm64 || "$arch" == amd64 ]] ||
-    die "The Den-Watcher image needs a 64-bit OS (this one is $arch). Flash Raspberry Pi OS Lite (64-bit)."
+  # The image is published for arm64 and amd64 only. (The helper's own
+  # message names a <TASK>_DOCKER=no way out, which this task has not.)
+  ( container_require_64bit DENWATCHER ) >/dev/null 2>&1 ||
+    die "The Den-Watcher image needs a 64-bit OS. Flash Raspberry Pi OS Lite (64-bit)."
 
-  # The ports may already be ours (Docker's proxy); anything else holds them.
-  local owner setting
+  # The ports may already be ours (Docker's proxy for the den-watcher
+  # container); another container's proxy or anything else holds them.
+  local owner holder setting
   for setting in DENWATCHER_PORT DENWATCHER_STATUS_PORT; do
     [[ -n "${!setting}" ]] || continue
     owner="$(port_owner "${!setting}")" || owner=""
-    if [[ -n "$owner" && "$owner" != docker-proxy ]]; then
+    if [[ "$owner" == docker-proxy ]]; then
+      holder="$(denwatcher_port_container "${!setting}")" || holder=""
+      [[ -z "$holder" || "$holder" == den-watcher ]] ||
+        die "Port ${!setting} is published by the $holder container; set $setting to a free port"
+    elif [[ -n "$owner" ]]; then
       die "Port ${!setting} is used by $owner; set $setting to a free port"
     fi
   done

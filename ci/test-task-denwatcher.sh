@@ -125,11 +125,36 @@ assert_ok "status port held: Docker was not touched" test ! -e "$TMP/reached"
   dpkg() { echo armhf; }
   run_denwatcher ) >/dev/null 2>"$TMP/err" || true
 assert_contains "32-bit OS stops the task" "needs a 64-bit OS" "$(cat "$TMP/err")"
-( DENWATCHER_PORT=8080 DENWATCHER_IMAGE=ghcr.io/x/y:main
+# Docker's proxy holds the port for some container: ours, or another's.
+# shellcheck disable=SC2329 # called by denwatcher_port_container
+have() { [[ "$1" == docker ]] || command -v "$1" >/dev/null 2>&1; }
+# shellcheck disable=SC2329 # called by denwatcher_port_container
+docker() {
+  [[ "$1" == ps ]] || return 1
+  printf '%s\n' 'teamspeak 0.0.0.0:9987->9987/udp, 0.0.0.0:10080->10080/tcp' \
+    'den-watcher 0.0.0.0:9393->9393/tcp, [::]:9393->9393/tcp, 0.0.0.0:9443->9443/tcp' 'kiosk 0.0.0.0:19393->8080/tcp'
+}
+( DENWATCHER_PORT=10080 DENWATCHER_IMAGE=ghcr.io/x/y:main
+  port_owner() { echo docker-proxy; }
+  run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "port published by another container stops the task" "Port 10080 is published by the teamspeak container; set DENWATCHER_PORT" "$(cat "$TMP/err")"
+assert_ok "port published by another container: Docker was not touched" test ! -e "$TMP/reached"
+( DENWATCHER_PORT=9393 DENWATCHER_STATUS_PORT=19393 DENWATCHER_IMAGE=ghcr.io/x/y:main
+  port_owner() { echo docker-proxy; }
+  run_denwatcher ) >/dev/null 2>"$TMP/err" || true
+assert_contains "status port published by another container stops the task" "Port 19393 is published by the kiosk container; set DENWATCHER_STATUS_PORT" "$(cat "$TMP/err")"
+( DENWATCHER_PORT=9393 DENWATCHER_STATUS_PORT=9443 DENWATCHER_IMAGE=ghcr.io/x/y:main
   port_owner() { echo docker-proxy; }
   run_denwatcher ) >/dev/null 2>&1 || true
-assert_ok "port held by Docker's proxy goes on to Docker" test -e "$TMP/reached"
-unset -f container_require_docker port_owner dpkg
+assert_ok "ports published by Den-Watcher itself go on to Docker" test -e "$TMP/reached"
+rm -f "$TMP/reached"
+( DENWATCHER_PORT=8080 DENWATCHER_IMAGE=ghcr.io/x/y:main
+  docker() { return 1; }
+  port_owner() { echo docker-proxy; }
+  run_denwatcher ) >/dev/null 2>&1 || true
+assert_ok "port held by Docker's proxy of no known container goes on to Docker" test -e "$TMP/reached"
+unset -f container_require_docker port_owner dpkg docker
+have() { command -v "$1" >/dev/null 2>&1; }
 
 # --- the containers add-on --------------------------------------------------------
 # The Pi's radios are faked too, as on: rfkill lists none, NetworkManager's is on.
