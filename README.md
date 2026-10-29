@@ -81,7 +81,10 @@ The SD card settings of the flash scripts (`FLASH_*`) have their own page:
 
 How a run works:
 
-- `base` runs first when you pick it; the others run in the order given.
+- `base` runs first and `firewall` last when you pick them; the others run
+  in the order given. In the menu, `all` picks every task except `apps`
+  and `runner` (they need settings) and `network` (it changes the Pi's
+  address); pick those by number.
   `netalertx`, `teamspeak`, `denwatcher` and `apps` need Docker; they run the `docker` task
   themselves when Docker is not installed.
 - A failed task does not stop the others, and `setup.sh` then exits non-zero.
