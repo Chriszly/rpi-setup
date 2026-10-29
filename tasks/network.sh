@@ -42,7 +42,7 @@ run_network() {
     die "The gateway $gw is not inside NETWORK_STATIC_IP $cidr; fix NETWORK_STATIC_IP or set NETWORK_GATEWAY"
   fi
   [[ -n "$dns" || -z "$gw" ]] || dns="$gw"
-  if [[ ",$dns," == *,127.0.0.1,* ]] && ! command -v pihole >/dev/null 2>&1; then
+  if [[ ",$dns," == *,127.0.0.1,* ]] && ! network_has_pihole; then
     warn 'NETWORK_DNS uses 127.0.0.1 but Pi-hole is not installed; the Pi will not resolve names until it is.'
   fi
 
@@ -71,14 +71,20 @@ run_network() {
   nmcli "${args[@]}" || die "nmcli could not change connection $con; nothing was applied."
 
   current="$(network_current_cidr "$iface")" || current=''
-  if [[ -n "${SSH_CONNECTION:-}" && "${current%/*}" != "${cidr%/*}" ]]; then
+  if [[ "${current%/*}" != "${cidr%/*}" ]]; then
     hr
-    warn "You are connected over SSH to ${current%/*}. Applying the new address ends this session."
-    warn "Reconnect with: ssh $(real_user)@${cidr%/*}"
-    warn 'Tasks listed after network in this run will not run; start them again after reconnecting.'
+    if network_remote_session; then
+      warn "You are connected over the network to ${current%/*}. Applying the new address ends this session."
+      warn "Reconnect with: ssh $(real_user)@${cidr%/*}"
+      warn 'Tasks listed after network in this run will not run; start them again after reconnecting.'
+    else
+      # Printed either way: a remote session is not always recognisable.
+      info "If you are connected over SSH to ${current%/*}, applying the new address ends this session."
+      info "Reconnect with: ssh $(real_user)@${cidr%/*}; tasks listed after network in this run then do not run."
+    fi
     hr
   fi
-  if command -v pihole >/dev/null 2>&1; then
+  if network_has_pihole; then
     info "Pi-hole: point your router's DNS setting at ${cidr%/*}."
   fi
   info "To go back to DHCP later: sudo nmcli connection modify $con ipv4.method auto ipv4.addresses '' ipv4.gateway '' ipv4.dns '' && sudo nmcli connection up $con"
@@ -182,6 +188,18 @@ network_connection() {
   u="$(nmcli -t -f DEVICE,UUID connection show --active 2>/dev/null | awk -F: -v d="$1" '$1 == d { print $2; exit }')"
   [[ -n "$u" ]] || return 1
   printf '%s\n' "$u"
+}
+
+# True if Pi-hole is installed, natively or in its container.
+network_has_pihole() { task_in_container pihole || have pihole; }
+
+# True when this run came in over the network, so a changed address ends
+# it. sudo's env_reset strips SSH_CONNECTION, so logind and "who -m" (which
+# shows the remote host in parentheses) are asked as well.
+network_remote_session() {
+  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
+  [[ "$(loginctl show-session self -p Remote --value 2>/dev/null)" == yes ]] && return 0
+  [[ "$(who -m 2>/dev/null)" == *'('*')'* ]]
 }
 
 # Die unless NetworkManager is installed and running.
