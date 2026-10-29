@@ -139,7 +139,8 @@ try {
     $cfg = Join-Path ([IO.Path]::GetTempPath()) ("flash_cfg_" + [guid]::NewGuid().ToString('N') + '.env')
     Set-Content -LiteralPath $cfg -Value "FLASH_HOSTNAME=first`nFLASH_WIFI_SSID=`"net`"`nFLASH_HOSTNAME=second`n"
     try {
-        $warned = (Read-FlashConfig $cfg 6>&1 | Out-String)
+        # The records' text, not a table (Out-String would cut the long path).
+        $warned = ((Read-FlashConfig $cfg 6>&1) | ForEach-Object { "$_" }) -join "`n"
         $v = Read-FlashConfig $cfg 6>$null
         Assert-True ($v['FLASH_HOSTNAME'] -eq 'first') 'Read-FlashConfig keeps the first value of a repeated setting'
         Assert-True ($warned -match 'set more than once') 'Read-FlashConfig warns about a repeated setting'

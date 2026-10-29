@@ -99,7 +99,8 @@ assert_fails "wait_stable fails for an exited container" container_wait_stable x
 : >"$TMP/restarts"
 container_state() { echo x >>"$TMP/restarts"; echo "running $(wc -l <"$TMP/restarts") none"; }
 assert_fails "wait_stable fails for a restarting container" container_wait_stable x 5 3
-unset -f sleep container_state
+unset -f sleep
+. "$ROOT/lib/containers.sh"  # the real container_state again for the Docker cases
 
 # --- container_leave (docker mocked) ----------------------------------------------
 # The mock logs its calls; MOCK_PS is what "compose ps -aq" prints (MOCK_PS_RC
